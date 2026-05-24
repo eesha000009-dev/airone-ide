@@ -25,12 +25,17 @@ permissions:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 120
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup MSVC Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          toolset: '14.37'
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -50,6 +55,10 @@ jobs:
           node --version
           yarn --version
           python --version
+          cl.exe 2>&1 | Select-String "Microsoft"
+
+      - name: Remove package-lock.json
+        run: Remove-Item -Path package-lock.json -ErrorAction SilentlyContinue
 
       - name: Install dependencies
         run: yarn install --network-timeout 600000
@@ -88,6 +97,26 @@ jobs:
             Get-ChildItem -Path "electron-app\dist" -Recurse
             exit 1
           }
+
+      - name: Delete old release asset if exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = "${{ github.event.inputs.version }}"
+          $tag = "v$version"
+          try {
+            $release = gh release view $tag --json id 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "Deleting existing release for tag $tag"
+              gh release delete $tag --yes
+            }
+          } catch {
+            Write-Host "No existing release found for tag $tag"
+          }
+          try {
+            git tag -d $tag 2>$null
+            git push origin :refs/tags/$tag 2>$null
+          } catch {}
 
       - name: Upload artifact to GitHub Release
         uses: softprops/action-gh-release@v2
