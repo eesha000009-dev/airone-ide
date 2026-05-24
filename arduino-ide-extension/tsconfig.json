@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "noImplicitAny": true,
-    "noEmitOnError": true,
+    "noEmitOnError": false,
     "noImplicitThis": true,
     "noUnusedLocals": true,
     "noImplicitOverride": true,

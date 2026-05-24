@@ -1,0 +1,27 @@
+{
+  "comments": {
+    "lineComment": "#",
+    "blockComment": ["##", "##"]
+  },
+  "brackets": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"]
+  ],
+  "autoClosingPairs": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"],
+    [""", """]
+  ],
+  "surroundingPairs": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"],
+    [""", """]
+  ],
+  "indentationRules": {
+    "increaseIndentPattern": "^\s*(pin\s+defi|loop|read_for|actfor|if)\s*[{(].*$",
+    "decreaseIndentPattern": "^\s*[})].*$"
+  }
+}

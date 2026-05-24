@@ -4,6 +4,11 @@ import {
   ArduinoFirmwareUploader,
   ArduinoFirmwareUploaderPath,
 } from '../common/protocol/arduino-firmware-uploader';
+import {
+  AiroCompilerService,
+  AiroCompilerServicePath,
+} from '../common/protocol/airo-compiler-service';
+import { AiroCompilerServiceImpl } from './airo-compiler-service';
 import { ILogger } from '@theia/core/lib/common/logger';
 import {
   BackendApplicationContribution,
@@ -394,6 +399,18 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
   rebind(PluginDeployer).to(PluginDeployer_GH_12064).inSingletonScope();
 
   bind(SettingsReader).toSelf().inSingletonScope();
+
+  // Airo Compiler Service for .airo → .ino transpilation
+  bind(AiroCompilerServiceImpl).toSelf().inSingletonScope();
+  bind(AiroCompilerService).toService(AiroCompilerServiceImpl);
+  bind(ConnectionHandler)
+    .toDynamicValue(
+      (context) =>
+        new JsonRpcConnectionHandler(AiroCompilerServicePath, () =>
+          context.container.get(AiroCompilerService)
+        )
+    )
+    .inSingletonScope();
 
   // To read the enablement property of the viewsWelcome
   // https://github.com/eclipse-theia/theia/issues/14309

@@ -63,6 +63,63 @@ void loop() {
 }
 `;
 
+const DefaultAiro = `# ============================================
+# AIRONE ROBOT CONFIGURATION
+# ============================================
+
+#library#
+# Import body modules for your robot
+# call body/actuation/upper-right-hands.airo.
+# call body/sight/eyes.airo.
+# call body/hearing/ears.airo.
+
+Pin defi {
+    # pin_name = pin_number; mode.
+    # mode: input (brings data in / senses) or output (makes action)
+    ledpin = 2; output.
+    # temperature = 35; input.
+    # ultrasonic = 34; input.
+    # servo_right = 13; output.
+}
+
+#variables#
+# Brain URL — where your AI brain lives
+brain_url = "wss://<YOUR_BRAIN_URL_HERE>:8080".
+call brain_url.
+
+# Aliases (short names for body modules)
+# body/sight/eyes.airo = eyes.
+
+# ============================================
+# MAIN LOOP — The robot runs this forever
+# SENSE → THINK → ACT
+# ============================================
+loop {
+    # Phase 1: SENSE — Read all input sensors
+    # Only place sensors/modules that bring in data or sense
+    read_for(1000) {
+        # temperature.
+        # eyes.
+        # ears.
+    }
+    
+    # Phase 2: THINK — Send data to brain via WebSocket
+    # The compiled C++ will send:
+    # "Currently, the input sensors read:
+    #  (sensor: value, ...),
+    #  What do you want to do to:
+    #  (output_module1, output_module2, ...)."
+    senddatato(brain_url).
+    
+    # Phase 3: ACT — Execute brain commands
+    # Only place output modules here (things that make actions)
+    actfor(1000) {
+        ledpin.
+        # servo_right.
+    }
+}
+`;
+
 @injectable()
 export class SketchesServiceImpl
   extends CoreClientAware
@@ -444,8 +501,92 @@ export class SketchesServiceImpl
     return this.doLoadSketch(FileUri.create(sketchDir).toString(), false);
   }
 
+  async createNewAiroSketch(name?: string): Promise<Sketch> {
+    let sketchName: string | undefined = name;
+    const parentPath = await this.createTempFolder();
+    if (!sketchName) {
+      const monthNames = [
+        'jan',
+        'feb',
+        'mar',
+        'apr',
+        'may',
+        'jun',
+        'jul',
+        'aug',
+        'sep',
+        'oct',
+        'nov',
+        'dec',
+      ];
+      const today = new Date();
+      const sketchBaseName = `robot_${
+        monthNames[today.getMonth()]
+      }${today.getDate()}`;
+      const { config } = await this.configService.getConfiguration();
+      const sketchbookPath = config?.sketchDirUri
+        ? FileUri.fsPath(config?.sketchDirUri)
+        : os.homedir();
+
+      if (this.lastSketchBaseName !== sketchBaseName)
+        this.sketchSuffixIndex = 1;
+
+      let nameFound = false;
+      while (!nameFound) {
+        const sketchNameCandidate = `${sketchBaseName}${sketchIndexToLetters(
+          this.sketchSuffixIndex++
+        )}`;
+        const sketchExists = await exists(
+          path.join(sketchbookPath, sketchNameCandidate)
+        );
+        if (!sketchExists) {
+          nameFound = true;
+          sketchName = sketchNameCandidate;
+        }
+      }
+      this.lastSketchBaseName = sketchBaseName;
+    }
+
+    if (!sketchName) {
+      throw new Error('Cannot create a unique sketch name');
+    }
+
+    const sketchDir = path.join(parentPath, sketchName);
+    const airoFile = path.join(sketchDir, `${sketchName}.airo`);
+    // Create a companion .ino file so the Arduino CLI can load the sketch.
+    // The .ino is a shadow of the .airo; it will be updated during transpilation.
+    const inoFile = path.join(sketchDir, `${sketchName}.ino`);
+    const inoShadowContent = [
+      '// This file is auto-generated from the .airo source.',
+      '// Do not edit directly. Edit the .airo file instead.',
+      '// Transpilation will update this file on Verify/Compile.',
+      '',
+      'void setup() {',
+      '  // Waiting for .airo transpilation...',
+      '}',
+      '',
+      'void loop() {',
+      '  // Waiting for .airo transpilation...',
+      '}',
+      '',
+    ].join('\n');
+    const [airoContent] = await Promise.all([
+      this.loadAiroContent(),
+      fs.mkdir(sketchDir, { recursive: true }),
+    ]);
+    await Promise.all([
+      fs.writeFile(airoFile, airoContent, { encoding: 'utf8' }),
+      fs.writeFile(inoFile, inoShadowContent, { encoding: 'utf8' }),
+    ]);
+    return this.doLoadSketch(FileUri.create(sketchDir).toString(), false);
+  }
+
   defaultInoContent(): Promise<string> {
     return this.loadInoContent();
+  }
+
+  defaultAiroContent(): Promise<string> {
+    return this.loadAiroContent();
   }
 
   /**
@@ -735,6 +876,35 @@ export class SketchesServiceImpl
 
     return this.inoContent.promise;
   }
+
+  // Returns the default .airo content
+  private airoContent: Deferred<string> | undefined;
+  private async loadAiroContent(): Promise<string> {
+    if (!this.airoContent) {
+      this.airoContent = new Deferred<string>();
+      const settings = await this.settingsReader.read();
+      if (settings) {
+        const airoBlueprintPath = settings['arduino.sketch.airoBlueprint'];
+        if (airoBlueprintPath && typeof airoBlueprintPath === 'string') {
+          try {
+            const airoContent = await fs.readFile(airoBlueprintPath, {
+              encoding: 'utf8',
+            });
+            this.airoContent.resolve(airoContent);
+          } catch (err) {
+            if (ErrnoException.isENOENT(err)) {
+              // Ignored. The custom `.airo` blueprint file is optional.
+            } else {
+              throw err;
+            }
+          }
+        }
+      }
+      this.airoContent.resolve(DefaultAiro);
+    }
+
+    return this.airoContent.promise;
+  }
 }
 
 interface SketchWithDetails extends Sketch {
@@ -793,11 +963,17 @@ export async function isAccessibleSketchPath(
     return undefined;
   }
   if (stats.isFile()) {
-    return path.endsWith('.ino') ? path : undefined;
+    return path.endsWith('.ino') || path.endsWith('.airo')
+      ? path
+      : undefined;
   }
   const entries = await fs.readdir(path, { withFileTypes: true });
   const sketchFilename = entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.ino'))
+    .filter(
+      (entry) =>
+        entry.isFile() &&
+        (entry.name.endsWith('.ino') || entry.name.endsWith('.airo'))
+    )
     .map(({ name }) => name)
     // A folder might contain multiple sketches. It's OK to pick the first one as IDE2 cannot do much,
     // but ensure a deterministic behavior as `readdir(3)` does not guarantee an order. Sort them.
@@ -850,12 +1026,14 @@ export async function discoverSketches(
   logger?: ILogger
 ): Promise<SketchContainer> {
   const pathToAllSketchFiles = await glob(
-    '/!(libraries|hardware)/**/*.{ino,pde}',
+    '/!(libraries|hardware)/**/*.{ino,pde,airo}',
     { root }
   );
   // if no match try to glob the sketchbook as a sketch folder
   if (!pathToAllSketchFiles.length) {
-    pathToAllSketchFiles.push(...(await glob('/*.{ino,pde}', { root })));
+    pathToAllSketchFiles.push(
+      ...(await glob('/*.{ino,pde,airo}', { root }))
+    );
   }
 
   // Sort by path length to filter out nested sketches, such as the `Nested_folder` inside the `Folder` sketch.
@@ -965,7 +1143,7 @@ export async function discoverSketches(
       new RegExp(escapeRegExpCharacters(sketchName)),
       ''
     );
-    if (sketchFileExtension !== '.ino' && sketchFileExtension !== '.pde') {
+    if (sketchFileExtension !== '.ino' && sketchFileExtension !== '.pde' && sketchFileExtension !== '.airo') {
       logger?.warn(
         `Mismatching sketch file <${sketchFilename}> and sketch folder name <${sketchName}>. Skipping`
       );

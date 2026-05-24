@@ -82,9 +82,19 @@ export interface SketchesService {
   createNewSketch(): Promise<Sketch>;
 
   /**
+   * Creates a new sketch folder with `.airo` extension as the main sketch file.
+   */
+  createNewAiroSketch(): Promise<Sketch>;
+
+  /**
    * The default content when creating a new `.ino` file. Either the built-in or the user defined (`arduino.sketch.inoBlueprint`) content.
    */
   defaultInoContent(): Promise<string>;
+
+  /**
+   * The default content when creating a new `.airo` file.
+   */
+  defaultAiroContent(): Promise<string>;
 
   /**
    * Creates a new sketch with existing content. Rejects if `uri` is not pointing to a valid sketch folder.
@@ -334,7 +344,8 @@ export namespace Sketch {
   }
   export namespace Extensions {
     export const DEFAULT = '.ino';
-    export const MAIN = [DEFAULT, '.pde'];
+    export const AIRO = '.airo';
+    export const MAIN = [DEFAULT, '.pde', AIRO];
     export const SOURCE = ['.c', '.cpp', '.S', '.cxx', '.cc'];
     export const CODE_FILES = [
       ...MAIN,

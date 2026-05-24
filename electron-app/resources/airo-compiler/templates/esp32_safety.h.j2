@@ -1,0 +1,86 @@
+// ============================================================
+// GENERATED AIRONE FIRMWARE - SAFETY MONITOR
+// Target: {{ target | upper }}
+// HARD SAFETY: These checks are UNMODIFIABLE by the brain.
+// DO NOT EDIT MANUALLY - Regenerate from .airo source
+// ============================================================
+#ifndef SAFETY_MONITOR_H
+#define SAFETY_MONITOR_H
+
+#include <Arduino.h>
+#include "sensor_reader.h"
+#include "pin_map.h"
+
+// === SAFETY THRESHOLDS (compiled-in, cannot be overridden) ===
+{% if thresholds.temperature_max is defined %}
+const float SAFETY_TEMP_MAX = {{ thresholds.temperature_max }};   // Celsius
+{% endif %}
+{% if thresholds.ultrasonic_min is defined %}
+const float SAFETY_ULTRASONIC_MIN = {{ thresholds.ultrasonic_min }}; // cm
+{% endif %}
+{% if thresholds.brain_timeout_ms is defined %}
+const unsigned long SAFETY_BRAIN_TIMEOUT = {{ thresholds.brain_timeout_ms }}; // ms
+{% endif %}
+{% if thresholds.watchdog_timeout_ms is defined %}
+const unsigned long SAFETY_WATCHDOG_TIMEOUT = {{ thresholds.watchdog_timeout_ms }}; // ms
+{% endif %}
+
+// === STATE TRACKING ===
+unsigned long last_brain_contact = 0;
+unsigned long last_loop_time = 0;
+bool safe_mode_active = false;
+
+// Emergency stop: kills all outputs immediately
+void emergency_stop() {
+    if (!safe_mode_active) {
+        Serial.println("[SAFETY] EMERGENCY STOP ACTIVATED!");
+        safe_mode_active = true;
+    }
+{% for pin in pin_defs %}
+{% if pin.mode == "output" %}
+    digitalWrite(PIN_{{ pin.name_upper }}, LOW);  // Kill {{ pin.name }}
+{% endif %}
+{% endfor %}
+}
+
+// === HARD SAFETY CHECKS (run every loop iteration) ===
+void run_safety_checks() {
+{% for condition in safety_conditions %}
+    // {{ condition.description }}
+{% if condition.operator == ">" %}
+    if (current_data.{{ condition.sensor }} > {{ condition.threshold }}) {
+        Serial.println("[SAFETY] {{ condition.description }}");
+        emergency_stop();
+        return;
+    }
+{% elif condition.operator == "<" %}
+    if (current_data.{{ condition.sensor }} < {{ condition.threshold }}) {
+        Serial.println("[SAFETY] {{ condition.description }}");
+        emergency_stop();
+        return;
+    }
+{% endif %}
+{% endfor %}
+
+    // Watchdog: detect loop freeze
+    unsigned long now = millis();
+    if (last_loop_time > 0 && (now - last_loop_time) > SAFETY_WATCHDOG_TIMEOUT) {
+        Serial.println("[SAFETY] Watchdog timeout - loop frozen!");
+        emergency_stop();
+    }
+    last_loop_time = now;
+
+    // Brain timeout: safe mode after prolonged disconnect
+    if (brain_connected && last_brain_contact == 0) {
+        last_brain_contact = now;
+    }
+    if (brain_connected) {
+        last_brain_contact = now;
+        safe_mode_active = false;  // Clear safe mode on reconnection
+    } else if (last_brain_contact > 0 && (now - last_brain_contact) > SAFETY_BRAIN_TIMEOUT) {
+        Serial.println("[SAFETY] Brain timeout - entering safe mode!");
+        emergency_stop();
+    }
+}
+
+#endif // SAFETY_MONITOR_H

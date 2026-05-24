@@ -1,0 +1,50 @@
+// ============================================================
+// GENERATED AIRONE FIRMWARE - SENSOR READER
+// Target: {{ target | upper }}
+// DO NOT EDIT MANUALLY - Regenerate from .airo source
+// ============================================================
+#ifndef SENSOR_READER_H
+#define SENSOR_READER_H
+
+#include <Arduino.h>
+#include "pin_map.h"
+
+{% set dht_pins = pin_defs | selectattr('sensor_type', 'equalto', 'DHT22') | list %}
+{% set hcsr04_pins = pin_defs | selectattr('sensor_type', 'equalto', 'HC_SR04') | list %}
+
+{% if dht_pins | length > 0 %}
+// DHT22 temperature sensor support
+#include <DHT.h>
+{% for pin in dht_pins %}
+DHT dht_{{ pin.name }}(PIN_{{ pin.name_upper }}, DHT22);
+{% endfor %}
+{% endif %}
+
+{% if hcsr04_pins | length > 0 %}
+// HC-SR04 ultrasonic sensor support
+{% for pin in hcsr04_pins %}
+float read_ultrasonic_cm_{{ pin.name }}() {
+    // HC-SR04 on GPIO{{ pin.number }}
+    long duration = pulseIn(PIN_{{ pin.name_upper }}, HIGH);
+    return duration * 0.034 / 2.0;
+}
+{% endfor %}
+{% endif %}
+
+// === SENSOR DATA STRUCTURE ===
+struct SensorData {
+{% for sensor in sensors %}
+    float {{ sensor }};  // {{ alias_map.get(sensor, sensor) }}
+{% endfor %}
+};
+
+SensorData current_data;
+
+// === SENSOR READING FUNCTIONS ===
+void read_all_sensors() {
+{% for sd in sensor_details %}
+    {{ sd.reader_code }}
+{% endfor %}
+}
+
+#endif // SENSOR_READER_H

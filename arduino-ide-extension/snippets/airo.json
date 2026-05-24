@@ -1,0 +1,58 @@
+{
+  "Robot Template": {
+    "prefix": "robot",
+    "body": [
+      "# ============================================",
+      "# ${1:Robot Name} - ${2:Description}",
+      "# ============================================",
+      "",
+      "## 1. BRAIN CONNECTION ##",
+      "brain_url = "${3:wss://brain.local:8080}".",
+      "call brain_url.",
+      "",
+      "## 2. HARDWARE PINS ##",
+      "pin defi {",
+      "    ${4:ledpin} = ${5:2}; ${6:output}.",
+      "}",
+      "",
+      "## 3. MAIN LOOP ##",
+      "loop {",
+      "    read_for(${7:1000}) {",
+      "        ${8:sensor_name}.",
+      "    }",
+      "    senddatato(brain_url).",
+      "    actfor(${9:1000}) {",
+      "        ${10:output_name}.",
+      "    }",
+      "}"
+    ],
+    "description": "Create a new robot template"
+  },
+  "Pin Definition": {
+    "prefix": "pin",
+    "body": [
+      "pin defi {",
+      "    ${1:pin_name} = ${2:2}; ${3|input,output|}.",
+      "}"
+    ],
+    "description": "Define hardware pins"
+  },
+  "Read Sensors": {
+    "prefix": "read",
+    "body": [
+      "read_for(${1:1000}) {",
+      "    ${2:sensor_name}.",
+      "}"
+    ],
+    "description": "Read sensors for specified duration"
+  },
+  "Actuator Control": {
+    "prefix": "act",
+    "body": [
+      "actfor(${1:1000}) {",
+      "    ${2:output_name}.",
+      "}"
+    ],
+    "description": "Control actuators for specified duration"
+  }
+}

@@ -146,8 +146,34 @@
     "src",
     "build",
     "data",
-    "examples"
+    "examples",
+    "syntaxes",
+    "snippets",
+    "language-configuration.json"
   ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "airo",
+        "extensions": [".airo"],
+        "aliases": ["Airone", "airo"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "airo",
+        "scopeName": "source.airo",
+        "path": "./syntaxes/airo.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "airo",
+        "path": "./snippets/airo.json"
+      }
+    ]
+  },
   "theiaExtensions": [
     {
       "preload": "lib/electron-browser/preload"

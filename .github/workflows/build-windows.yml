@@ -1,0 +1,126 @@
+name: Build Airone IDE for Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 0.2.0-alpha)'
+        required: true
+        default: '0.2.0-alpha'
+      is_release:
+        description: 'Is this a release build? (true/false)'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  NODE_VERSION: '18.20.4'
+  PYTHON_VERSION: '3.11'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Yarn
+        run: npm install -g yarn@1.22.19
+
+      - name: Check versions
+        run: |
+          node --version
+          yarn --version
+          python --version
+
+      - name: Install dependencies
+        run: yarn install --network-timeout 600000
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Build the application
+        run: yarn build
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Package for Windows (portable .exe)
+        working-directory: electron-app
+        run: yarn package
+        env:
+          IS_RELEASE: ${{ github.event.inputs.is_release }}
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Post-package processing
+        working-directory: electron-app
+        run: yarn postpackage
+        env:
+          IS_RELEASE: ${{ github.event.inputs.is_release }}
+
+      - name: Find built artifact
+        id: find_artifact
+        run: |
+          $exe = Get-ChildItem -Path "electron-app\dist" -Filter "*.exe" -Recurse | Select-Object -First 1
+          if ($exe) {
+            Write-Host "Found artifact: $($exe.FullName)"
+            Write-Host "Artifact size: $([math]::Round($exe.Length / 1MB, 2)) MB"
+            "artifact_path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+            "artifact_name=$($exe.Name)" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "ERROR: No .exe found in electron-app/dist"
+            Get-ChildItem -Path "electron-app\dist" -Recurse
+            exit 1
+          }
+
+      - name: Upload artifact to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: Airone IDE v${{ github.event.inputs.version }}
+          body: |
+            ## Airone IDE v${{ github.event.inputs.version }}
+
+            ### System Requirements
+            - Windows 10/11 (64-bit)
+            - Python 3.x installed and available on PATH (for .airo compilation)
+
+            ### Installation
+            1. Download `Airone-IDE-*.exe` below
+            2. Run the .exe — no installation needed (portable)
+            3. The IDE will open automatically
+
+            ### What's Included
+            - Full Arduino IDE 2.x functionality
+            - .airo language support (syntax highlighting, snippets)
+            - Built-in Airo Compiler (.airo → C++ for ESP32)
+            - Airone Backbone sync integration
+          files: |
+            ${{ steps.find_artifact.outputs.artifact_path }}
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload build artifact (for debugging)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Airone-IDE-windows-exe
+          path: ${{ steps.find_artifact.outputs.artifact_path }}
+          retention-days: 7

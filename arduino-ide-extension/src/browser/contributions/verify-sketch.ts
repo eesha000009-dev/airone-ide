@@ -2,6 +2,8 @@ import { Emitter, Event } from '@theia/core/lib/common/event';
 import { nls } from '@theia/core/lib/common/nls';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import type { CompileSummary, CoreService } from '../../common/protocol';
+import { Sketch } from '../../common/protocol';
+import { AiroCompilerService } from '../../common/protocol/airo-compiler-service';
 import { ArduinoMenus } from '../menu/arduino-menus';
 import { CurrentSketch } from '../sketches-service-client-impl';
 import { ArduinoToolbar } from '../toolbar/arduino-toolbar';
@@ -12,6 +14,7 @@ import {
   KeybindingRegistry,
   MenuModelRegistry,
   TabBarToolbarRegistry,
+  URI,
 } from './contribution';
 import { CoreErrorHandler } from './core-error-handler';
 
@@ -58,6 +61,9 @@ export class VerifySketch
 {
   @inject(CoreErrorHandler)
   private readonly coreErrorHandler: CoreErrorHandler;
+
+  @inject(AiroCompilerService)
+  private readonly airoCompilerService: AiroCompilerService;
 
   private readonly onDidChangeEmitter = new Emitter<void>();
   private readonly onDidChange = this.onDidChangeEmitter.event;
@@ -215,7 +221,7 @@ export class VerifySketch
     const { boardsConfig } = this.boardsServiceProvider;
     const [fqbn, sourceOverride, optimizeForDebug] = await Promise.all([
       this.boardsDataStore.appendConfigToFqbn(boardsConfig.selectedBoard?.fqbn),
-      this.sourceOverride(),
+      this.sourceOverrideWithAiroSupport(sketch),
       this.commandService.executeCommand<boolean>(
         'arduino-is-optimize-for-debug'
       ),
@@ -231,6 +237,103 @@ export class VerifySketch
       sourceOverride,
       compilerWarnings,
     };
+  }
+
+  /**
+   * Checks if the main sketch file is a .airo file.
+   */
+  private isAiroSketch(mainFileUri: string): boolean {
+    const uri = new URI(mainFileUri);
+    return uri.path.base.endsWith('.airo');
+  }
+
+  /**
+   * Gets the .airo source code from the current editor or file.
+   */
+  private async getAiroSourceCode(sketch: Sketch): Promise<string | undefined> {
+    // First check unsaved editors
+    for (const editor of this.editorManager.all) {
+      const uri = editor.editor.uri;
+      if (uri.path.base.endsWith('.airo') && Sketch.isInSketch(uri, sketch)) {
+        return editor.editor.document.getText();
+      }
+    }
+    // If not in an editor, read from file service
+    for (const uriStr of [
+      sketch.mainFileUri,
+      ...sketch.otherSketchFileUris,
+    ]) {
+      if (uriStr.endsWith('.airo')) {
+        try {
+          const uri = new URI(uriStr);
+          const content = await this.fileService.read(uri);
+          return content.value;
+        } catch {
+          // Ignore read errors
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Builds the source override map, including .airo transpilation if needed.
+   */
+  private async sourceOverrideWithAiroSupport(
+    sketch: Sketch
+  ): Promise<Record<string, string>> {
+    const override = await this.sourceOverride();
+
+    // Check if this is a .airo sketch
+    const isAiro = this.isAiroSketch(sketch.mainFileUri);
+    if (!isAiro) {
+      return override;
+    }
+
+    // Get the .airo source code
+    const airoCode = await this.getAiroSourceCode(sketch);
+    if (!airoCode) {
+      this.messageService.warn(
+        nls.localize(
+          'arduino/airo/noSource',
+          'Could not read .airo source file.'
+        )
+      );
+      return override;
+    }
+
+    // Transpile .airo → .ino
+    try {
+      this.messageService.info(
+        nls.localize(
+          'arduino/airo/transpiling',
+          'Transpiling .airo to Arduino code...'
+        ),
+        { timeout: 5000 }
+      );
+      const transpiledCode = await this.airoCompilerService.transpileAiro(
+        airoCode
+      );
+
+      // Find the companion .ino file URI and add the transpiled content as a source override
+      const mainUri = new URI(sketch.mainFileUri);
+      const inoUri = mainUri.parent
+        .resolve(mainUri.path.name + '.ino')
+        .toString();
+
+      override[inoUri] = transpiledCode;
+    } catch (err) {
+      this.messageService.error(
+        nls.localize(
+          'arduino/airo/transpileFailed',
+          'Failed to transpile .airo: {0}',
+          err instanceof Error ? err.message : String(err)
+        )
+      );
+      throw err;
+    }
+
+    return override;
   }
 }
 

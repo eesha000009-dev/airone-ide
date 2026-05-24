@@ -3,7 +3,7 @@
   "name": "electron-app",
   "version": "2.3.9",
   "license": "AGPL-3.0-or-later",
-  "main": "./src-gen/backend/electron-main.js",
+  "main": "./arduino-ide-electron-main.js",
   "dependencies": {
     "@theia/core": "1.57.0",
     "@theia/debug": "1.57.0",
@@ -59,7 +59,7 @@
     "target": "electron",
     "frontend": {
       "config": {
-        "applicationName": "Arduino IDE",
+        "applicationName": "Airone IDE",
         "defaultTheme": {
           "light": "arduino-theme",
           "dark": "arduino-theme-dark"
@@ -68,7 +68,7 @@
         "validatePreferencesSchema": false,
         "electron": {
           "showWindowEarly": true,
-          "uriScheme": "arduino-ide"
+          "uriScheme": "airone-ide"
         },
         "reloadOnReconnect": true,
         "preferences": {
@@ -92,7 +92,7 @@
     },
     "backend": {
       "config": {
-        "configDirName": ".arduinoIDE",
+        "configDirName": ".aironeIDE",
         "singleInstance": true
       }
     },
@@ -103,10 +103,10 @@
     }
   },
   "author": "Arduino SA",
-  "description": "Arduino IDE",
+  "description": "Airone IDE - Robotics Programming Environment",
   "build": {
-    "appId": "cc.arduino.IDE2",
-    "productName": "Arduino IDE",
+    "appId": "com.airone.ide",
+    "productName": "Airone IDE",
     "asar": false,
     "detectUpdateChannel": false,
     "generateUpdatesFilesForAllChannels": true,
@@ -118,6 +118,10 @@
       {
         "ext": "ino",
         "role": "Editor"
+      },
+      {
+        "ext": "airo",
+        "role": "Editor"
       }
     ],
     "files": [
@@ -125,21 +129,23 @@
       "src-gen",
       "lib",
       "resources/icons/512x512.png",
-      "!**node_modules/**"
+      "node_modules/**/*"
     ],
     "extraResources": [
       {
         "from": "plugins",
         "to": "app/plugins"
+      },
+      {
+        "from": "resources/airo-compiler",
+        "to": "airo-compiler"
       }
     ],
     "win": {
       "target": [
-        "msi",
-        "nsis",
-        "zip"
+        "portable"
       ],
-      "sign": "./scripts/windowsCustomSign.js",
+      "signAndEditExecutable": false,
       "extraFiles": "resources/PATENT_DISCLAIMER"
     },
     "mac": {
@@ -192,7 +198,7 @@
         }
       ]
     },
-    "afterSign": "scripts/notarize.js",
+    "afterSign": "",
     "publish": [
       {
         "provider": "s3",

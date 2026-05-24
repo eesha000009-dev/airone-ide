@@ -23,6 +23,10 @@ import {
 } from '../common/protocol/sketches-service';
 import { SketchesServiceClientImpl } from './sketches-service-client-impl';
 import { CoreService, CoreServicePath } from '../common/protocol/core-service';
+import {
+  AiroCompilerService,
+  AiroCompilerServicePath,
+} from '../common/protocol/airo-compiler-service';
 import { BoardsListWidget } from './boards/boards-list-widget';
 import { BoardsListWidgetFrontendContribution } from './boards/boards-widget-frontend-contribution';
 import {
@@ -297,6 +301,9 @@ import { Daemon } from './contributions/daemon';
 import { FirstStartupInstaller } from './contributions/first-startup-installer';
 import { OpenSketchFiles } from './contributions/open-sketch-files';
 import { InoLanguage } from './contributions/ino-language';
+import { AiroSketch } from './contributions/airo-sketch';
+import { AiroLanguage } from './contributions/airo-language';
+import { SyncToBackbone } from './contributions/sync-to-backbone';
 import { SelectedBoard } from './contributions/selected-board';
 import { CheckForIDEUpdates } from './contributions/check-for-ide-updates';
 import { OpenBoardsConfig } from './contributions/open-boards-config';
@@ -510,6 +517,16 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     )
     .inSingletonScope();
   bind(CoreErrorHandler).toSelf().inSingletonScope();
+
+  // Airo compiler service
+  bind(AiroCompilerService)
+    .toDynamicValue((context) =>
+      WebSocketConnectionProvider.createProxy(
+        context.container,
+        AiroCompilerServicePath
+      )
+    )
+    .inSingletonScope();
 
   // Serial monitor
   bind(MonitorWidget).toSelf();
@@ -757,6 +774,9 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
   Contribution.configure(bind, UpdateArduinoState);
   Contribution.configure(bind, BoardsDataMenuUpdater);
   Contribution.configure(bind, AutoSelectProgrammer);
+  Contribution.configure(bind, AiroSketch);
+  Contribution.configure(bind, AiroLanguage);
+  Contribution.configure(bind, SyncToBackbone);
 
   bind(CompileSummaryProvider).toService(VerifySketch);
 
