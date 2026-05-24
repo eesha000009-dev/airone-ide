@@ -20,4 +20,11 @@ if (config.buildDate) {
     .join(',');
 }
 
-require('./lib/backend/electron-main');
+// Guard: only load the main Electron module if running inside Electron.
+// When loaded by electron-builder during packaging (plain Node.js context),
+// `require('electron')` returns a string path to the Electron binary,
+// not the Electron module — so `app` is undefined and would crash.
+const electron = require('electron');
+if (typeof electron !== 'string' && electron.app) {
+  require('./lib/backend/electron-main');
+}
