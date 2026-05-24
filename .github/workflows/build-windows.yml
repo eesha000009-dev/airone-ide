@@ -82,7 +82,7 @@ jobs:
       - name: Find built artifact
         id: find_artifact
         run: |
-          $exe = Get-ChildItem -Path "electron-app\dist" -Filter "*.exe" -Recurse | Select-Object -First 1
+          $exe = Get-ChildItem -Path "electron-app\dist" -Filter "*.exe" -Recurse | Where-Object { $_.Name -notlike "*blockmap*" } | Select-Object -First 1
           if ($exe) {
             Write-Host "Found artifact: $($exe.FullName)"
             Write-Host "Artifact size: $([math]::Round($exe.Length / 1MB, 2)) MB"
@@ -128,8 +128,9 @@ jobs:
 
             ### Installation
             1. Download `Airone-IDE-*.exe` below
-            2. Run the .exe — no installation needed (portable)
-            3. The IDE will open automatically
+            2. Run the installer .exe
+            3. Follow the installation wizard
+            4. Launch Airone IDE from the Start menu
 
             ### What's Included
             - Full Arduino IDE 2.x functionality
