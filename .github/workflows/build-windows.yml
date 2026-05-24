@@ -32,11 +32,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup MSVC Developer Command Prompt
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          toolset: '14.37'
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -55,7 +50,6 @@ jobs:
           node --version
           yarn --version
           python --version
-          cl.exe 2>&1 | Select-String "Microsoft"
 
       - name: Remove package-lock.json
         run: Remove-Item -Path package-lock.json -ErrorAction SilentlyContinue
