@@ -51,8 +51,10 @@ jobs:
           yarn --version
           python --version
 
-      - name: Remove package-lock.json
-        run: Remove-Item -Path package-lock.json -ErrorAction SilentlyContinue
+      - name: Remove lock files for fresh resolution
+        run: |
+          Remove-Item -Path package-lock.json -ErrorAction SilentlyContinue
+          Remove-Item -Path yarn.lock -ErrorAction SilentlyContinue
 
       - name: Install dependencies
         run: yarn install --network-timeout 600000
