@@ -51,13 +51,19 @@ jobs:
           yarn --version
           python --version
 
-      - name: Remove lock files for fresh resolution
-        run: |
-          Remove-Item -Path package-lock.json -ErrorAction SilentlyContinue
-          Remove-Item -Path yarn.lock -ErrorAction SilentlyContinue
-
       - name: Install dependencies
         run: yarn install --network-timeout 600000
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      # CRITICAL: Rebuild native modules for Electron.
+      # Without this step, native .node modules (keytar, drivelist, native-watchdog, etc.)
+      # are compiled for Node.js 18 instead of Electron 30, causing ABI mismatch.
+      # The Theia backend crashes silently when loading incompatible native modules,
+      # resulting in a blank screen because the frontend has no backend to connect to.
+      - name: Rebuild native modules for Electron
+        working-directory: electron-app
+        run: yarn rebuild
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
 
@@ -66,7 +72,7 @@ jobs:
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
 
-      - name: Package for Windows (portable .exe)
+      - name: Package for Windows (NSIS installer .exe)
         working-directory: electron-app
         run: yarn package
         env:

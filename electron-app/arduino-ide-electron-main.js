@@ -22,9 +22,8 @@ if (config.buildDate) {
 
 // Guard: only load the main Electron module if running inside Electron.
 // When loaded by electron-builder during packaging (plain Node.js context),
-// `require('electron')` returns a string path to the Electron binary,
-// not the Electron module — so `app` is undefined and would crash.
-const electron = require('electron');
-if (typeof electron !== 'string' && electron.app) {
+// `process.versions.electron` is undefined. Inside Electron it's set (e.g. "30.1.2").
+// This prevents the crash: "Cannot read properties of undefined (reading 'requestSingleInstanceLock')"
+if (process.versions.electron) {
   require('./lib/backend/electron-main');
 }
