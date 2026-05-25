@@ -9,6 +9,7 @@
 **/tsconfig.tsbuildinfo
 *.log
 license-check-summary.txt*
+.airone-ide/
 .theia-ide/chatSessions
 .prompts
 **/test-screenshots

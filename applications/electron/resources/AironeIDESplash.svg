@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="446" height="276" viewBox="0 0 446 276">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#16213e;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#0f9b8e;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#00d4aa;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="446" height="276" rx="8" fill="url(#bg)"/>
+
+  <!-- Circuit pattern decoration -->
+  <g stroke="#0f9b8e" stroke-opacity="0.15" stroke-width="1" fill="none">
+    <!-- Horizontal lines -->
+    <line x1="20" y1="40" x2="120" y2="40"/>
+    <line x1="20" y1="60" x2="80" y2="60"/>
+    <line x1="320" y1="220" x2="426" y2="220"/>
+    <line x1="360" y1="240" x2="426" y2="240"/>
+
+    <!-- Vertical lines -->
+    <line x1="120" y1="40" x2="120" y2="70"/>
+    <line x1="80" y1="60" x2="80" y2="85"/>
+    <line x1="320" y1="190" x2="320" y2="220"/>
+    <line x1="360" y1="210" x2="360" y2="240"/>
+
+    <!-- Circuit nodes -->
+    <circle cx="120" cy="40" r="3" fill="#0f9b8e" fill-opacity="0.3"/>
+    <circle cx="80" cy="60" r="3" fill="#0f9b8e" fill-opacity="0.3"/>
+    <circle cx="320" cy="220" r="3" fill="#0f9b8e" fill-opacity="0.3"/>
+    <circle cx="360" cy="240" r="3" fill="#0f9b8e" fill-opacity="0.3"/>
+
+    <!-- More circuit traces -->
+    <line x1="20" y1="100" x2="50" y2="100"/>
+    <line x1="50" y1="100" x2="50" y2="130"/>
+    <circle cx="50" cy="100" r="2" fill="#0f9b8e" fill-opacity="0.3"/>
+
+    <line x1="396" y1="50" x2="426" y2="50"/>
+    <line x1="396" y1="50" x2="396" y2="80"/>
+    <circle cx="396" cy="50" r="2" fill="#0f9b8e" fill-opacity="0.3"/>
+  </g>
+
+  <!-- Robotic icon - stylized robot head -->
+  <g transform="translate(170, 55)">
+    <!-- Robot head outline -->
+    <rect x="16" y="14" width="44" height="36" rx="6" fill="none" stroke="url(#accent)" stroke-width="2"/>
+    <!-- Eyes -->
+    <rect x="24" y="24" width="10" height="10" rx="2" fill="#0f9b8e" opacity="0.8"/>
+    <rect x="42" y="24" width="10" height="10" rx="2" fill="#0f9b8e" opacity="0.8"/>
+    <!-- Antenna -->
+    <line x1="38" y1="14" x2="38" y2="4" stroke="url(#accent)" stroke-width="2"/>
+    <circle cx="38" cy="3" r="3" fill="#00d4aa"/>
+    <!-- Mouth -->
+    <line x1="28" y1="42" x2="48" y2="42" stroke="url(#accent)" stroke-width="1.5" stroke-linecap="round"/>
+    <!-- Body -->
+    <rect x="22" y="52" width="32" height="16" rx="3" fill="none" stroke="url(#accent)" stroke-width="1.5" stroke-opacity="0.6"/>
+    <!-- Circuit detail on body -->
+    <line x1="30" y1="56" x2="46" y2="56" stroke="#0f9b8e" stroke-width="1" stroke-opacity="0.4"/>
+    <line x1="30" y1="60" x2="46" y2="60" stroke="#0f9b8e" stroke-width="1" stroke-opacity="0.4"/>
+  </g>
+
+  <!-- Title text -->
+  <text x="223" y="150" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="38" font-weight="700" fill="#ffffff" text-anchor="middle" letter-spacing="1">
+    Airone
+  </text>
+  <text x="223" y="185" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="28" font-weight="300" fill="#0f9b8e" text-anchor="middle" letter-spacing="3">
+    IDE
+  </text>
+
+  <!-- Accent line under title -->
+  <rect x="163" y="195" width="120" height="2" rx="1" fill="url(#accent)" opacity="0.6"/>
+
+  <!-- Version -->
+  <text x="223" y="220" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="12" font-weight="400" fill="#8a8a9a" text-anchor="middle" letter-spacing="1">
+    v0.1.0
+  </text>
+
+  <!-- Tagline -->
+  <text x="223" y="242" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="10" font-weight="300" fill="#5a5a7a" text-anchor="middle" letter-spacing="0.5">
+    Robotics Programming Environment
+  </text>
+</svg>

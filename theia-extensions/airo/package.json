@@ -1,10 +1,13 @@
 {
-  "name": "airone-ide-launcher-ext",
+  "name": "airone-ide-airo-ext",
   "version": "0.1.0",
-  "keywords": [
-    "theia-extension"
-  ],
+  "description": "Airone IDE .airo Language Extension - Robotics programming language support",
   "license": "MIT",
+  "keywords": [
+    "theia-extension",
+    "airo",
+    "robotics"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/eesha000009-dev/airone-ide.git"
@@ -19,9 +22,14 @@
   ],
   "dependencies": {
     "@theia/core": "1.72.0-next.42",
-    "@vscode/sudo-prompt": "9.3.1",
-    "body-parser": "^1.20.5",
-    "fs-extra": "^4.0.3"
+    "@theia/monaco": "1.72.0-next.42",
+    "@theia/editor": "1.72.0-next.42",
+    "@theia/output": "1.72.0-next.42",
+    "@theia/workspace": "1.72.0-next.42",
+    "@theia/process": "1.72.0-next.42",
+    "inversify": "^6.2.2",
+    "serialport": "^12.0.0",
+    "@serialport/parser-readline": "^12.0.0"
   },
   "devDependencies": {
     "rimraf": "^2.7.1",
@@ -32,14 +40,12 @@
     "build": "tsc -b",
     "lint": "eslint --ext js,jsx,ts,tsx src",
     "lint:fix": "eslint --ext js,jsx,ts,tsx src --fix",
-    "watch": "tsc -w",
-    "update:theia": "ts-node ../../scripts/update-theia-version.ts",
-    "update:next": "ts-node ../../scripts/update-theia-version.ts next"
+    "watch": "tsc -w"
   },
   "theiaExtensions": [
     {
-      "frontendElectron": "lib/browser/create-launcher-frontend-module",
-      "backend": "lib/node/launcher-backend-module"
+      "frontend": "lib/browser/airo-frontend-module",
+      "backend": "lib/node/airo-backend-module"
     }
   ]
 }

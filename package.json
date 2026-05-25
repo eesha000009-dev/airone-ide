@@ -1,15 +1,15 @@
 {
   "private": true,
-  "version": "1.71.100",
+  "version": "0.1.0",
   "license": "MIT",
-  "author": "Rob Moran <github@thegecko.org>",
-  "homepage": "https://github.com/eclipse-theia/theia-ide#readme",
+  "author": "Airone <airone@airone.dev>",
+  "homepage": "https://github.com/eesha000009-dev/airone-ide#readme",
   "bugs": {
-    "url": "https://github.com/eclipse-theia/theia/issues"
+    "url": "https://github.com/eesha000009-dev/airone-ide/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/eclipse-theia/theia-ide.git"
+    "url": "git+https://github.com/eesha000009-dev/airone-ide.git"
   },
   "engines": {
     "yarn": ">=1.7.0 <2",
@@ -39,16 +39,15 @@
     "clean": "lerna run clean && rimraf node_modules",
     "build": "yarn build:extensions && yarn build:applications",
     "build:dev": "yarn build:extensions && yarn build:applications:dev",
-    "build:applications": "lerna run --scope=\"theia-ide*app\" --ignore=\"theia-ide-next*\" build:prod --concurrency 1",
-    "build:applications:dev": "lerna run --scope=\"theia-ide*app\" --ignore=\"theia-ide-next*\" build --concurrency 1",
-    "build:applications:next": "lerna run --scope=\"theia-ide-next*\" build:prod --concurrency 1",
-    "build:applications:next:dev": "lerna run --scope=\"theia-ide-next*\" build --concurrency 1",
-    "build:extensions": "lerna run --scope=\"theia-ide*ext\" build",
+    "build:applications": "lerna run --scope=\"airone-ide*app\" build:prod --concurrency 1",
+    "build:applications:dev": "lerna run --scope=\"airone-ide*app\" build --concurrency 1",
+
+    "build:extensions": "lerna run --scope=\"airone-ide*ext\" build",
     "download:plugins": "theia download:plugins --rate-limit=15 --parallel=false && yarn permissions:writeable",
-    "package:applications": "lerna run --scope=\"theia-ide*app\" --ignore=\"theia-ide-next*\" package --concurrency 1",
-    "package:applications:preview": "lerna run --scope=\"theia-ide*app\" --ignore=\"theia-ide-next*\" package:preview --concurrency 1",
-    "package:applications:prod": "lerna run --scope=\"theia-ide*app\" --ignore=\"theia-ide-next*\" package:prod --concurrency 1",
-    "package:applications:next": "lerna run --scope=\"theia-ide-next*\" package --concurrency 1",
+    "package:applications": "lerna run --scope=\"airone-ide*app\" package --concurrency 1",
+    "package:applications:preview": "lerna run --scope=\"airone-ide*app\" package:preview --concurrency 1",
+    "package:applications:prod": "lerna run --scope=\"airone-ide*app\" package:prod --concurrency 1",
+
     "permissions:writeable": "ts-node scripts/make-files-writeable.ts plugins",
     "watch": "lerna run --parallel watch",
     "test": "lerna run test",
@@ -56,7 +55,7 @@
     "browser": "yarn --cwd applications/browser",
     "update:theia": "ts-node scripts/update-theia-version.ts",
     "update:theia:children": "lerna run update:theia -- ",
-    "update:next": "ts-node scripts/update-theia-version.ts next && lerna run update:next",
+
     "lint": "eslint --ext js,jsx,ts,tsx scripts && lerna run lint",
     "lint:fix": "eslint --ext js,jsx,ts,tsx scripts --fix && lerna run lint:fix",
     "license:check": "npx dash-licenses-wrapper  --configFile=./configs/license-check-config.json",
@@ -65,9 +64,7 @@
   },
   "theiaPluginsDir": "plugins",
   "theiaPlugins": {
-    "vscode-builtin-extensions": "https://github.com/eclipse-theia/vscode-builtin-extensions/releases/download/1.108.2/vscode-builtin-extensions-1.108.2.tar.gz",
-    "vscjava.vscode-java-pack": "https://open-vsx.org/api/vscjava/vscode-java-pack/0.30.5/file/vscjava.vscode-java-pack-0.30.5.vsix",
-    "vscjava.vscode-java-dependency": "https://open-vsx.org/api/vscjava/vscode-java-dependency/0.27.0/file/vscjava.vscode-java-dependency-0.27.0.vsix"
+    "vscode-builtin-extensions": "https://github.com/eclipse-theia/vscode-builtin-extensions/releases/download/1.108.2/vscode-builtin-extensions-1.108.2.tar.gz"
   },
   "theiaPluginsExcludeIds": [
     "ms-vscode.js-debug-companion",

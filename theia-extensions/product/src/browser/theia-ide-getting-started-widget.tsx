@@ -1,5 +1,5 @@
 /********************************************************************************
- * Copyright (C) 2020 EclipseSource and others.
+ * Copyright (C) 2025 Airone and others.
  *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License, which is available in the project root.
@@ -61,11 +61,6 @@ export class TheiaIDEGettingStartedWidget extends GettingStartedWidget {
                 <hr className='gs-hr' />
                 <div className='flex-grid'>
                     <div className='col'>
-                        {this.renderNews()}
-                    </div>
-                </div>
-                <div className='flex-grid'>
-                    <div className='col'>
                         {renderWhatIs(this.windowService)}
                     </div>
                 </div>
@@ -92,11 +87,6 @@ export class TheiaIDEGettingStartedWidget extends GettingStartedWidget {
                 <div className='flex-grid'>
                     <div className='col'>
                         {renderDocumentation(this.windowService)}
-                    </div>
-                </div>
-                <div className='flex-grid'>
-                    <div className='col'>
-                        {this.renderAIBanner()}
                     </div>
                 </div>
                 <div className='flex-grid'>
@@ -151,20 +141,12 @@ export class TheiaIDEGettingStartedWidget extends GettingStartedWidget {
     protected renderVersion(): React.ReactNode {
         return <div>
             <p className='gs-sub-header' >
-                {this.applicationInfo ? 'Version ' + this.applicationInfo.version : '-'}
+                {this.applicationInfo ? 'Airone IDE Version ' + this.applicationInfo.version : '-'}
             </p>
 
-            <p className='gs-sub-header' >
+            <p className='gs-sub-header' style={{ fontSize: '0.9em', opacity: 0.7 }} >
                 {'VS Code API Version: ' + this.vscodeApiVersion}
             </p>
         </div>;
-    }
-
-    protected renderAIBanner(): React.ReactNode {
-        const framework = super.renderAIBanner();
-        if (React.isValidElement<React.DetailedHTMLProps<React.HTMLAttributes<HTMLDivElement>, HTMLDivElement>>(framework)) {
-            return React.cloneElement(framework, { className: 'gs-section' });
-        }
-        return framework;
     }
 }

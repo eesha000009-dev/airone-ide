@@ -1,18 +1,18 @@
 {
   "private": true,
-  "name": "theia-ide-browser-app",
-  "description": "Eclipse Theia IDE browser product",
-  "productName": "Theia IDE",
-  "version": "1.71.100",
+  "name": "airone-ide-browser-app",
+  "description": "Airone IDE - Robotics Programming Environment (Browser)",
+  "productName": "Airone IDE",
+  "version": "0.1.0",
   "license": "MIT",
-  "author": "Eclipse Theia <theia-dev@eclipse.org>",
-  "homepage": "https://github.com/eclipse-theia/theia-ide#readme",
+  "author": "Airone",
+  "homepage": "https://github.com/eesha000009-dev/airone-ide#readme",
   "bugs": {
-    "url": "https://github.com/eclipse-theia/theia/issues"
+    "url": "https://github.com/eesha000009-dev/airone-ide/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/eclipse-theia/theia-ide.git"
+    "url": "git+https://github.com/eesha000009-dev/airone-ide.git"
   },
   "engines": {
     "yarn": ">=1.7.0 <2",
@@ -21,7 +21,7 @@
   "theia": {
     "frontend": {
       "config": {
-        "applicationName": "Theia IDE",
+        "applicationName": "Airone IDE",
         "warnOnPotentiallyInsecureHostPattern": false,
         "preferences": {
           "toolbar.showToolbar": true,
@@ -36,7 +36,7 @@
         "warnOnPotentiallyInsecureHostPattern": false,
         "startupTimeout": -1,
         "resolveSystemPlugins": false,
-        "configurationFolder": ".theia-ide",
+        "configurationFolder": ".airone-ide",
         "frontendConnectionTimeout": 3000
       }
     },
@@ -47,29 +47,6 @@
     }
   },
   "dependencies": {
-    "@theia/ai-anthropic": "1.72.0-next.42",
-    "@theia/ai-chat": "1.72.0-next.42",
-    "@theia/ai-chat-ui": "1.72.0-next.42",
-    "@theia/ai-claude-code": "1.72.0-next.42",
-    "@theia/ai-code-completion": "1.72.0-next.42",
-    "@theia/ai-codex": "1.72.0-next.42",
-    "@theia/ai-copilot": "1.72.0-next.42",
-    "@theia/ai-core": "1.72.0-next.42",
-    "@theia/ai-core-ui": "1.72.0-next.42",
-    "@theia/ai-editor": "1.72.0-next.42",
-    "@theia/ai-google": "1.72.0-next.42",
-    "@theia/ai-history": "1.72.0-next.42",
-    "@theia/ai-huggingface": "1.72.0-next.42",
-    "@theia/ai-ide": "1.72.0-next.42",
-    "@theia/ai-llamafile": "1.72.0-next.42",
-    "@theia/ai-mcp": "1.72.0-next.42",
-    "@theia/ai-mcp-server": "1.72.0-next.42",
-    "@theia/ai-mcp-ui": "1.72.0-next.42",
-    "@theia/ai-ollama": "1.72.0-next.42",
-    "@theia/ai-openai": "1.72.0-next.42",
-    "@theia/ai-scanoss": "1.72.0-next.42",
-    "@theia/ai-terminal": "1.72.0-next.42",
-    "@theia/ai-vercel-ai": "1.72.0-next.42",
     "@theia/bulk-edit": "1.72.0-next.42",
     "@theia/callhierarchy": "1.72.0-next.42",
     "@theia/collaboration": "1.72.0-next.42",
@@ -94,7 +71,6 @@
     "@theia/notebook": "1.72.0-next.42",
     "@theia/outline-view": "1.72.0-next.42",
     "@theia/output": "1.72.0-next.42",
-    "@theia/plugin-dev": "1.72.0-next.42",
     "@theia/plugin-ext": "1.72.0-next.42",
     "@theia/plugin-ext-vscode": "1.72.0-next.42",
     "@theia/preferences": "1.72.0-next.42",
@@ -118,7 +94,8 @@
     "@theia/vsx-registry": "1.72.0-next.42",
     "@theia/workspace": "1.72.0-next.42",
     "fs-extra": "^9.1.0",
-    "theia-ide-product-ext": "1.71.100"
+    "airone-ide-product-ext": "0.1.0",
+    "airone-ide-airo-ext": "0.1.0"
   },
   "devDependencies": {
     "@theia/cli": "1.72.0-next.42",

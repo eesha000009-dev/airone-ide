@@ -1,5 +1,5 @@
 /********************************************************************************
- * Copyright (C) 2020 EclipseSource and others.
+ * Copyright (C) 2025 Airone and others.
  *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License, which is available in the project root.
@@ -94,10 +94,10 @@ export class TheiaIDEAboutDialog extends AboutDialog {
     protected renderVersion(): React.ReactNode {
         return <div>
             <p className='gs-sub-header' >
-                {this.applicationInfo ? 'Version ' + this.applicationInfo.version : '-'}
+                {this.applicationInfo ? 'Airone IDE Version ' + this.applicationInfo.version : '-'}
             </p>
 
-            <p className='gs-sub-header' >
+            <p className='gs-sub-header' style={{ fontSize: '0.9em', opacity: 0.7 }} >
                 {'VS Code API Version: ' + this.vscodeApiVersion}
             </p>
         </div>;

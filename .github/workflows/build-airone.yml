@@ -1,0 +1,154 @@
+name: Build Airone IDE
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths-ignore:
+      - '**/*.md'
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+      - master
+    paths-ignore:
+      - '**/*.md'
+
+jobs:
+  build-windows:
+    name: Windows Build
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Use Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        shell: bash
+        run: yarn --skip-integrity-check --network-timeout 100000
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build extensions
+        shell: bash
+        run: yarn build:extensions
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+
+      - name: Build application
+        shell: bash
+        run: yarn build:applications
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download plugins
+        shell: bash
+        run: yarn download:plugins
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package Windows
+        shell: bash
+        run: yarn package:applications
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows Installer
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AironeIDE-Windows
+          path: |
+            applications/electron/dist/*.exe
+            applications/electron/dist/*.blockmap
+          retention-days: 30
+
+      - name: Upload Windows Installer (PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AironeIDE-Windows-PR
+          path: |
+            applications/electron/dist/*.exe
+          retention-days: 5
+
+  build-linux:
+    name: Linux Build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbfile-dev libx11-dev libsecret-1-dev libfontconfig1
+
+      - name: Install dependencies
+        shell: bash
+        run: yarn --skip-integrity-check --network-timeout 100000
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build extensions
+        shell: bash
+        run: yarn build:extensions
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+
+      - name: Build application
+        shell: bash
+        run: yarn build:applications
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download plugins
+        shell: bash
+        run: yarn download:plugins
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package Linux
+        shell: bash
+        run: yarn package:applications
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux AppImage
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AironeIDE-Linux
+          path: |
+            applications/electron/dist/*.AppImage
+            applications/electron/dist/*.deb
+          retention-days: 30

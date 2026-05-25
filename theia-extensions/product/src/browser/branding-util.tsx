@@ -1,5 +1,5 @@
 /********************************************************************************
- * Copyright (C) 2020 EclipseSource and others.
+ * Copyright (C) 2025 Airone and others.
  *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License, which is available in the project root.
@@ -20,7 +20,7 @@ export interface ExternalBrowserLinkProps {
 export function renderProductName(): React.ReactNode {
     const variant = getBrandingVariant();
     const suffix = variant !== 'stable' ? ` ${variant.charAt(0).toUpperCase() + variant.slice(1)}` : '';
-    return <h1>Eclipse Theia <span className="gs-blue-header">IDE</span>{suffix}</h1>;
+    return <h1>Airone <span className="gs-blue-header">IDE</span>{suffix}</h1>;
 }
 
 function BrowserLink(props: ExternalBrowserLinkProps): JSX.Element {
@@ -40,14 +40,15 @@ export function renderWhatIs(windowService: WindowService): React.ReactNode {
             What is this?
         </h3>
         <div>
-            The Eclipse Theia IDE is a modern and open IDE for cloud and desktop. The Theia IDE is based on the <BrowserLink text="Theia platform"
-                url="https://theia-ide.org" windowService={windowService} ></BrowserLink>.
+            Airone IDE is a modern robotics programming environment for building and programming robots
+            with the <BrowserLink text=".airo language" url="https://github.com/eesha000009-dev/airone-ide"
+                windowService={windowService} ></BrowserLink>.
+            Compile .airo programs to ESP32 microcontrollers, monitor serial output, and sync with your AI Backbone.
         </div>
         <div>
-            The IDE is available as a <BrowserLink text="downloadable desktop application" url="https://theia-ide.org//#theiaidedownload"
-                windowService={windowService} ></BrowserLink>. You can also <BrowserLink text="try the latest version of the Theia IDE online"
-                    url="https://try.theia-cloud.io/" windowService={windowService} ></BrowserLink>. The online test version is limited to 30 minutes per session and hosted
-            via <BrowserLink text="Theia Cloud" url="https://theia-cloud.io/" windowService={windowService} ></BrowserLink>.
+            Airone IDE is built on the <BrowserLink text="Eclipse Theia platform"
+                url="https://theia-ide.org" windowService={windowService} ></BrowserLink>, providing a
+            robust, extensible foundation for professional robotics development.
         </div>
     </div>;
 }
@@ -55,17 +56,16 @@ export function renderWhatIs(windowService: WindowService): React.ReactNode {
 export function renderExtendingCustomizing(windowService: WindowService): React.ReactNode {
     return <div className='gs-section'>
         <h3 className='gs-section-header'>
-            Extending/Customizing the Theia IDE
+            Extending Airone IDE
         </h3>
         <div >
-            You can extend the Theia IDE at runtime by installing VS Code extensions, e.g. from the <BrowserLink text="OpenVSX registry" url="https://open-vsx.org/"
+            You can extend Airone IDE at runtime by installing VS Code extensions, e.g. from the <BrowserLink text="OpenVSX registry" url="https://open-vsx.org/"
                 windowService={windowService} ></BrowserLink>, an open marketplace for VS Code extensions. Just open the extension view or browse <BrowserLink
                     text="OpenVSX online" url="https://open-vsx.org/" windowService={windowService} ></BrowserLink>.
         </div>
         <div>
-            Furthermore, the Theia IDE is based on the flexible Theia platform. Therefore, the Theia IDE can serve as a <span className='gs-text-bold'>template</span> for building
-            custom tools and IDEs. Browse <BrowserLink text="the documentation" url="https://theia-ide.org/docs/composing_applications/"
-                windowService={windowService} ></BrowserLink> to help you customize and build your own Eclipse Theia-based product.
+            Airone IDE supports custom .airo language extensions and robotics-specific tooling. Visit the <BrowserLink text="Airone IDE repository" url="https://github.com/eesha000009-dev/airone-ide"
+                windowService={windowService} ></BrowserLink> to learn more about building extensions for the Airone ecosystem.
         </div>
     </div>;
 }
@@ -73,12 +73,11 @@ export function renderExtendingCustomizing(windowService: WindowService): React.
 export function renderSupport(windowService: WindowService): React.ReactNode {
     return <div className='gs-section'>
         <h3 className='gs-section-header'>
-            Professional Support
+            Support
         </h3>
         <div>
-            Professional support, implementation services, consulting and training for building tools like Theia IDE and for building other tools based on Eclipse Theia is
-            available by selected companies as listed on the <BrowserLink text=" Theia support page" url="https://theia-ide.org/support/"
-                windowService={windowService} ></BrowserLink>.
+            For support with Airone IDE, please visit the <BrowserLink text="Airone IDE GitHub" url="https://github.com/eesha000009-dev/airone-ide"
+                windowService={windowService} ></BrowserLink>. You can find documentation, report issues, and connect with the community there.
         </div>
     </div>;
 }
@@ -89,17 +88,14 @@ export function renderTickets(windowService: WindowService): React.ReactNode {
             Reporting feature requests and bugs
         </h3>
         <div >
-            The features in the Eclipse Theia IDE are based on Theia and the included
-            extensions/plugins. For bugs in Theia please consider opening an issue in
-            the <BrowserLink text="Theia project on Github" url="https://github.com/eclipse-theia/theia/issues/new/choose"
+            If you encounter a bug in Airone IDE or have a feature request, please
+            <BrowserLink text=" open an issue on GitHub" url="https://github.com/eesha000009-dev/airone-ide/issues/new/choose"
                 windowService={windowService} ></BrowserLink>.
         </div>
         <div>
-            Eclipse Theia IDE only packages existing functionality into a product and installers
-            for the product. If you believe there is a mistake in packaging, something needs to be added to the
-            packaging or the installers do not work properly,
-            please <BrowserLink text="open an issue on Github" url="https://github.com/eclipse-theia/theia-ide/issues/new/choose"
-                windowService={windowService} ></BrowserLink> to let us know.
+            For issues related to the underlying Theia platform, please consider opening an issue in
+            the <BrowserLink text="Theia project on GitHub" url="https://github.com/eclipse-theia/theia/issues/new/choose"
+                windowService={windowService} ></BrowserLink>.
         </div>
     </div>;
 }
@@ -110,8 +106,8 @@ export function renderSourceCode(windowService: WindowService): React.ReactNode 
             Source Code
         </h3>
         <div >
-            The source code of Eclipse Theia IDE is available
-            on <BrowserLink text="Github" url="https://github.com/eclipse-theia/theia-ide"
+            The source code of Airone IDE is available
+            on <BrowserLink text="GitHub" url="https://github.com/eesha000009-dev/airone-ide"
                 windowService={windowService} ></BrowserLink>.
         </div>
     </div>;
@@ -123,8 +119,8 @@ export function renderDocumentation(windowService: WindowService): React.ReactNo
             Documentation
         </h3>
         <div >
-            Please see the <BrowserLink text="documentation" url="https://theia-ide.org/docs/user_getting_started/"
-                windowService={windowService} ></BrowserLink> on how to use the Theia IDE.
+            Please see the <BrowserLink text="Airone IDE documentation" url="https://github.com/eesha000009-dev/airone-ide#readme"
+                windowService={windowService} ></BrowserLink> on how to use Airone IDE for robotics programming.
         </div>
     </div>;
 }
@@ -132,14 +128,11 @@ export function renderDocumentation(windowService: WindowService): React.ReactNo
 export function renderCollaboration(windowService: WindowService): React.ReactNode {
     return <div className='gs-section'>
         <h3 className='gs-section-header'>
-            Collaboration
+            AI Backbone
         </h3>
         <div >
-            The IDE features a built-in collaboration feature.
-            You can share your workspace with others and work together in real-time by clicking on the <i>Collaborate</i> item in the status bar.
-            The collaboration feature is powered by
-            the <BrowserLink text="Open Collaboration Tools" url="https://www.open-collab.tools/" windowService={windowService} /> project
-            and uses their public server infrastructure.
+            Airone IDE connects to your AI Backbone for intelligent code assistance, robot configuration,
+            and deployment management. Configure your AI Backbone connection in the settings to get started.
         </div>
     </div>;
 }
@@ -150,12 +143,12 @@ export function renderDownloads(): React.ReactNode {
             Updates and Downloads
         </h3>
         <div className='gs-action-container'>
-            You can update Eclipse Theia IDE directly in this application by navigating to
+            You can update Airone IDE directly in this application by navigating to
             File {'>'} Preferences {'>'} Check for Updates… Moreover the application will check for updates
             after each launch automatically.
         </div>
         <div className='gs-action-container'>
-            Alternatively you can download the most recent version from the download page.
+            Alternatively you can download the most recent version from the <a href="https://github.com/eesha000009-dev/airone-ide/releases" target='_blank' rel='noreferrer'>Airone IDE releases page</a>.
         </div>
     </div>;
 }
