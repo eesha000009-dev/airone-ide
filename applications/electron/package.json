@@ -6,7 +6,10 @@
   "version": "0.1.0",
   "main": "scripts/theia-electron-main.js",
   "license": "MIT",
-  "author": "Airone",
+  "author": {
+    "name": "Airone",
+    "email": "airone@eesha000009.dev"
+  },
   "homepage": "https://github.com/eesha000009-dev/airone-ide#readme",
   "bugs": {
     "url": "https://github.com/eesha000009-dev/airone-ide/issues"
