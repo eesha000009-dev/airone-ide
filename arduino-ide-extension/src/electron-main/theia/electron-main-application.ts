@@ -213,21 +213,28 @@ export class ElectronMainApplication extends TheiaElectronMainApplication {
           this._appInfo = updateAppInfo(this._appInfo, this._config);
           this.hookApplicationEvents();
           this.showInitialWindow(undefined);
-          const [port] = await Promise.all([
-            this.startBackend(),
-            app.whenReady(),
-          ]);
-          this.startContentTracing();
-          this._backendPort.resolve(port);
-          await Promise.all([
-            this.attachElectronSecurityToken(port),
-            this.startContributions(),
-          ]);
-          this.handleMainCommand({
-            file: args.file,
-            cwd,
-            secondInstance: false,
-          });
+          try {
+            const [port] = await Promise.all([
+              this.startBackend(),
+              app.whenReady(),
+            ]);
+            this.startContentTracing();
+            this._backendPort.resolve(port);
+            await Promise.all([
+              this.attachElectronSecurityToken(port),
+              this.startContributions(),
+            ]);
+            this.handleMainCommand({
+              file: args.file,
+              cwd,
+              secondInstance: false,
+            });
+          } catch (err) {
+            console.error('[Airone IDE] Fatal error during startup:', err);
+            // If the backend fails to start, quit the app instead of hanging
+            // on the splash screen forever.
+            setTimeout(() => app.quit(), 1000);
+          }
         }
       )
       .parse();
@@ -257,7 +264,7 @@ export class ElectronMainApplication extends TheiaElectronMainApplication {
     const traceOptions = {
       categoryFilter: defaultTraceCategories.join(','),
       traceOptions: 'record-until-full',
-      options: 'sampling-frequency=10000',
+      options: 'sampling-frequency:10000',
     };
     (async () => {
       const appPath = app.getAppPath();
@@ -585,6 +592,16 @@ export class ElectronMainApplication extends TheiaElectronMainApplication {
     // Set the electron version for both the dev and the production mode. (https://github.com/eclipse-theia/theia/issues/3254)
     // Otherwise, the forked backend processes will not know that they're serving the electron frontend.
     process.env.THEIA_ELECTRON_VERSION = process.versions.electron;
+
+    // Debug: log critical paths for diagnosing backend startup failures
+    console.log('[Airone IDE] Backend startup configuration:');
+    console.log(`  THEIA_APP_PROJECT_PATH: ${this.globals.THEIA_APP_PROJECT_PATH}`);
+    console.log(`  THEIA_BACKEND_MAIN_PATH: ${this.globals.THEIA_BACKEND_MAIN_PATH}`);
+    console.log(`  THEIA_ELECTRON_VERSION: ${process.versions.electron}`);
+    console.log(`  noBackendFork: ${noBackendFork}`);
+    console.log(`  Electron version: ${process.versions.electron}`);
+    console.log(`  Node ABI version: ${process.versions.modules}`);
+
     if (noBackendFork) {
       process.env[ElectronSecurityToken] = JSON.stringify(
         this.electronSecurityToken
@@ -598,53 +615,122 @@ export class ElectronMainApplication extends TheiaElectronMainApplication {
       // https://github.com/eclipse-theia/theia/issues/8227
       if (process.platform === 'darwin') {
         // https://github.com/electron/electron/issues/3657
-        // https://stackoverflow.com/questions/10242115/os-x-strange-psn-command-line-parameter-when-launched-from-finder#comment102377986_10242200
         // macOS appends an extra `-psn_0_someNumber` arg if a file is opened from Finder after downloading from the Internet.
-        // "AppName" is an app downloaded from the Internet. Are you sure you want to open it?
         args = args.filter((arg) => !arg.startsWith('-psn'));
       }
+
+      // Get fork options and explicitly ensure ELECTRON_RUN_AS_NODE is set.
+      // This is critical: the forked backend process must run as a Node.js process
+      // using Electron's V8 engine, not as a full Electron app.
+      // Electron's fork() normally sets this, but we set it explicitly as a safety measure.
+      const forkOptions = await this.getForkOptions();
+      forkOptions.env = {
+        ...forkOptions.env,
+        ELECTRON_RUN_AS_NODE: '1',
+      };
+
       const backendProcess = fork(
         this.globals.THEIA_BACKEND_MAIN_PATH,
         args,
-        await this.getForkOptions()
+        forkOptions
       );
-      console.log(`Starting backend process. PID: ${backendProcess.pid}`);
+      console.log(`[Airone IDE] Starting backend process. PID: ${backendProcess.pid}`);
+      console.log(`[Airone IDE] Backend main path: ${this.globals.THEIA_BACKEND_MAIN_PATH}`);
+
+      // CRITICAL: Capture stderr from the forked backend process.
+      // If the backend crashes due to native module ABI mismatch or missing modules,
+      // the error will appear on stderr. Without this, the crash is completely silent
+      // and the app just shows the splash screen forever.
+      let backendStderr = '';
+      if (backendProcess.stderr) {
+        backendProcess.stderr.on('data', (data: Buffer) => {
+          const msg = data.toString();
+          backendStderr += msg;
+          console.error(`[Airone IDE Backend stderr] ${msg.trimEnd()}`);
+        });
+      }
+      if (backendProcess.stdout) {
+        backendProcess.stdout.on('data', (data: Buffer) => {
+          console.log(`[Airone IDE Backend stdout] ${data.toString().trimEnd()}`);
+        });
+      }
+
       return new Promise((resolve, reject) => {
+        // Timeout: if the backend doesn't respond within 45 seconds, consider it failed.
+        // This prevents the app from hanging forever on the splash screen.
+        const backendTimeout = setTimeout(() => {
+          const detail = 'Backend process did not start within 45 seconds. This usually means:\n' +
+            '1. A native module (keytar, drivelist) has the wrong ABI (compiled for Node.js instead of Electron)\n' +
+            '2. A required dependency is missing from the packaged app\n' +
+            '3. The backend process is stuck or deadlocked';
+          console.error(`[Airone IDE] ${detail}`);
+          console.error(`[Airone IDE] Backend stderr captured:\n${backendStderr || '(empty)'}`);
+          try {
+            const { dialog } = require('electron');
+            dialog.showErrorBox(
+              'Airone IDE - Startup Timeout',
+              `The backend process did not start within 45 seconds.\n\n` +
+              `Captured stderr:\n${backendStderr.substring(0, 500) || '(none)'}\n\n` +
+              `Please check the log files in:\n` +
+              `${this.getLogDirectory()}\n\n` +
+              `If the problem persists, try reinstalling Airone IDE.`
+            );
+          } catch (e) {
+            console.error('[Airone IDE] Could not show error dialog:', e);
+          }
+          // Kill the backend process if it's still running
+          try {
+            if (backendProcess.pid) {
+              process.kill(backendProcess.pid);
+            }
+          } catch (e) { /* ignore */ }
+          reject(new Error(detail));
+        }, 45_000);
+
         // The forked backend process sends the resolved http(s) server port via IPC, and forwards the log messages.
         backendProcess.on('message', (arg: unknown) => {
           if (isConsoleLogParams(arg)) {
             const { message, severity } = arg;
             console[severity](message);
           } else if (isAddressInfo(arg)) {
+            clearTimeout(backendTimeout);
+            console.log(`[Airone IDE] Backend started successfully on port ${arg.port}`);
             resolve(arg.port);
           }
         });
         backendProcess.on('error', (error) => {
-          console.error(`Backend process error: ${error}`);
+          clearTimeout(backendTimeout);
+          console.error(`[Airone IDE] Backend process error: ${error}`);
           reject(error);
         });
         // CRITICAL: Handle backend process exit. Without this handler, if the
         // backend crashes, the Promise never resolves/rejects, and the app
         // shows the splash screen forever with no feedback to the user.
-        // This was missing in the original Airone IDE port and caused the
-        // "stuck on splash screen" issue.
         backendProcess.on('exit', (code, signal) => {
+          clearTimeout(backendTimeout);
           const detail = signal
             ? `Backend process was killed by signal: ${signal}`
             : `Backend process exited with code: ${code ?? 'null'}`;
-          console.error(detail);
-          // Show a user-friendly error dialog
-          const { dialog } = require('electron');
-          dialog.showErrorBox(
-            'Airone IDE - Startup Error',
-            `The backend process failed to start.\n\n${detail}\n\n` +
-            `Please check the log files in:\n` +
-            `${this.getLogDirectory()}\n\n` +
-            `If the problem persists, try reinstalling Airone IDE.`
-          );
+          console.error(`[Airone IDE] ${detail}`);
+          console.error(`[Airone IDE] Backend stderr captured:\n${backendStderr || '(empty)'}`);
+          // Show a user-friendly error dialog with the stderr output
+          try {
+            const { dialog } = require('electron');
+            dialog.showErrorBox(
+              'Airone IDE - Startup Error',
+              `The backend process failed to start.\n\n${detail}\n\n` +
+              `Captured stderr:\n${backendStderr.substring(0, 500) || '(none)'}\n\n` +
+              `Please check the log files in:\n` +
+              `${this.getLogDirectory()}\n\n` +
+              `If the problem persists, try reinstalling Airone IDE.`
+            );
+          } catch (e) {
+            console.error('[Airone IDE] Could not show error dialog:', e);
+          }
           reject(new Error(detail));
         });
         app.on('quit', () => {
+          clearTimeout(backendTimeout);
           try {
             // If we forked the process for the clusters, we need to manually terminate it.
             // See: https://github.com/eclipse-theia/theia/issues/835

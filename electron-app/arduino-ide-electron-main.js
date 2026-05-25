@@ -23,6 +23,8 @@ if (config.buildDate) {
   // Verify the plugins directory exists
   if (!fs.existsSync(pluginsPath)) {
     console.warn(`[Airone IDE] Plugins directory not found: ${pluginsPath}`);
+  } else {
+    console.log(`[Airone IDE] Plugins directory found: ${pluginsPath}`);
   }
   // `plugins` folder inside the `~/.aironeIDE` folder. For manually installed VS Code extensions.
   process.env.THEIA_PLUGINS = [
@@ -32,6 +34,16 @@ if (config.buildDate) {
     .filter(Boolean)
     .join(',');
 }
+
+// Debug: Log critical startup information
+console.log('[Airone IDE] Starting Electron application');
+console.log(`[Airone IDE] __dirname: ${__dirname}`);
+console.log(`[Airone IDE] process.cwd(): ${process.cwd()}`);
+console.log(`[Airone IDE] process.versions.electron: ${process.versions.electron}`);
+console.log(`[Airone IDE] process.versions.node: ${process.versions.node}`);
+console.log(`[Airone IDE] process.versions.modules (ABI): ${process.versions.modules}`);
+console.log(`[Airone IDE] config.buildDate: ${config.buildDate || '(not set - dev mode)'}`);
+console.log(`[Airone IDE] THEIA_DEFAULT_PLUGINS: ${process.env.THEIA_DEFAULT_PLUGINS || '(not set)'}`);
 
 // Guard: only load the main Electron module if running inside Electron.
 // When loaded by electron-builder during packaging (plain Node.js context),
@@ -44,6 +56,16 @@ if (process.versions.electron) {
     console.error('[Airone IDE] The application cannot start. Please reinstall Airone IDE.');
     process.exit(1);
   }
+  // Also verify the backend main.js exists (this is the file that gets forked as the backend process)
+  const backendMainPath = path.resolve(__dirname, 'lib', 'backend', 'main.js');
+  if (!fs.existsSync(backendMainPath)) {
+    console.error(`[Airone IDE] CRITICAL: Backend main module not found at: ${backendMainPath}`);
+    console.error('[Airone IDE] The backend process cannot start. Please reinstall Airone IDE.');
+    process.exit(1);
+  }
+  console.log(`[Airone IDE] Electron main module found: ${electronMainPath}.js`);
+  console.log(`[Airone IDE] Backend main module found: ${backendMainPath}`);
+  console.log('[Airone IDE] Loading Electron main module...');
   require('./lib/backend/electron-main');
 } else {
   console.warn('[Airone IDE] Not running inside Electron (process.versions.electron is undefined). Skipping electron-main load.');

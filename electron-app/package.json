@@ -129,7 +129,10 @@
       "src-gen",
       "lib",
       "resources/icons/512x512.png",
-      "!**node_modules/**"
+      "!**node_modules/**",
+      "node_modules/keytar/**",
+      "node_modules/drivelist/**",
+      "node_modules/node-pty/**"
     ],
     "extraResources": [
       {

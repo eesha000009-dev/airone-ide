@@ -1,0 +1,210 @@
+From 41c0bb7ffbc1f4433b0365d0f33a9b5a70436bc8 Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Mon, 25 May 2026 02:18:12 +0000
+Subject: [PATCH] fix: resolve splash screen stuck issue - revert node_modules
+ inclusion + add backend crash handling
+
+ROOT CAUSE: The electron-builder 'files' config was changed from
+'!**node_modules/**' to 'node_modules/**/*' which includes ALL packages
+from node_modules (including devDependencies like grpc-tools with native
+modules compiled for Node.js, not Electron). This causes native module
+ABI mismatches that crash the forked backend process, leaving the app
+stuck on the splash screen forever.
+
+FIXES:
+1. Revert 'files' config to '!**node_modules/**' (matches original
+   Arduino IDE - electron-builder auto-includes production deps)
+2. Add missing backendProcess.on('exit') handler that prevents the
+   app from hanging forever when the backend crashes
+3. Add error dialog that shows when backend fails (instead of silent
+   splash screen)
+4. Add better startup logging in arduino-ide-electron-main.js
+5. Add try-catch in arduino-ide-backend-main.js
+6. Fix file logger appName from 'Arduino IDE' to 'Airone IDE'
+7. Fix fallback config to use 'Airone IDE' branding
+---
+ .../theia/electron-main-application.ts        | 50 +++++++++++++++++--
+ electron-app/arduino-ide-backend-main.js      | 12 ++++-
+ electron-app/arduino-ide-electron-main.js     | 33 +++++++++---
+ electron-app/package.json                     |  2 +-
+ 4 files changed, 86 insertions(+), 11 deletions(-)
+
+diff --git a/arduino-ide-extension/src/electron-main/theia/electron-main-application.ts b/arduino-ide-extension/src/electron-main/theia/electron-main-application.ts
+index b6d0ff2..4122344 100644
+--- a/arduino-ide-extension/src/electron-main/theia/electron-main-application.ts
++++ b/arduino-ide-extension/src/electron-main/theia/electron-main-application.ts
+@@ -84,7 +84,7 @@ function enableFileLogger() {
+     process.env['XDG_CONFIG_HOME'] = xdgConfigHome;
+   }
+   setupFileLog({
+-    appName: 'Arduino IDE',
++    appName: 'Airone IDE',
+     maxSize: 10 * 1024 * 1024,
+   });
+   for (const name of consoleLogFunctionNames) {
+@@ -620,8 +620,30 @@ export class ElectronMainApplication extends TheiaElectronMainApplication {
+           }
+         });
+         backendProcess.on('error', (error) => {
++          console.error(`Backend process error: ${error}`);
+           reject(error);
+         });
++        // CRITICAL: Handle backend process exit. Without this handler, if the
++        // backend crashes, the Promise never resolves/rejects, and the app
++        // shows the splash screen forever with no feedback to the user.
++        // This was missing in the original Airone IDE port and caused the
++        // "stuck on splash screen" issue.
++        backendProcess.on('exit', (code, signal) => {
++          const detail = signal
++            ? `Backend process was killed by signal: ${signal}`
++            : `Backend process exited with code: ${code ?? 'null'}`;
++          console.error(detail);
++          // Show a user-friendly error dialog
++          const { dialog } = require('electron');
++          dialog.showErrorBox(
++            'Airone IDE - Startup Error',
++            `The backend process failed to start.\n\n${detail}\n\n` +
++            `Please check the log files in:\n` +
++            `${this.getLogDirectory()}\n\n` +
++            `If the problem persists, try reinstalling Airone IDE.`
++          );
++          reject(new Error(detail));
++        });
+         app.on('quit', () => {
+           try {
+             // If we forked the process for the clusters, we need to manually terminate it.
+@@ -744,6 +766,28 @@ export class ElectronMainApplication extends TheiaElectronMainApplication {
+     return this._firstWindowId;
+   }
+ 
++  /**
++   * Returns the log directory path for error dialogs.
++   * On Windows: %APPDATA%\Airone IDE\logs
++   * On macOS: ~/Library/Logs/Airone IDE
++   * On Linux: ~/.config/Airone IDE/logs
++   */
++  private getLogDirectory(): string {
++    const platform = process.platform;
++    const appName = 'Airone IDE';
++    if (platform === 'win32') {
++      return join(process.env.APPDATA || os.homedir(), appName, 'logs');
++    } else if (platform === 'darwin') {
++      return join(os.homedir(), 'Library', 'Logs', appName);
++    } else {
++      return join(
++        process.env.XDG_CONFIG_HOME || join(os.homedir(), '.config'),
++        appName,
++        'logs'
++      );
++    }
++  }
++
+   get appInfo(): AppInfo {
+     return this._appInfo;
+   }
+@@ -893,7 +937,7 @@ async function updateFrontendApplicationConfigFromPackageJson(
+ }
+ 
+ const fallbackFrontendAppConfig: FrontendApplicationConfig = {
+-  applicationName: 'Arduino IDE',
++  applicationName: 'Airone IDE',
+   defaultTheme: {
+     light: 'arduino-theme',
+     dark: 'arduino-theme-dark',
+@@ -903,7 +947,7 @@ const fallbackFrontendAppConfig: FrontendApplicationConfig = {
+   defaultLocale: '',
+   electron: {
+     showWindowEarly: true,
+-    uriScheme: 'arduino-ide',
++    uriScheme: 'airone-ide',
+   },
+   reloadOnReconnect: true,
+ };
+diff --git a/electron-app/arduino-ide-backend-main.js b/electron-app/arduino-ide-backend-main.js
+index a6e5a12..aa89ecb 100644
+--- a/electron-app/arduino-ide-backend-main.js
++++ b/electron-app/arduino-ide-backend-main.js
+@@ -14,4 +14,14 @@ if (process.send) {
+   }
+ }
+ 
+-require('./src-gen/backend/main');
++// Load the Theia-generated backend main with error handling
++try {
++  require('./src-gen/backend/main');
++} catch (err) {
++  console.error('[Airone IDE Backend] FATAL: Failed to load the backend main module:', err);
++  // If we have IPC, send the error to the parent process
++  if (process.send) {
++    process.send({ severity: 'error', message: `FATAL: Backend failed to start: ${err.message || err}` });
++  }
++  process.exit(1);
++}
+diff --git a/electron-app/arduino-ide-electron-main.js b/electron-app/arduino-ide-electron-main.js
+index 71aba7a..be60eb5 100644
+--- a/electron-app/arduino-ide-electron-main.js
++++ b/electron-app/arduino-ide-electron-main.js
+@@ -3,14 +3,27 @@
+ 
+ const os = require('os');
+ const path = require('path');
+-const config = require('./package.json').theia.frontend.config;
+-// `buildDate` is only available in the bundled application.
++const fs = require('fs');
++
++// Read the package.json to get Theia frontend config.
++// In the packaged app, the package.json is generated by electron-builder with extra metadata.
++let config;
++try {
++  config = require('./package.json').theia.frontend.config;
++} catch (err) {
++  console.error('[Airone IDE] Failed to read package.json theia config:', err);
++  config = {};
++}
++
++// `buildDate` is only available in the bundled application (set by electron-builder's extraMetadata).
+ if (config.buildDate) {
+   // `plugins` folder inside Airone IDE. Shipped with VS Code extensions.
+-  process.env.THEIA_DEFAULT_PLUGINS = `local-dir:${path.resolve(
+-    __dirname,
+-    'plugins'
+-  )}`;
++  const pluginsPath = path.resolve(__dirname, 'plugins');
++  process.env.THEIA_DEFAULT_PLUGINS = `local-dir:${pluginsPath}`;
++  // Verify the plugins directory exists
++  if (!fs.existsSync(pluginsPath)) {
++    console.warn(`[Airone IDE] Plugins directory not found: ${pluginsPath}`);
++  }
+   // `plugins` folder inside the `~/.aironeIDE` folder. For manually installed VS Code extensions.
+   process.env.THEIA_PLUGINS = [
+     process.env.THEIA_PLUGINS,
+@@ -25,5 +38,13 @@ if (config.buildDate) {
+ // `process.versions.electron` is undefined. Inside Electron it's set (e.g. "30.1.2").
+ // This prevents the crash: "Cannot read properties of undefined (reading 'requestSingleInstanceLock')"
+ if (process.versions.electron) {
++  const electronMainPath = path.resolve(__dirname, 'lib', 'backend', 'electron-main');
++  if (!fs.existsSync(electronMainPath + '.js')) {
++    console.error(`[Airone IDE] CRITICAL: Electron main module not found at: ${electronMainPath}.js`);
++    console.error('[Airone IDE] The application cannot start. Please reinstall Airone IDE.');
++    process.exit(1);
++  }
+   require('./lib/backend/electron-main');
++} else {
++  console.warn('[Airone IDE] Not running inside Electron (process.versions.electron is undefined). Skipping electron-main load.');
+ }
+diff --git a/electron-app/package.json b/electron-app/package.json
+index f2edb0e..05fa78c 100644
+--- a/electron-app/package.json
++++ b/electron-app/package.json
+@@ -129,7 +129,7 @@
+       "src-gen",
+       "lib",
+       "resources/icons/512x512.png",
+-      "node_modules/**/*"
++      "!**node_modules/**"
+     ],
+     "extraResources": [
+       {
+-- 
+2.47.3
+
