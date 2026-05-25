@@ -7,6 +7,7 @@ import {
   Event as ElectronEvent,
   ipcMain,
 } from '@theia/core/electron-shared/electron';
+import * as os from 'os';
 import {
   Disposable,
   DisposableCollection,
