@@ -14,4 +14,14 @@ if (process.send) {
   }
 }
 
-require('./src-gen/backend/main');
+// Load the Theia-generated backend main with error handling
+try {
+  require('./src-gen/backend/main');
+} catch (err) {
+  console.error('[Airone IDE Backend] FATAL: Failed to load the backend main module:', err);
+  // If we have IPC, send the error to the parent process
+  if (process.send) {
+    process.send({ severity: 'error', message: `FATAL: Backend failed to start: ${err.message || err}` });
+  }
+  process.exit(1);
+}

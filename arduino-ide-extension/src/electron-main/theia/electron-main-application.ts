@@ -84,7 +84,7 @@ function enableFileLogger() {
     process.env['XDG_CONFIG_HOME'] = xdgConfigHome;
   }
   setupFileLog({
-    appName: 'Arduino IDE',
+    appName: 'Airone IDE',
     maxSize: 10 * 1024 * 1024,
   });
   for (const name of consoleLogFunctionNames) {
@@ -620,7 +620,29 @@ export class ElectronMainApplication extends TheiaElectronMainApplication {
           }
         });
         backendProcess.on('error', (error) => {
+          console.error(`Backend process error: ${error}`);
           reject(error);
+        });
+        // CRITICAL: Handle backend process exit. Without this handler, if the
+        // backend crashes, the Promise never resolves/rejects, and the app
+        // shows the splash screen forever with no feedback to the user.
+        // This was missing in the original Airone IDE port and caused the
+        // "stuck on splash screen" issue.
+        backendProcess.on('exit', (code, signal) => {
+          const detail = signal
+            ? `Backend process was killed by signal: ${signal}`
+            : `Backend process exited with code: ${code ?? 'null'}`;
+          console.error(detail);
+          // Show a user-friendly error dialog
+          const { dialog } = require('electron');
+          dialog.showErrorBox(
+            'Airone IDE - Startup Error',
+            `The backend process failed to start.\n\n${detail}\n\n` +
+            `Please check the log files in:\n` +
+            `${this.getLogDirectory()}\n\n` +
+            `If the problem persists, try reinstalling Airone IDE.`
+          );
+          reject(new Error(detail));
         });
         app.on('quit', () => {
           try {
@@ -742,6 +764,28 @@ export class ElectronMainApplication extends TheiaElectronMainApplication {
 
   get firstWindowId(): number | undefined {
     return this._firstWindowId;
+  }
+
+  /**
+   * Returns the log directory path for error dialogs.
+   * On Windows: %APPDATA%\Airone IDE\logs
+   * On macOS: ~/Library/Logs/Airone IDE
+   * On Linux: ~/.config/Airone IDE/logs
+   */
+  private getLogDirectory(): string {
+    const platform = process.platform;
+    const appName = 'Airone IDE';
+    if (platform === 'win32') {
+      return join(process.env.APPDATA || os.homedir(), appName, 'logs');
+    } else if (platform === 'darwin') {
+      return join(os.homedir(), 'Library', 'Logs', appName);
+    } else {
+      return join(
+        process.env.XDG_CONFIG_HOME || join(os.homedir(), '.config'),
+        appName,
+        'logs'
+      );
+    }
   }
 
   get appInfo(): AppInfo {
@@ -893,7 +937,7 @@ async function updateFrontendApplicationConfigFromPackageJson(
 }
 
 const fallbackFrontendAppConfig: FrontendApplicationConfig = {
-  applicationName: 'Arduino IDE',
+  applicationName: 'Airone IDE',
   defaultTheme: {
     light: 'arduino-theme',
     dark: 'arduino-theme-dark',
@@ -903,7 +947,7 @@ const fallbackFrontendAppConfig: FrontendApplicationConfig = {
   defaultLocale: '',
   electron: {
     showWindowEarly: true,
-    uriScheme: 'arduino-ide',
+    uriScheme: 'airone-ide',
   },
   reloadOnReconnect: true,
 };

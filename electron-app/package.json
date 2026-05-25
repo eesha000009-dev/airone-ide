@@ -129,7 +129,7 @@
       "src-gen",
       "lib",
       "resources/icons/512x512.png",
-      "node_modules/**/*"
+      "!**node_modules/**"
     ],
     "extraResources": [
       {
