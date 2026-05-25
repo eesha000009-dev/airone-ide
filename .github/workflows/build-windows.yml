@@ -186,7 +186,7 @@ jobs:
           } catch {}
 
       - name: Upload artifact to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ github.event.inputs.version }}
           name: Airone IDE v${{ github.event.inputs.version }}
