@@ -1,0 +1,117 @@
+{
+  "name": "airo-language",
+  "displayName": "Airo Language Support",
+  "description": "Syntax highlighting, snippets, and language features for the .airo robotics programming language",
+  "version": "0.1.0",
+  "publisher": "airone",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "keywords": [
+    "airo",
+    "robotics",
+    "ESP32",
+    "IoT",
+    "embedded"
+  ],
+  "icon": "airo-icon.png",
+  "activationEvents": [
+    "onLanguage:airo"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "airo",
+        "aliases": [
+          "Airo",
+          "airo"
+        ],
+        "extensions": [
+          ".airo"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./airo-icon.png",
+          "dark": "./airo-icon.png"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "airo",
+        "scopeName": "source.airo",
+        "path": "./airo.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "airo",
+        "path": "./airo-snippets.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "airo.newSketch",
+        "title": "Airo: New Sketch"
+      },
+      {
+        "command": "airo.verify",
+        "title": "Airo: Verify Sketch"
+      },
+      {
+        "command": "airo.upload",
+        "title": "Airo: Upload to Board"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "airo.verify",
+        "key": "ctrl+r",
+        "when": "editorTextFocus && editorLangId == airo"
+      },
+      {
+        "command": "airo.upload",
+        "key": "ctrl+u",
+        "when": "editorTextFocus && editorLangId == airo"
+      }
+    ],
+    "configuration": {
+      "title": "Airo",
+      "properties": {
+        "airo.compilerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the airo_compiler Python module. Leave empty to use built-in verification."
+        },
+        "airo.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to Python executable. Leave empty to auto-detect."
+        },
+        "airo.defaultBoard": {
+          "type": "string",
+          "default": "esp32-devkit",
+          "enum": [
+            "esp32-devkit",
+            "esp32-s2",
+            "esp32-s3",
+            "esp32-c3",
+            "esp8266"
+          ],
+          "description": "Default board target for compilation"
+        },
+        "airo.serialBaudRate": {
+          "type": "number",
+          "default": 115200,
+          "description": "Serial monitor baud rate"
+        }
+      }
+    }
+  }
+}

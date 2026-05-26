@@ -1,0 +1,77 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicolo-ribaudo/tc39-proposal-json-parse-with-source/master/vendor/tmlanguage.json",
+  "name": "Airo",
+  "scopeName": "source.airo",
+  "patterns": [
+    {
+      "name": "comment.line.number-sign.airo",
+      "match": "#(?!(library|variables|endregion)\\b).*$"
+    },
+    {
+      "name": "keyword.section-marker.airo",
+      "match": "#(library|variables)#"
+    },
+    {
+      "name": "keyword.declaration.airo",
+      "match": "\\b(Pin defi|loop)\\b"
+    },
+    {
+      "name": "keyword.robotics.airo",
+      "match": "\\b(read_for|actfor|senddatato|ask|saveto|call|defi|init|HIGH|LOW)\\b"
+    },
+    {
+      "name": "keyword.control.airo",
+      "match": "\\b(if|else|while|for|return)\\b"
+    },
+    {
+      "name": "keyword.io.airo",
+      "match": "\\b(input|output|INPUT|OUTPUT|INPUT_PULLUP)\\b"
+    },
+    {
+      "name": "string.quoted.double.airo",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.airo",
+          "match": "\\\\."
+        }
+      ]
+    },
+    {
+      "name": "constant.numeric.airo",
+      "match": "\\b[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?\\b"
+    },
+    {
+      "name": "constant.numeric.hex.airo",
+      "match": "\\b0x[0-9a-fA-F]+\\b"
+    },
+    {
+      "name": "constant.language.airo",
+      "match": "\\b(true|false|null|HIGH|LOW)\\b"
+    },
+    {
+      "name": "entity.name.type.airo",
+      "match": "\\b(Robot|Motor|Sensor|Servo|Pin|Serial|WiFi|Bluetooth|WebSocket|HTTP)\\b"
+    },
+    {
+      "name": "variable.other.airo",
+      "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+    },
+    {
+      "name": "punctuation.terminator.airo",
+      "match": "\\."
+    },
+    {
+      "name": "punctuation.section.block.airo",
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [
+        {
+          "include": "$self"
+        }
+      ]
+    }
+  ],
+  "repository": {}
+}

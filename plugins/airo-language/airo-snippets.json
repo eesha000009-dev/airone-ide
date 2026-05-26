@@ -1,0 +1,134 @@
+{
+  "New Sketch Template": {
+    "prefix": "sketch",
+    "body": [
+      "# ============================================",
+      "# ${1:SKETCH_NAME}",
+      "# ============================================",
+      "",
+      "#library#",
+      "# ${2:Import body modules for your robot}",
+      "# call body/actuation/upper-right-hands.airo.",
+      "# call body/sight/eyes.airo.",
+      "",
+      "Pin defi {",
+      "    ${3:led} = ${4:2}; output.",
+      "}",
+      "",
+      "#variables#",
+      "${5:delay_ms} = ${6:1000}.",
+      "",
+      "loop {",
+      "    read_for(${7:1000}) {",
+      "        # SENSE — Read sensors",
+      "    }",
+      "",
+      "    senddatato(${8:brain_url}).",
+      "",
+      "    actfor(${9:1000}) {",
+      "        $3.",
+      "    }",
+      "}"
+    ],
+    "description": "Create a new .airo sketch with the standard structure"
+  },
+  "Pin Definition": {
+    "prefix": "pin",
+    "body": ["${1:pin_name} = ${2:2}; ${3|output,input,INPUT,OUTPUT|}."],
+    "description": "Define a pin in the Pin defi block"
+  },
+  "Loop Block": {
+    "prefix": "loop",
+    "body": [
+      "loop {",
+      "    read_for(${1:1000}) {",
+      "        ${2:# SENSE}",
+      "    }",
+      "",
+      "    senddatato(${3:brain_url}).",
+      "",
+      "    actfor(${4:1000}) {",
+      "        ${5:# ACT}",
+      "    }",
+      "}"
+    ],
+    "description": "Create the main loop with sense-think-act pattern"
+  },
+  "Read For": {
+    "prefix": "readfor",
+    "body": ["read_for(${1:1000}) {", "    ${2:// sense}", "}"],
+    "description": "Create a read_for block for sensing"
+  },
+  "Act For": {
+    "prefix": "actfor",
+    "body": ["actfor(${1:1000}) {", "    ${2:// act}", "}"],
+    "description": "Create an actfor block for acting"
+  },
+  "Conditional": {
+    "prefix": "ask",
+    "body": ["ask ${1:condition} {", "    ${2:// true branch}", "} else {", "    ${3:// false branch}", "}"],
+    "description": "Create an ask (conditional) block"
+  },
+  "Send Data": {
+    "prefix": "send",
+    "body": ["senddatato(${1:url})."],
+    "description": "Send data to a URL"
+  },
+  "Save To": {
+    "prefix": "saveto",
+    "body": ["saveto ${1:target} = ${2:value}."],
+    "description": "Save a value to a target"
+  },
+  "Blink": {
+    "prefix": "blink",
+    "body": [
+      "#library#",
+      "",
+      "Pin defi {",
+      "    led = 2; output.",
+      "}",
+      "",
+      "#variables#",
+      "blink_delay = 1000.",
+      "",
+      "loop {",
+      "    read_for(0) {",
+      "    }",
+      "",
+      "    led = HIGH.",
+      "    call blink_delay.",
+      "    led = LOW.",
+      "    call blink_delay.",
+      "}"
+    ],
+    "description": "Blink LED example sketch"
+  },
+  "WiFi Send": {
+    "prefix": "wifi",
+    "body": [
+      "#library#",
+      "# call body/comm/wifi.airo.",
+      "",
+      "Pin defi {",
+      "    status_led = 2; output.",
+      "}",
+      "",
+      "#variables#",
+      "wifi_ssid = \"${1:YourNetwork}\".",
+      "wifi_password = \"${2:YourPassword}\".",
+      "server_url = \"${3:http://example.com/data}\".",
+      "",
+      "loop {",
+      "    read_for(2000) {",
+      "    }",
+      "",
+      "    senddatato(server_url).",
+      "",
+      "    actfor(100) {",
+      "        status_led.",
+      "    }",
+      "}"
+    ],
+    "description": "WiFi data sending example sketch"
+  }
+}

@@ -71,3 +71,64 @@ Stage Summary:
 - Electron build needs CI/CD (native modules require system deps)
 - GitHub Actions workflow created for Windows + Linux builds
 - All TypeScript extensions compile without errors
+
+---
+Task ID: 3
+Agent: IDE Refactoring Agent
+Task: Refactor Airone IDE to be more Arduino-like per user feedback
+
+Work Log:
+- Created AiroSidebarWidget (ReactWidget) with Arduino-like controls:
+  - ✓ Verify button (green) — compile & check syntax
+  - → Upload button (blue) — compile & flash to board
+  - Board selector dropdown (ESP32 DevKit, S2, S3, C3, ESP8266)
+  - Port selector dropdown with refresh and quick-pick
+  - Serial Monitor toggle button
+  - New Sketch, Examples, Language Reference quick actions
+  - Status bar showing selected board and port
+- Created AiroSidebarContribution (extends AbstractViewContribution) to:
+  - Add Airone icon to the activity sidebar bar
+  - Auto-open sidebar on startup (initializeLayout)
+  - Register keyboard shortcut Ctrl+Shift+A to show sidebar
+- Created AiroBuiltInCompiler (TypeScript, no Python dependency):
+  - Checks for required sections: Pin defi, loop, #library#, #variables#
+  - Validates brace matching
+  - Validates statement terminators
+  - Validates read_for/actfor/senddatato/ask syntax
+  - Returns structured errors with line/column info
+  - Works without Python — fixes "No module named airo_compiler" error
+- Updated AiroCompilerService to use two-tier compilation:
+  - Tier 1: Built-in TypeScript verifier (always available, no dependencies)
+  - Tier 2: Python airo_compiler (when available, for full transpilation)
+  - Falls back gracefully when Python is not installed
+- Updated AiroSketchService to use built-in compiler for verify
+- Updated AiroContribution to remove toolbar registration (moved to sidebar)
+- Improved Extensions → Libraries renaming in TheiaIDEContribution:
+  - More comprehensive DOM patching (8 different selectors)
+  - MutationObserver with immediate initial rename
+  - Also renames tooltips
+- Created CSS styles for Airone sidebar panel (airo-sidebar.css)
+  - Arduino-like green verify button, blue upload button
+  - Clean dropdown styling, status bar, compiling indicator
+- Created bundled .airo VS Code extension (plugins/airo-language/):
+  - package.json with language, grammar, snippets, commands, keybindings, configuration
+  - airo.tmLanguage.json (TextMate grammar)
+  - language-configuration.json (bracket matching, comments, folding)
+  - airo-snippets.json (sketch, pin, loop, readfor, actfor, ask, send, blink, wifi)
+  - extension.js (VS Code extension entry point)
+  - airo-icon.svg (extension icon)
+- Updated electron-app/package.json:
+  - Removed unnecessary Theia dependencies (bulk-edit, console, debug, external-terminal, keymaps, metrics, outline-view, task)
+  - Added file exclusion preferences (hide .airone-ide, .theia, build folders)
+  - Added single-tab editor preference
+- Updated CI/CD workflow to try installing airo_compiler Python package
+- Updated product CSS with Airone green branding color
+
+Stage Summary:
+- Airone sidebar panel with Arduino-like controls in the activity bar
+- Built-in TypeScript compiler fixes the "No module named airo_compiler" error
+- Extensions renamed to Libraries throughout the UI
+- .airo language extension bundled as a VS Code plugin
+- Unnecessary IDE features removed from dependencies
+- Hidden config folders from file explorer
+- Single-tab editor mode configured

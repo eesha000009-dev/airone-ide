@@ -7,13 +7,28 @@
  * SPDX-License-Identifier: MIT
  ********************************************************************************/
 
-import { injectable } from '@theia/core/shared/inversify';
+import { injectable, inject } from '@theia/core/shared/inversify';
 import { spawn } from 'child_process';
 import * as path from 'path';
 import { CompileRequest, CompileResult } from '../common/airo-protocol';
+import { AiroBuiltInCompiler } from './airo-built-in-compiler';
 
+/**
+ * Compiler service that provides two tiers of compilation:
+ *
+ * 1. **Built-in (TypeScript)**: Fast, no-dependency syntax checking.
+ *    This runs immediately in the Node.js process and provides
+ *    structural/syntactic validation of .airo files.
+ *
+ * 2. **Python (airo_compiler)**: Full transpilation to C++ for ESP32.
+ *    This is used when Python and airo_compiler are available.
+ *    Falls back gracefully when they are not installed.
+ */
 @injectable()
 export class AiroCompilerService {
+
+    @inject(AiroBuiltInCompiler)
+    protected readonly builtInCompiler!: AiroBuiltInCompiler;
 
     private pythonPath: string;
     private compilerDir: string;
@@ -25,20 +40,15 @@ export class AiroCompilerService {
 
     private resolveCompilerDir(): string {
         // In packaged app: resources/airo-compiler
-        // In dev mode: look for airo-compiler relative to the extension
-        if (__dirname.includes('.asar')) {
+        if (typeof __dirname !== 'undefined' && __dirname.includes('.asar')) {
             return path.join(process.resourcesPath!, 'airo-compiler');
         }
         // Dev mode - look for airo-compiler in common locations
-        // First try relative to the extension, then try the known project path
         const relativePath = path.resolve(__dirname, '../../../../../../airo-compiler');
-        const projectPath = '/home/z/my-project/airo-compiler';
-
-        // Prefer the project path if it exists
         try {
             const fs = require('fs');
-            if (fs.existsSync(projectPath)) {
-                return projectPath;
+            if (fs.existsSync(relativePath)) {
+                return relativePath;
             }
         } catch {
             // ignore
@@ -50,7 +60,51 @@ export class AiroCompilerService {
         return process.platform === 'win32' ? 'python' : 'python3';
     }
 
+    /**
+     * Compile a .airo file using the built-in TypeScript verifier first,
+     * then attempt Python-based full compilation if requested.
+     */
     async compile(request: CompileRequest): Promise<CompileResult> {
+        // ─── Step 1: Built-in syntax check (always runs, no dependencies) ──
+        const builtInResult = await this.builtInCompiler.verify(request.filePath);
+
+        if (!builtInResult.success) {
+            // Built-in check found errors — no need to try Python compilation
+            return {
+                success: false,
+                output: builtInResult.output,
+                error: builtInResult.error || builtInResult.errors?.map(e => e.message).join('\n'),
+            };
+        }
+
+        // ─── Step 2: Try Python-based full compilation ────────────────────
+        const pythonResult = await this.tryPythonCompile(request);
+
+        if (pythonResult) {
+            return pythonResult;
+        }
+
+        // ─── Step 3: Python not available — return built-in result ─────────
+        // The built-in check passed, so we report success for syntax validation.
+        // Note: Full transpilation to C++ requires Python + airo_compiler.
+        return {
+            success: true,
+            output: builtInResult.output + '\n\n⚠ Full compilation requires Python + airo_compiler module.\nInstall with: pip install airo-compiler\nSyntax check passed — code structure is valid.',
+        };
+    }
+
+    /**
+     * Verify using the built-in TypeScript compiler (fast, no dependencies).
+     */
+    async verifyBuiltIn(filePath: string): Promise<import('../common/airo-protocol').VerifyResult> {
+        return this.builtInCompiler.verify(filePath);
+    }
+
+    /**
+     * Attempt to compile using the Python-based airo_compiler.
+     * Returns null if Python or the module is not available.
+     */
+    protected async tryPythonCompile(request: CompileRequest): Promise<CompileResult | null> {
         return new Promise((resolve) => {
             const args = [
                 '-m', 'airo_compiler',
@@ -90,11 +144,9 @@ export class AiroCompilerService {
             });
 
             proc.on('error', (err: Error) => {
-                resolve({
-                    success: false,
-                    output: '',
-                    error: `Failed to start compiler: ${err.message}`,
-                });
+                // Python not found or airo_compiler not installed
+                // This is expected — return null to indicate Python is not available
+                resolve(null);
             });
 
             // 60 second timeout
@@ -109,7 +161,21 @@ export class AiroCompilerService {
         });
     }
 
+    /**
+     * Get a new sketch template.
+     */
     async getTemplate(): Promise<string> {
+        // Try Python first
+        const pythonTemplate = await this.tryPythonTemplate();
+        if (pythonTemplate) {
+            return pythonTemplate;
+        }
+
+        // Fall back to built-in template
+        return this.getDefaultTemplate();
+    }
+
+    protected async tryPythonTemplate(): Promise<string | null> {
         return new Promise((resolve) => {
             const proc = spawn(this.pythonPath, ['-m', 'airo_compiler', '--template'], {
                 cwd: this.compilerDir,
@@ -122,12 +188,11 @@ export class AiroCompilerService {
             });
 
             proc.on('close', () => {
-                resolve(stdout || this.getDefaultTemplate());
+                resolve(stdout || null);
             });
 
             proc.on('error', () => {
-                // Return hardcoded template as fallback
-                resolve(this.getDefaultTemplate());
+                resolve(null);
             });
         });
     }

@@ -38,6 +38,11 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Install airo_compiler (optional)
+        shell: bash
+        run: pip install airo-compiler 2>/dev/null || echo "airo_compiler not available on PyPI yet, using built-in TypeScript verifier"
+        continue-on-error: true
+
       - name: Install dependencies
         shell: bash
         run: yarn --skip-integrity-check --network-timeout 100000
@@ -110,6 +115,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libxkbfile-dev libx11-dev libsecret-1-dev libfontconfig1
+
+      - name: Use Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install airo_compiler (optional)
+        run: pip install airo-compiler 2>/dev/null || echo "airo_compiler not available on PyPI yet, using built-in TypeScript verifier"
+        continue-on-error: true
 
       - name: Install dependencies
         shell: bash

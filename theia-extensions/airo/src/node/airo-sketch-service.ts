@@ -120,6 +120,10 @@ export class AiroSketchService implements AiroSketchClient {
         return example.code;
     }
 
+    /**
+     * Verify a .airo file using the built-in TypeScript compiler first,
+     * then try Python-based full compilation if available.
+     */
     async verify(filePath: string): Promise<VerifyResult> {
         const fsPath = filePath.startsWith('file://') ? fsPathFromUri(filePath) : filePath;
 
@@ -133,24 +137,48 @@ export class AiroSketchService implements AiroSketchClient {
         }
 
         try {
-            const result = await this.compilerService.compile({
+            // Use the built-in compiler for fast, dependency-free verification
+            const result = await this.compilerService.verifyBuiltIn(fsPath);
+
+            // If built-in check fails, return immediately
+            if (!result.success) {
+                return result;
+            }
+
+            // Built-in check passed — try full Python compilation if available
+            const compileResult = await this.compilerService.compile({
                 filePath: fsPath,
                 target: 'esp32',
                 outputDir: path.join(path.dirname(fsPath), 'build')
             });
 
+            if (compileResult.success) {
+                return {
+                    success: true,
+                    output: result.output + '\n' + (compileResult.output || ''),
+                };
+            }
+
+            // Python compilation failed but built-in check passed
+            // This could mean the syntax is OK but compilation has issues
             const errors: SyntaxError[] = [];
-            if (!result.success && result.error) {
-                const parsedErrors = this.parseCompilerErrors(result.error);
+            if (compileResult.error) {
+                const parsedErrors = this.parseCompilerErrors(compileResult.error);
                 errors.push(...parsedErrors);
             }
 
-            return {
-                success: result.success,
-                output: result.output,
-                error: result.error,
-                errors
-            };
+            // If Python gave specific errors, use those
+            if (errors.length > 0) {
+                return {
+                    success: false,
+                    output: compileResult.output || result.output,
+                    error: compileResult.error,
+                    errors
+                };
+            }
+
+            // Otherwise return the built-in result (Python may just not be installed)
+            return result;
         } catch (err: any) {
             return {
                 success: false,

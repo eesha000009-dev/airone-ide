@@ -10,6 +10,7 @@
 import { ContainerModule } from '@theia/core/shared/inversify';
 import { ConnectionHandler, JsonRpcConnectionHandler } from '@theia/core/lib/common/messaging';
 import { AiroCompilerService } from './airo-compiler-service';
+import { AiroBuiltInCompiler } from './airo-built-in-compiler';
 import { AiroSerialService } from './airo-serial-service';
 import { AiroSketchService } from './airo-sketch-service';
 import {
@@ -22,7 +23,12 @@ import {
 export default new ContainerModule(bind => {
     // ─── Backend Services ────────────────────────────────────────────────
 
+    // Built-in TypeScript compiler (always available, no Python needed)
+    bind(AiroBuiltInCompiler).toSelf().inSingletonScope();
+
+    // Main compiler service (uses built-in first, then Python if available)
     bind(AiroCompilerService).toSelf().inSingletonScope();
+
     bind(AiroSerialService).toSelf().inSingletonScope();
     bind(AiroSketchService).toSelf().inSingletonScope();
 

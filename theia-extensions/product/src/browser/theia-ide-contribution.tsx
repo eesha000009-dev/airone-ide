@@ -12,8 +12,6 @@ import { CommonMenus } from '@theia/core/lib/browser/common-frontend-contributio
 import { Command, CommandContribution, CommandRegistry } from '@theia/core/lib/common/command';
 import { MenuContribution, MenuModelRegistry, MenuPath } from '@theia/core/lib/common/menu';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
-// FrontendApplicationContribution is not exported in this Theia version
-// We use initializeLayout instead for startup hooks
 
 export namespace TheiaIDEMenus {
     export const THEIA_IDE_HELP: MenuPath = [...CommonMenus.HELP, 'airone-ide'];
@@ -53,45 +51,117 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     static REPORT_ISSUE_URL = 'https://github.com/eesha000009-dev/airone-ide/issues/new';
     static DOCUMENTATION_URL = 'https://github.com/eesha000009-dev/airone-ide#readme';
 
+    private renameObserver: MutationObserver | null = null;
+
     constructor() {
         // Rename "Extensions" label to "Libraries" in the sidebar on startup
-        // Using a setTimeout to ensure DOM is ready
-        setTimeout(() => this.renameExtensionsToLibraries(), 2000);
+        // Use MutationObserver to catch dynamic changes
+        this.startRenaming();
+    }
+
+    protected startRenaming(): void {
+        // Try immediately in case the DOM is already ready
+        this.renameExtensionsToLibraries();
+
+        // Also observe DOM changes to catch dynamic rendering
+        this.renameObserver = new MutationObserver((mutations) => {
+            let shouldRename = false;
+            for (const mutation of mutations) {
+                if (mutation.type === 'childList' || mutation.type === 'characterData') {
+                    shouldRename = true;
+                    break;
+                }
+            }
+            if (shouldRename) {
+                this.renameExtensionsToLibraries();
+            }
+        });
+
+        // Wait for document body to be available
+        const startObserving = () => {
+            if (document.body) {
+                this.renameObserver!.observe(document.body, {
+                    childList: true,
+                    subtree: true,
+                    characterData: true
+                });
+            } else {
+                setTimeout(startObserving, 100);
+            }
+        };
+        startObserving();
     }
 
     /**
-     * Rename the VS Code Extensions view title from "Extensions" to "Libraries".
-     * This is done by patching the DOM after the application starts, because
-     * the Extensions view label is contributed by @theia/plugin-ext and not
-     * easily overridable via DI.
+     * Rename all instances of "Extensions" to "Libraries" in the UI.
+     * This patches the DOM because the Extensions view label is contributed
+     * by @theia/plugin-ext and not easily overridable via DI.
      */
     protected renameExtensionsToLibraries(): void {
-        const observer = new MutationObserver(() => {
-            // Look for the Extensions tab in the sidebar
-            const extensionTabs = document.querySelectorAll(
-                '.p-TabBar-tabLabel, .theia-sidepanel-tab, .p-TabBar-tab'
-            );
-            extensionTabs.forEach(tab => {
-                if (tab.textContent?.trim() === 'Extensions') {
-                    tab.textContent = 'Libraries';
-                }
-            });
-
-            // Also rename the view container label
-            const viewLabels = document.querySelectorAll(
-                '.theia-header, .theia-TreeView .theia-TreeViewHeader'
-            );
-            viewLabels.forEach(label => {
-                if (label.textContent?.trim() === 'EXTENSIONS') {
-                    label.textContent = 'LIBRARIES';
-                }
-            });
+        // ─── 1. Activity bar tab labels ──────────────────────────────────
+        const tabLabels = document.querySelectorAll('.p-TabBar-tabLabel');
+        tabLabels.forEach(tab => {
+            if (tab.textContent?.trim() === 'Extensions') {
+                tab.textContent = 'Libraries';
+            }
         });
 
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            characterData: true
+        // ─── 2. Sidebar panel titles ─────────────────────────────────────
+        const panelTitles = document.querySelectorAll('.theia-sidepanel-title');
+        panelTitles.forEach(title => {
+            if (title.textContent?.trim() === 'Extensions') {
+                title.textContent = 'Libraries';
+            }
+        });
+
+        // ─── 3. View container headers ───────────────────────────────────
+        const headers = document.querySelectorAll('.theia-header');
+        headers.forEach(header => {
+            if (header.textContent?.trim() === 'EXTENSIONS') {
+                header.textContent = 'LIBRARIES';
+            }
+            if (header.textContent?.trim() === 'Extensions') {
+                header.textContent = 'Libraries';
+            }
+        });
+
+        // ─── 4. Tree view headers ────────────────────────────────────────
+        const treeHeaders = document.querySelectorAll('.theia-TreeView .theia-TreeViewHeader');
+        treeHeaders.forEach(header => {
+            if (header.textContent?.trim() === 'EXTENSIONS') {
+                header.textContent = 'LIBRARIES';
+            }
+        });
+
+        // ─── 5. Widget title captions ────────────────────────────────────
+        const titleCaptions = document.querySelectorAll('.p-TabBar-tab .p-TabBar-tabCaption');
+        titleCaptions.forEach(caption => {
+            if (caption.textContent?.trim() === 'Extensions') {
+                caption.textContent = 'Libraries';
+            }
+        });
+
+        // ─── 6. Tab bar tab captions with different selectors ────────────
+        const allTabs = document.querySelectorAll('[class*="TabBar"][class*="tab"]');
+        allTabs.forEach(tab => {
+            const label = tab.querySelector('.p-TabBar-tabLabel, .theia-tabBar-tabLabel');
+            if (label && label.textContent?.trim() === 'Extensions') {
+                label.textContent = 'Libraries';
+            }
+        });
+
+        // ─── 7. Title area of widgets ────────────────────────────────────
+        const titleAreas = document.querySelectorAll('.theia-widget-title, .p-Widget .title');
+        titleAreas.forEach(area => {
+            if (area.textContent?.trim() === 'Extensions') {
+                area.textContent = 'Libraries';
+            }
+        });
+
+        // ─── 8. Tooltip text for activity bar icons ─────────────────────
+        const tooltips = document.querySelectorAll('[title="Extensions"]');
+        tooltips.forEach(el => {
+            el.setAttribute('title', 'Libraries');
         });
     }
 
@@ -128,5 +198,12 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             label: 'Libraries',
             order: 'z'
         });
+    }
+
+    dispose(): void {
+        if (this.renameObserver) {
+            this.renameObserver.disconnect();
+            this.renameObserver = null;
+        }
     }
 }

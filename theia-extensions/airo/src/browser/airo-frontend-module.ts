@@ -7,15 +7,20 @@
  * SPDX-License-Identifier: MIT
  ********************************************************************************/
 
+import '../browser/style/airo-sidebar.css';
+
 import { ContainerModule } from '@theia/core/shared/inversify';
 import { CommandContribution, MenuContribution } from '@theia/core/lib/common';
 import { KeybindingContribution } from '@theia/core/lib/browser/keybinding';
 import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
 import { WidgetFactory } from '@theia/core/lib/browser';
+import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application';
 import { WebSocketConnectionProvider } from '@theia/core/lib/browser/messaging';
 import { AiroContribution } from './airo-contribution';
 import { AiroLanguageContribution } from './airo-language-contribution';
 import { AiroSerialWidget } from './airo-serial-widget';
+import { AiroSidebarWidget } from './airo-sidebar-widget';
+import { AiroSidebarContribution } from './airo-sidebar-contribution';
 import { LanguageGrammarDefinitionContribution } from '@theia/monaco/lib/browser/textmate';
 import {
     AiroSketchService,
@@ -41,10 +46,10 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
         return connectionProvider.createProxy<AiroSerialClient>(AIRO_SERIAL_PATH);
     }).inSingletonScope();
 
-    // ─── Commands, Menus, Keybindings, and Toolbar ───────────────────────
+    // ─── Commands, Menus, Keybindings ────────────────────────────────────
 
     bind(AiroContribution).toSelf().inSingletonScope();
-    [CommandContribution, MenuContribution, KeybindingContribution, TabBarToolbarContribution].forEach(serviceIdentifier =>
+    [CommandContribution, MenuContribution, KeybindingContribution].forEach(serviceIdentifier =>
         bind(serviceIdentifier).toService(AiroContribution)
     );
 
@@ -60,4 +65,19 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
         id: AiroSerialWidget.ID,
         createWidget: () => context.container.get<AiroSerialWidget>(AiroSerialWidget),
     })).inSingletonScope();
+
+    // ─── Airone Sidebar Panel ────────────────────────────────────────────
+
+    // Register the sidebar widget
+    bind(AiroSidebarWidget).toSelf();
+    bind(WidgetFactory).toDynamicValue(context => ({
+        id: AiroSidebarWidget.ID,
+        createWidget: () => context.container.get<AiroSidebarWidget>(AiroSidebarWidget),
+    })).inSingletonScope();
+
+    // Register the sidebar contribution (adds icon to activity bar)
+    bind(AiroSidebarContribution).toSelf().inSingletonScope();
+    [FrontendApplicationContribution, CommandContribution, KeybindingContribution].forEach(serviceIdentifier =>
+        bind(serviceIdentifier).toService(AiroSidebarContribution)
+    );
 });
