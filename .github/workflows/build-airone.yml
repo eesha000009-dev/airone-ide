@@ -94,15 +94,6 @@ jobs:
             applications/electron/dist/*.exe
           retention-days: 5
 
-      # ─── Auto-Update: Publish to GitHub Releases ──────────────────────
-      - name: Publish Windows Release
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-        shell: bash
-        run: yarn deploy
-        env:
-          NODE_OPTIONS: --max_old_space_size=4096
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   build-linux:
     name: Linux Build
     runs-on: ubuntu-22.04
@@ -175,12 +166,3 @@ jobs:
             applications/electron/dist/*.AppImage
             applications/electron/dist/*.deb
           retention-days: 30
-
-      # ─── Auto-Update: Publish to GitHub Releases ──────────────────────
-      - name: Publish Linux Release
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-        shell: bash
-        run: yarn deploy
-        env:
-          NODE_OPTIONS: --max_old_space_size=4096
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
