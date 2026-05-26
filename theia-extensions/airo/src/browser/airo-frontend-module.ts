@@ -12,7 +12,7 @@ import '../../src/browser/style/airo-sidebar.css';
 import { ContainerModule } from '@theia/core/shared/inversify';
 import { CommandContribution, MenuContribution } from '@theia/core/lib/common';
 import { KeybindingContribution } from '@theia/core/lib/browser/keybinding';
-import { FrontendApplicationContribution } from '@theia/core/lib/browser';
+import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import { WidgetFactory } from '@theia/core/lib/browser';
 import { WebSocketConnectionProvider } from '@theia/core/lib/browser/messaging';
 import { AiroContribution } from './airo-contribution';

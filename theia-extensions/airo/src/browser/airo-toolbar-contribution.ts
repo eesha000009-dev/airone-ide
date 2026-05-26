@@ -8,23 +8,22 @@
  ********************************************************************************/
 
 import { injectable, inject } from '@theia/core/shared/inversify';
-import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application';
+import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import { CommandService } from '@theia/core/lib/common/command';
 import { MessageService } from '@theia/core/lib/common/message-service';
 
 /**
  * Toolbar contribution that injects Compile, Verify, Upload, and Serial Monitor
  * buttons into the Theia toolbar area using DOM manipulation.
- * This avoids depending on the @theia/toolbar package directly.
  */
 @injectable()
 export class AiroToolbarContribution implements FrontendApplicationContribution {
 
     @inject(CommandService)
-    protected readonly commandService: CommandService;
+    protected readonly commandService!: CommandService;
 
     @inject(MessageService)
-    protected readonly messageService: MessageService;
+    protected readonly messageService!: MessageService;
 
     private observer: MutationObserver | null = null;
     private injected = false;
@@ -34,10 +33,8 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
     }
 
     protected injectToolbar(): void {
-        // Try immediately
         this.doInject();
 
-        // Also observe DOM changes in case toolbar loads later
         this.observer = new MutationObserver(() => {
             if (!this.injected) {
                 this.doInject();
@@ -50,48 +47,40 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
     }
 
     protected doInject(): void {
-        // Find the toolbar container - Theia's toolbar area
+        // Find the toolbar container
         const toolbar = document.querySelector('.theia-toolbar, .p-TabBar.theia-toolbar, [class*="toolbar"]');
         if (!toolbar) {
             return;
         }
 
-        // Check if we already injected
         if (document.getElementById('airo-toolbar-group')) {
             this.injected = true;
             return;
         }
 
-        // Create the toolbar group
         const group = document.createElement('div');
         group.id = 'airo-toolbar-group';
         group.className = 'airo-toolbar-group';
 
-        // Compile button
         group.appendChild(this.createButton('airo-compile-btn', '⏻ Compile', '#27ae60', '#219a52', () => {
             this.executeCommand('airo.compile');
         }));
 
-        // Verify button
         group.appendChild(this.createButton('airo-verify-btn', '✓ Verify', '#2980b9', '#2471a3', () => {
             this.executeCommand('airo.verify');
         }));
 
-        // Upload button
         group.appendChild(this.createButton('airo-upload-btn', '→ Upload', '#e67e22', '#d35400', () => {
             this.executeCommand('airo.upload');
         }));
 
-        // Serial Monitor button
         group.appendChild(this.createButton('airo-serial-btn', '🔌 Serial Monitor', 'var(--theia-button-background, #555)', 'var(--theia-border-color, #444)', () => {
             this.executeCommand('airo.serialMonitor');
         }));
 
-        // Insert at the beginning of the toolbar (left side)
         toolbar.insertBefore(group, toolbar.firstChild);
         this.injected = true;
 
-        // Disconnect observer since we're done
         if (this.observer) {
             this.observer.disconnect();
         }
