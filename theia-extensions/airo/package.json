@@ -31,7 +31,8 @@
     "@theia/filesystem": "1.72.0-next.42",
     "inversify": "^6.2.2",
     "serialport": "^12.0.0",
-    "@serialport/parser-readline": "^12.0.0"
+    "@serialport/parser-readline": "^12.0.0",
+    "@theia/toolbar": "1.72.0-next.42"
   },
   "devDependencies": {
     "rimraf": "^2.7.1",

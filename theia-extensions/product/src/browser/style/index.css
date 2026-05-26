@@ -45,13 +45,15 @@ body[data-theia-branding="next"] .theia-icon {
     padding-left: 20px;
 }
 
+/* ─── Make logo bigger in Getting Started / About dialog ──────────────────── */
+
 .gs-logo {
     background-image: var(--theia-branding-logo);
     background-position: center center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 250px;
-    height: 118px;
+    width: 400px;
+    height: 200px;
     padding: 20px;
 }
 
@@ -60,8 +62,8 @@ body[data-theia-branding="next"] .theia-icon {
     background-position: center center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 250px;
-    height: 118px;
+    width: 400px;
+    height: 200px;
     padding: 20px;
 }
 
@@ -94,39 +96,47 @@ ul.theia-aboutExtensions {
 }
 
 /* ─── Hide Unwanted Menu Items ────────────────────────────────────────────── */
-/* We only want: File, Edit, View, Compile, Verify, Upload
-   Hide everything else: Selection, Go, Run, Terminal, Help */
+/* We only want: File, Edit, View, Libraries, Tools
+   Hide everything else: Selection, Go, Run, Terminal, Help, Compile, Verify, Upload */
 
-/* Target menu bar items by their aria-label attributes */
 .p-MenuBar-item[aria-label="Selection"],
 .p-MenuBar-item[aria-label="Go"],
 .p-MenuBar-item[aria-label="Run"],
 .p-MenuBar-item[aria-label="Terminal"],
-.p-MenuBar-item[aria-label="Help"] {
+.p-MenuBar-item[aria-label="Help"],
+.p-MenuBar-item[aria-label="Compile"],
+.p-MenuBar-item[aria-label="Verify"],
+.p-MenuBar-item[aria-label="Upload"] {
     display: none !important;
 }
 
-/* Also target by Theia-specific data attributes */
 .theia-menubar .p-MenuBar-item[aria-label="Selection"],
 .theia-menubar .p-MenuBar-item[aria-label="Go"],
 .theia-menubar .p-MenuBar-item[aria-label="Run"],
 .theia-menubar .p-MenuBar-item[aria-label="Terminal"],
-.theia-menubar .p-MenuBar-item[aria-label="Help"] {
+.theia-menubar .p-MenuBar-item[aria-label="Help"],
+.theia-menubar .p-MenuBar-item[aria-label="Compile"],
+.theia-menubar .p-MenuBar-item[aria-label="Verify"],
+.theia-menubar .p-MenuBar-item[aria-label="Upload"] {
     display: none !important;
 }
 
-/* ─── Hide Unwanted Sidebar Items ─────────────────────────────────────────── */
-/* Keep only: Explorer, Source Control, Libraries (Extensions), Airone
-   Hide: Search, Debug, Testing */
+/* ─── Hide Entire Sidebar / Activity Bar ─────────────────────────────────── */
 
-/* Hide Search from activity bar */
+.theia-activity-bar,
+.p-TabBar.theia-activity-bar,
+#theia-activitybar {
+    display: none !important;
+}
+
+/* ─── Hide Unwanted Sidebar Items (redundant safety) ─────────────────────── */
+
 .p-TabBar-tab[data-id="search-in-workspace"],
 .theia-activity-bar .p-TabBar-tab[data-id="search-in-workspace"],
 #theia-activitybar .p-TabBar-tab[data-id="search-in-workspace"] {
     display: none !important;
 }
 
-/* Hide Debug from activity bar */
 .p-TabBar-tab[data-id="debug:debug-container"],
 .p-TabBar-tab[data-id="debug:view-container"],
 .theia-activity-bar .p-TabBar-tab[data-id="debug:debug-container"],
@@ -136,7 +146,6 @@ ul.theia-aboutExtensions {
     display: none !important;
 }
 
-/* Hide Testing from activity bar */
 .p-TabBar-tab[data-id="test-view-container"],
 .p-TabBar-tab[data-id="test:container"],
 .theia-activity-bar .p-TabBar-tab[data-id="test-view-container"],

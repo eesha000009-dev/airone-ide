@@ -1,23 +1,27 @@
 /********************************************************************************
  * Copyright (C) 2025 Airone and others.
  *
- * Airone Sidebar Panel Styles — Arduino-like IDE controls
+ * Airone IDE Styles — No sidebar, toolbar-based interface
  * SPDX-License-Identifier: MIT
  ********************************************************************************/
 
-/* ─── Activity Bar Icon ───────────────────────────────────────────────────── */
+/* ─── Hide Entire Sidebar / Activity Bar ─────────────────────────────────── */
 
-.airo-sidebar-icon {
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5'/%3E%3C/svg%3E") center center no-repeat;
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5'/%3E%3C/svg%3E") center center no-repeat;
-    mask-size: contain;
-    -webkit-mask-size: contain;
-    background-color: var(--theia-icon-foreground);
+/* Hide the left activity bar completely */
+.theia-activity-bar,
+.p-TabBar.theia-activity-bar,
+#theia-activitybar {
+    display: none !important;
 }
 
-/* ─── Hide Unwanted Sidebar Items ─────────────────────────────────────────── */
+/* Hide the left sidebar panel area */
+.theia-side-panel,
+.theia-left-side-panel,
+.p-DockPanel > .p-Widget[data-area="left"] {
+    display: none !important;
+}
 
-/* Hide Search from activity bar */
+/* Hide Search from activity bar (redundant but safe) */
 .p-TabBar-tab[data-id="search-in-workspace"],
 .theia-activity-bar .p-TabBar-tab[data-id="search-in-workspace"],
 #theia-activitybar .p-TabBar-tab[data-id="search-in-workspace"] {
@@ -44,257 +48,65 @@
     display: none !important;
 }
 
-/* ─── Sidebar Panel ───────────────────────────────────────────────────────── */
-
-.airo-sidebar-panel {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    padding: 8px;
-    gap: 6px;
-    overflow-y: auto;
-    font-family: var(--theia-ui-font-family);
-    font-size: var(--theia-ui-font-size1);
-    color: var(--theia-foreground);
+/* Hide Airone sidebar tab */
+.p-TabBar-tab[data-id="airo-sidebar"],
+.theia-activity-bar .p-TabBar-tab[data-id="airo-sidebar"] {
+    display: none !important;
 }
 
-/* ─── Header ──────────────────────────────────────────────────────────────── */
+/* ─── Hide Back / Forward Navigation Arrows from Toolbar ─────────────────── */
 
-.airo-sidebar-header {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 8px 4px 4px 4px;
-    border-bottom: 1px solid var(--theia-border-color);
-    margin-bottom: 4px;
+/* Theia toolbar navigation buttons */
+.theia-toolbar .theia-toolbar-item[id*="navigation.back"],
+.theia-toolbar .theia-toolbar-item[id*="navigation.forward"],
+.theia-toolbar .theia-toolbar-item[title*="Back"],
+.theia-toolbar .theia-toolbar-item[title*="Forward"],
+.toolbar-item[id*="navigation.back"],
+.toolbar-item[id*="navigation.forward"] {
+    display: none !important;
 }
 
-.airo-sidebar-logo {
-    font-size: 18px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    color: var(--theia-button-background);
-    text-transform: uppercase;
+/* General back/forward buttons in the toolbar area */
+button[title="Back"],
+button[title="Forward"],
+.theia-toolbar button[title="Back"],
+.theia-toolbar button[title="Forward"] {
+    display: none !important;
 }
 
-/* ─── Sections ─────────────────────────────────────────────────────────────── */
+/* ─── Toolbar Customization ──────────────────────────────────────────────── */
 
-.airo-sidebar-section {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.airo-sidebar-label {
-    font-size: 11px;
+/* Style the Airone toolbar buttons */
+.theia-toolbar .theia-toolbar-item[id*="airo"] button {
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--theia-descriptionForeground);
-    padding: 2px 0;
-}
-
-/* ─── Action Buttons (Verify / Upload) ────────────────────────────────────── */
-
-.airo-sidebar-actions {
-    display: flex;
-    gap: 4px;
-}
-
-.airo-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    padding: 6px 10px;
-    border: 1px solid var(--theia-border-color);
     border-radius: 3px;
-    background: var(--theia-button-background);
-    color: var(--theia-button-foreground);
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-    transition: background-color 0.15s ease, border-color 0.15s ease;
-    white-space: nowrap;
+    padding: 2px 8px;
 }
 
-.airo-btn:hover:not(:disabled) {
-    filter: brightness(1.15);
-}
-
-.airo-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.airo-btn-icon {
-    font-size: 14px;
-    line-height: 1;
-}
-
-.airo-btn-label {
-    font-size: 12px;
-}
-
-.airo-btn-verify {
-    flex: 1;
+/* Compile button styling */
+.theia-toolbar .theia-toolbar-item[id*="airo.compile"] button {
     background: #27ae60;
-    border-color: #27ae60;
     color: white;
+    border: 1px solid #27ae60;
 }
 
-.airo-btn-verify:hover:not(:disabled) {
-    background: #2ecc71;
-}
-
-.airo-btn-upload {
-    flex: 1;
+/* Verify button styling */
+.theia-toolbar .theia-toolbar-item[id*="airo.verify"] button {
     background: #2980b9;
-    border-color: #2980b9;
     color: white;
+    border: 1px solid #2980b9;
 }
 
-.airo-btn-upload:hover:not(:disabled) {
-    background: #3498db;
+/* Upload button styling */
+.theia-toolbar .theia-toolbar-item[id*="airo.upload"] button {
+    background: #e67e22;
+    color: white;
+    border: 1px solid #e67e22;
 }
 
-/* ─── Serial Monitor Button ───────────────────────────────────────────────── */
-
-.airo-btn-serial {
-    width: 100%;
-    background: var(--theia-input-background);
-    color: var(--theia-input-foreground);
-    border: 1px solid var(--theia-border-color);
-}
-
-.airo-btn-serial:hover:not(:disabled) {
+/* Serial Monitor button styling */
+.theia-toolbar .theia-toolbar-item[id*="airo.serial"] button {
     background: var(--theia-button-background);
     color: var(--theia-button-foreground);
-}
-
-/* ─── Select Dropdowns ─────────────────────────────────────────────────────── */
-
-.airo-sidebar-select {
-    width: 100%;
-    padding: 4px 8px;
     border: 1px solid var(--theia-border-color);
-    border-radius: 2px;
-    background: var(--theia-input-background);
-    color: var(--theia-input-foreground);
-    font-size: 12px;
-    font-family: var(--theia-ui-font-family);
-    outline: none;
-}
-
-.airo-sidebar-select:focus {
-    border-color: var(--theia-focusBorder);
-}
-
-/* ─── Port Row ─────────────────────────────────────────────────────────────── */
-
-.airo-port-row {
-    display: flex;
-    gap: 4px;
-    align-items: center;
-}
-
-.airo-port-select {
-    flex: 1;
-    min-width: 0;
-}
-
-.airo-btn-sm {
-    padding: 4px 8px;
-    font-size: 12px;
-    border: 1px solid var(--theia-border-color);
-    border-radius: 2px;
-    background: var(--theia-input-background);
-    color: var(--theia-input-foreground);
-    cursor: pointer;
-    line-height: 1;
-}
-
-.airo-btn-sm:hover {
-    background: var(--theia-button-background);
-    color: var(--theia-button-foreground);
-}
-
-.airo-btn-refresh {
-    font-size: 14px;
-}
-
-.airo-btn-quickport {
-    font-size: 14px;
-    padding: 4px 6px;
-}
-
-/* ─── Compiling Indicator ──────────────────────────────────────────────────── */
-
-.airo-compiling-indicator {
-    font-size: 11px;
-    color: var(--theia-descriptionForeground);
-    padding: 2px 4px;
-    text-align: center;
-    animation: airo-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes airo-pulse {
-    0%, 100% { opacity: 0.5; }
-    50% { opacity: 1; }
-}
-
-/* ─── Divider ──────────────────────────────────────────────────────────────── */
-
-.airo-sidebar-divider {
-    border: none;
-    border-top: 1px solid var(--theia-border-color);
-    margin: 4px 0;
-}
-
-/* ─── Quick Actions ────────────────────────────────────────────────────────── */
-
-.airo-sidebar-quick-actions {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-}
-
-.airo-btn-outline {
-    width: 100%;
-    padding: 5px 10px;
-    background: transparent;
-    color: var(--theia-foreground);
-    border: 1px solid var(--theia-border-color);
-    border-radius: 2px;
-    cursor: pointer;
-    font-size: 12px;
-    text-align: left;
-    transition: background-color 0.15s ease;
-}
-
-.airo-btn-outline:hover {
-    background: var(--theia-list-hoverBackground);
-}
-
-/* ─── Status Bar ───────────────────────────────────────────────────────────── */
-
-.airo-sidebar-status {
-    margin-top: auto;
-    padding-top: 8px;
-    border-top: 1px solid var(--theia-border-color);
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.airo-status-item {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    color: var(--theia-descriptionForeground);
-}
-
-.airo-status-icon {
-    font-size: 12px;
 }
