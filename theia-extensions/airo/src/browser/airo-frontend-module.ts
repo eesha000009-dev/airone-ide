@@ -12,9 +12,9 @@ import '../../src/browser/style/airo-sidebar.css';
 import { ContainerModule } from '@theia/core/shared/inversify';
 import { CommandContribution, MenuContribution } from '@theia/core/lib/common';
 import { KeybindingContribution } from '@theia/core/lib/browser/keybinding';
+import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { WidgetFactory } from '@theia/core/lib/browser';
 import { WebSocketConnectionProvider } from '@theia/core/lib/browser/messaging';
-import { ToolbarContribution } from '@theia/toolbar/lib/browser/toolbar-interfaces';
 import { AiroContribution } from './airo-contribution';
 import { AiroToolbarContribution } from './airo-toolbar-contribution';
 import { AiroLanguageContribution } from './airo-language-contribution';
@@ -49,10 +49,10 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
         bind(serviceIdentifier).toService(AiroContribution)
     );
 
-    // ─── Toolbar Contribution ────────────────────────────────────────────
+    // ─── Toolbar Injection ───────────────────────────────────────────────
 
     bind(AiroToolbarContribution).toSelf().inSingletonScope();
-    bind(ToolbarContribution).toService(AiroToolbarContribution);
+    bind(FrontendApplicationContribution).toService(AiroToolbarContribution);
 
     // ─── .airo Language Support (TextMate grammar) ──────────────────────
 
