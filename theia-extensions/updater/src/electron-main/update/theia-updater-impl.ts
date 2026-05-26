@@ -120,7 +120,7 @@ export class TheiaUpdaterImpl implements TheiaUpdater, ElectronMainApplicationCo
             fs.mkdtemp(path.join(os.tmpdir(), 'updater-'))
                 .then(tmpDir => {
                     const file = fs.createWriteStream(path.join(tmpDir, 'update'));
-                    http.get(`https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`, response => {
+                    http.get(`https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`, (response: any) => {
                         response.pipe(file);
                         file.on('finish', () => {
                             file.close();
