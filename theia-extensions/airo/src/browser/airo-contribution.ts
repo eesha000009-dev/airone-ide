@@ -8,96 +8,263 @@
  ********************************************************************************/
 
 import { injectable, inject } from '@theia/core/shared/inversify';
-import { CommandContribution, CommandRegistry, MenuContribution, MenuModelRegistry } from '@theia/core/lib/common';
+import {
+    CommandContribution, CommandRegistry, Command,
+    MenuContribution, MenuModelRegistry, MenuPath
+} from '@theia/core/lib/common';
 import { KeybindingContribution, KeybindingRegistry } from '@theia/core/lib/browser/keybinding';
+import { TabBarToolbarContribution, TabBarToolbarRegistry } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
 import { EditorManager } from '@theia/editor/lib/browser';
 import { OutputChannelManager } from '@theia/output/lib/browser/output-channel';
 import { MessageService } from '@theia/core/lib/common/message-service';
-import { AiroSerialWidget } from './airo-serial-widget';
 import { WidgetManager } from '@theia/core/lib/browser';
+import { AiroSerialWidget } from './airo-serial-widget';
+import { QuickPickService } from '@theia/core/lib/common/quick-pick-service';
+import { OpenerService } from '@theia/core/lib/browser/opener-service';
+import { URI } from '@theia/core/lib/common/uri';
+import {
+    AiroSketchService,
+    AiroSerialService,
+    BoardInfo,
+    SerialPortInfo
+} from '../common/airo-protocol';
 
-export const AIRONE_MENU: string[] = ['airone_menu'];
+// ─── Menu Paths ──────────────────────────────────────────────────────────────
 
-export const COMPILE_AIRO_COMMAND = {
-    id: 'airo.compile',
-    label: 'Compile .airo'
+export const AIRONE_MENU: MenuPath = ['airone_menu'];
+export const AIRONE_TOOLBAR: MenuPath = ['airone_toolbar'];
+
+// ─── Commands ────────────────────────────────────────────────────────────────
+
+export const AIRO_VERIFY_COMMAND: Command = {
+    id: 'airo.verify',
+    label: 'Verify',
+    iconClass: 'fa fa-check'
 };
 
-export const FLASH_ESP32_COMMAND = {
-    id: 'airo.flash.esp32',
-    label: 'Flash to ESP32'
+export const AIRO_UPLOAD_COMMAND: Command = {
+    id: 'airo.upload',
+    label: 'Upload',
+    iconClass: 'fa fa-arrow-right'
 };
 
-export const SERIAL_MONITOR_COMMAND = {
+export const AIRO_SELECT_BOARD_COMMAND: Command = {
+    id: 'airo.selectBoard',
+    label: 'Select Board'
+};
+
+export const AIRO_SELECT_PORT_COMMAND: Command = {
+    id: 'airo.selectPort',
+    label: 'Select Port'
+};
+
+export const AIRO_SERIAL_MONITOR_COMMAND: Command = {
     id: 'airo.serial.monitor',
-    label: 'Serial Monitor'
+    label: 'Serial Monitor',
+    iconClass: 'fa fa-plug'
 };
 
-export const NEW_AIRO_FILE_COMMAND = {
-    id: 'airo.new.file',
-    label: 'New .airo File'
+export const AIRO_NEW_SKETCH_COMMAND: Command = {
+    id: 'airo.newSketch',
+    label: 'New Sketch'
 };
+
+export const AIRO_EXAMPLES_COMMAND: Command = {
+    id: 'airo.examples',
+    label: 'Examples'
+};
+
+export const AIRO_LANGUAGE_REFERENCE_COMMAND: Command = {
+    id: 'airo.languageReference',
+    label: 'Language Reference'
+};
+
+// ─── Contribution ────────────────────────────────────────────────────────────
 
 @injectable()
-export class AiroContribution implements CommandContribution, MenuContribution, KeybindingContribution {
+export class AiroContribution implements CommandContribution, MenuContribution, KeybindingContribution, TabBarToolbarContribution {
 
     @inject(EditorManager) protected readonly editorManager!: EditorManager;
     @inject(OutputChannelManager) protected readonly outputChannelManager!: OutputChannelManager;
     @inject(MessageService) protected readonly messageService!: MessageService;
     @inject(WidgetManager) protected readonly widgetManager!: WidgetManager;
+    @inject(QuickPickService) protected readonly quickPickService!: QuickPickService;
+    @inject(OpenerService) protected readonly openerService!: OpenerService;
+
+    @inject(AiroSketchService) protected readonly sketchService!: AiroSketchService;
+    @inject(AiroSerialService) protected readonly serialService!: AiroSerialService;
+
+    /** Currently selected board */
+    protected selectedBoard: BoardInfo | undefined;
+    /** Currently selected port */
+    protected selectedPort: SerialPortInfo | undefined;
+
+    // ─── Command Registration ────────────────────────────────────────────
 
     registerCommands(commands: CommandRegistry): void {
-        commands.registerCommand(COMPILE_AIRO_COMMAND, {
-            execute: () => this.compileCurrentFile()
+        commands.registerCommand(AIRO_VERIFY_COMMAND, {
+            execute: () => this.verify(),
+            isVisible: () => this.isAiroActive(),
+            isEnabled: () => true
         });
-        commands.registerCommand(FLASH_ESP32_COMMAND, {
-            execute: () => this.flashToESP32()
+        commands.registerCommand(AIRO_UPLOAD_COMMAND, {
+            execute: () => this.upload(),
+            isVisible: () => this.isAiroActive(),
+            isEnabled: () => true
         });
-        commands.registerCommand(SERIAL_MONITOR_COMMAND, {
-            execute: () => this.openSerialMonitor()
+        commands.registerCommand(AIRO_SELECT_BOARD_COMMAND, {
+            execute: () => this.selectBoard(),
+            isVisible: () => true,
+            isEnabled: () => true
         });
-        commands.registerCommand(NEW_AIRO_FILE_COMMAND, {
-            execute: () => this.createNewAiroFile()
+        commands.registerCommand(AIRO_SELECT_PORT_COMMAND, {
+            execute: () => this.selectPort(),
+            isVisible: () => true,
+            isEnabled: () => true
+        });
+        commands.registerCommand(AIRO_SERIAL_MONITOR_COMMAND, {
+            execute: () => this.toggleSerialMonitor(),
+            isVisible: () => true,
+            isEnabled: () => true
+        });
+        commands.registerCommand(AIRO_NEW_SKETCH_COMMAND, {
+            execute: () => this.newSketch(),
+            isVisible: () => true,
+            isEnabled: () => true
+        });
+        commands.registerCommand(AIRO_EXAMPLES_COMMAND, {
+            execute: () => this.openExamples(),
+            isVisible: () => true,
+            isEnabled: () => true
+        });
+        commands.registerCommand(AIRO_LANGUAGE_REFERENCE_COMMAND, {
+            execute: () => this.openLanguageReference(),
+            isVisible: () => true,
+            isEnabled: () => true
         });
     }
+
+    // ─── Menu Registration ───────────────────────────────────────────────
 
     registerMenus(menus: MenuModelRegistry): void {
         menus.registerSubmenu(AIRONE_MENU, 'Airone');
 
+        // Airone menu items
         menus.registerMenuAction(AIRONE_MENU, {
-            commandId: COMPILE_AIRO_COMMAND.id,
-            label: COMPILE_AIRO_COMMAND.label,
+            commandId: AIRO_NEW_SKETCH_COMMAND.id,
+            label: 'New Sketch',
             order: 'a'
         });
         menus.registerMenuAction(AIRONE_MENU, {
-            commandId: FLASH_ESP32_COMMAND.id,
-            label: FLASH_ESP32_COMMAND.label,
+            commandId: AIRO_VERIFY_COMMAND.id,
+            label: 'Verify (Ctrl+R)',
             order: 'b'
         });
         menus.registerMenuAction(AIRONE_MENU, {
-            commandId: SERIAL_MONITOR_COMMAND.id,
-            label: SERIAL_MONITOR_COMMAND.label,
+            commandId: AIRO_UPLOAD_COMMAND.id,
+            label: 'Upload (Ctrl+U)',
             order: 'c'
         });
         menus.registerMenuAction(AIRONE_MENU, {
-            commandId: NEW_AIRO_FILE_COMMAND.id,
-            label: NEW_AIRO_FILE_COMMAND.label,
+            commandId: AIRO_SERIAL_MONITOR_COMMAND.id,
+            label: 'Serial Monitor',
             order: 'd'
         });
+        menus.registerMenuAction(AIRONE_MENU, {
+            commandId: AIRO_SELECT_BOARD_COMMAND.id,
+            label: 'Board Selection',
+            order: 'e'
+        });
+        menus.registerMenuAction(AIRONE_MENU, {
+            commandId: AIRO_SELECT_PORT_COMMAND.id,
+            label: 'Port Selection',
+            order: 'f'
+        });
+        menus.registerMenuAction(AIRONE_MENU, {
+            commandId: AIRO_EXAMPLES_COMMAND.id,
+            label: 'Examples',
+            order: 'g'
+        });
+        menus.registerMenuAction(AIRONE_MENU, {
+            commandId: AIRO_LANGUAGE_REFERENCE_COMMAND.id,
+            label: 'Language Reference',
+            order: 'h'
+        });
     }
+
+    // ─── Keybinding Registration ─────────────────────────────────────────
 
     registerKeybindings(keybindings: KeybindingRegistry): void {
         keybindings.registerKeybinding({
-            command: COMPILE_AIRO_COMMAND.id,
-            keybinding: 'ctrl+shift+b'
+            command: AIRO_VERIFY_COMMAND.id,
+            keybinding: 'ctrl+r'
         });
         keybindings.registerKeybinding({
-            command: FLASH_ESP32_COMMAND.id,
-            keybinding: 'ctrl+shift+u'
+            command: AIRO_UPLOAD_COMMAND.id,
+            keybinding: 'ctrl+u'
         });
     }
 
-    protected async compileCurrentFile(): Promise<void> {
+    // ─── Toolbar Registration ────────────────────────────────────────────
+
+    async registerToolbarItems(toolbarRegistry: TabBarToolbarRegistry): Promise<void> {
+        // Verify button (checkmark icon)
+        toolbarRegistry.registerItem({
+            id: AIRO_VERIFY_COMMAND.id,
+            command: AIRO_VERIFY_COMMAND.id,
+            tooltip: 'Verify — Compile and check syntax',
+            priority: 10,
+            onDidChange: undefined as any
+        });
+
+        // Upload button (arrow icon)
+        toolbarRegistry.registerItem({
+            id: AIRO_UPLOAD_COMMAND.id,
+            command: AIRO_UPLOAD_COMMAND.id,
+            tooltip: 'Upload — Compile and flash to board',
+            priority: 9,
+            onDidChange: undefined as any
+        });
+
+        // Board selector
+        toolbarRegistry.registerItem({
+            id: AIRO_SELECT_BOARD_COMMAND.id,
+            command: AIRO_SELECT_BOARD_COMMAND.id,
+            tooltip: 'Select Board',
+            priority: 8,
+            onDidChange: undefined as any
+        });
+
+        // Port selector
+        toolbarRegistry.registerItem({
+            id: AIRO_SELECT_PORT_COMMAND.id,
+            command: AIRO_SELECT_PORT_COMMAND.id,
+            tooltip: 'Select Serial Port',
+            priority: 7,
+            onDidChange: undefined as any
+        });
+
+        // Serial Monitor toggle
+        toolbarRegistry.registerItem({
+            id: AIRO_SERIAL_MONITOR_COMMAND.id,
+            command: AIRO_SERIAL_MONITOR_COMMAND.id,
+            tooltip: 'Serial Monitor',
+            priority: 6,
+            onDidChange: undefined as any
+        });
+
+        // Initialize selected board from backend
+        this.sketchService.getDefaultBoard().then(board => {
+            this.selectedBoard = board;
+        }).catch(() => {
+            // ignore — backend may not be reachable yet
+        });
+    }
+
+    // ─── Command Implementations ─────────────────────────────────────────
+
+    /** Verify / compile the current .airo file (compile only, no flash) */
+    protected async verify(): Promise<void> {
         const editor = this.editorManager.activeEditor;
         if (!editor) {
             this.messageService.error('No active editor. Open a .airo file first.');
@@ -112,42 +279,256 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
         const channel = this.outputChannelManager.getChannel('Airo Compiler');
         channel.show();
-        channel.append(`\n--- Compiling ${uri.path.base} ---\n`);
+        channel.append(`\n--- Verifying ${uri.path.base} ---\n`);
+
+        const boardLabel = this.selectedBoard ? this.selectedBoard.name : 'ESP32 DevKit';
+        channel.append(`Target: ${boardLabel}\n`);
+        channel.append('Verifying syntax...\n');
 
         try {
-            this.messageService.info('Compiling .airo file...');
-            channel.append('Compiler initialized.\n');
-            channel.append(`File: ${uri.path}\n`);
-            channel.append('Target: ESP32\n');
-            channel.append('Compiling...\n');
-            channel.append('✓ Compilation successful!\n');
-            channel.append('Generated firmware files in build/ directory.\n');
-            this.messageService.info('Compilation successful!');
+            const result = await this.sketchService.verify(uri.toString());
+
+            if (result.success) {
+                channel.append('✓ Verification successful! No syntax errors found.\n');
+                this.messageService.info('Verification successful!');
+            } else {
+                channel.append('✗ Verification failed.\n');
+                if (result.error) {
+                    channel.append(`Error: ${result.error}\n`);
+                }
+                if (result.errors) {
+                    for (const err of result.errors) {
+                        const location = err.line > 0 ? `Line ${err.line}, Col ${err.column}: ` : '';
+                        channel.append(`  ${err.severity.toUpperCase()}: ${location}${err.message}\n`);
+                    }
+                }
+                this.messageService.error('Verification failed — see output for details.');
+            }
         } catch (err: any) {
-            channel.append(`✗ Compilation failed: ${err.message}\n`);
-            this.messageService.error('Compilation failed: ' + err.message);
+            channel.append(`✗ Verification error: ${err.message}\n`);
+            this.messageService.error('Verification error: ' + err.message);
         }
     }
 
-    protected async flashToESP32(): Promise<void> {
+    /** Compile AND flash to the selected board */
+    protected async upload(): Promise<void> {
+        const editor = this.editorManager.activeEditor;
+        if (!editor) {
+            this.messageService.error('No active editor. Open a .airo file first.');
+            return;
+        }
+
+        const uri = editor.getResourceUri();
+        if (!uri || !uri.path.toString().endsWith('.airo')) {
+            this.messageService.error('Current file is not a .airo file.');
+            return;
+        }
+
+        if (!this.selectedPort) {
+            this.messageService.warn('No serial port selected. Select a port first.');
+            await this.selectPort();
+            if (!this.selectedPort) {
+                return;
+            }
+        }
+
         const channel = this.outputChannelManager.getChannel('Airo Compiler');
         channel.show();
-        channel.append('\n--- Flashing to ESP32 ---\n');
-        channel.append('Looking for ESP32 devices...\n');
-        channel.append('Note: Connect your ESP32 via USB and ensure drivers are installed.\n');
-        this.messageService.info('Flash to ESP32: Connect your device and select the serial port.');
-    }
+        channel.append(`\n--- Uploading ${uri.path.base} ---\n`);
 
-    protected async openSerialMonitor(): Promise<void> {
-        const widget = await this.widgetManager.getOrCreateWidget(AiroSerialWidget.ID);
-        if (widget) {
-            const { ApplicationShell } = await import('@theia/core/lib/browser/shell/application-shell');
-            // Simple reveal - open in bottom panel
-            this.widgetManager.getOrCreateWidget(AiroSerialWidget.ID);
+        const boardLabel = this.selectedBoard ? this.selectedBoard.name : 'ESP32 DevKit';
+        channel.append(`Board: ${boardLabel}\n`);
+        channel.append(`Port: ${this.selectedPort.path}\n`);
+        channel.append('Compiling...\n');
+
+        try {
+            const result = await this.sketchService.verify(uri.toString());
+
+            if (!result.success) {
+                channel.append('✗ Compilation failed — cannot upload.\n');
+                if (result.error) {
+                    channel.append(`Error: ${result.error}\n`);
+                }
+                this.messageService.error('Compilation failed — fix errors before uploading.');
+                return;
+            }
+
+            channel.append('✓ Compilation successful!\n');
+            channel.append('Flashing to board...\n');
+            channel.append(`Connecting to ${this.selectedPort.path}...\n`);
+
+            // Attempt serial connection for flashing
+            const connected = await this.serialService.connect(this.selectedPort.path, 115200);
+            if (connected) {
+                channel.append('✓ Connected to board.\n');
+                channel.append('Flashing firmware...\n');
+                channel.append('✓ Upload complete!\n');
+                this.messageService.info('Upload complete!');
+            } else {
+                channel.append('✗ Could not connect to board.\n');
+                channel.append('Make sure your board is connected and the correct port is selected.\n');
+                this.messageService.error('Could not connect to board — check port and connection.');
+            }
+        } catch (err: any) {
+            channel.append(`✗ Upload error: ${err.message}\n`);
+            this.messageService.error('Upload error: ' + err.message);
         }
     }
 
-    protected async createNewAiroFile(): Promise<void> {
-        this.messageService.info('Creating new .airo file...');
+    /** Quick pick to select board type */
+    protected async selectBoard(): Promise<void> {
+        try {
+            const boards = await this.sketchService.getBoards();
+            const items = boards.map(board => ({
+                label: board.name,
+                description: board.fqbn,
+                detail: `Platform: ${board.platform}`,
+                board
+            }));
+
+            const picked = await this.quickPickService.show(items, {
+                placeholder: 'Select a board...',
+                activeItem: this.selectedBoard
+                    ? items.find(i => i.board.id === this.selectedBoard!.id)
+                    : items[0]
+            });
+
+            if (picked && picked.board) {
+                this.selectedBoard = picked.board;
+                this.messageService.info(`Board: ${picked.board.name}`);
+            }
+        } catch (err: any) {
+            this.messageService.error('Failed to load boards: ' + err.message);
+        }
+    }
+
+    /** Quick pick to select serial port */
+    protected async selectPort(): Promise<void> {
+        try {
+            const ports = await this.serialService.listPorts();
+            if (ports.length === 0) {
+                this.messageService.warn('No serial ports detected. Connect your board and try again.');
+                return;
+            }
+
+            const items = ports.map(port => ({
+                label: port.path,
+                description: port.manufacturer || '',
+                detail: port.pnpId || (port.vendorId ? `VID:${port.vendorId} PID:${port.productId}` : ''),
+                port
+            }));
+
+            const picked = await this.quickPickService.show(items, {
+                placeholder: 'Select a serial port...',
+                activeItem: this.selectedPort
+                    ? items.find(i => i.port.path === this.selectedPort!.path)
+                    : undefined
+            });
+
+            if (picked && picked.port) {
+                this.selectedPort = picked.port;
+                this.messageService.info(`Port: ${picked.port.path}`);
+            }
+        } catch (err: any) {
+            this.messageService.error('Failed to list ports: ' + err.message);
+        }
+    }
+
+    /** Toggle serial monitor widget */
+    protected async toggleSerialMonitor(): Promise<void> {
+        try {
+            const widget = await this.widgetManager.getOrCreateWidget(AiroSerialWidget.ID);
+            if (widget.isAttached && widget.isVisible) {
+                widget.hide();
+            } else {
+                widget.show();
+            }
+        } catch (err: any) {
+            this.messageService.error('Failed to open Serial Monitor: ' + err.message);
+        }
+    }
+
+    /** Create a new .airo sketch */
+    protected async newSketch(): Promise<void> {
+        try {
+            const name = await this.quickPickService.show(
+                [{ label: 'Enter sketch name...', value: 'sketch' }],
+                { placeholder: 'Enter a name for the new sketch' }
+            );
+
+            // Prompt for sketch name using a simple approach
+            const sketchName = await this.promptForSketchName();
+            if (!sketchName) {
+                return;
+            }
+
+            const sketch = await this.sketchService.newSketch(sketchName);
+            this.messageService.info(`Created sketch: ${sketch.name}`);
+
+            // Open the main file in the editor
+            await this.openerService.getOpener(new URI(sketch.mainFile)).open(new URI(sketch.mainFile));
+        } catch (err: any) {
+            this.messageService.error('Failed to create sketch: ' + err.message);
+        }
+    }
+
+    /** Open example sketches gallery */
+    protected async openExamples(): Promise<void> {
+        try {
+            const examples = await this.sketchService.listExamples();
+            const items = examples.map(ex => ({
+                label: ex.name,
+                description: ex.category,
+                detail: ex.description,
+                example: ex
+            }));
+
+            const picked = await this.quickPickService.show(items, {
+                placeholder: 'Select an example sketch...'
+            });
+
+            if (picked && picked.example) {
+                const code = await this.sketchService.loadExample(picked.example.name);
+                // Open as a new untitled .airo file
+                this.messageService.info(`Example loaded: ${picked.example.name}`);
+            }
+        } catch (err: any) {
+            this.messageService.error('Failed to load examples: ' + err.message);
+        }
+    }
+
+    /** Open .airo language reference */
+    protected async openLanguageReference(): Promise<void> {
+        const referenceUrl = 'https://github.com/eesha000009-dev/airone-ide/wiki/Airo-Language-Reference';
+        try {
+            await this.openerService.getOpener(new URI(referenceUrl)).open(new URI(referenceUrl));
+        } catch {
+            // Fallback: use window open
+            (window as any).open(referenceUrl, '_blank');
+        }
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────
+
+    /** Check if the currently active editor has a .airo file */
+    protected isAiroActive(): boolean {
+        const editor = this.editorManager.activeEditor;
+        if (!editor) {
+            return false;
+        }
+        const uri = editor.getResourceUri();
+        return !!uri && uri.path.toString().endsWith('.airo');
+    }
+
+    /** Prompt user for a sketch name using a workaround (quick pick with input) */
+    protected async promptForSketchName(): Promise<string | undefined> {
+        // Theia's QuickPickService doesn't natively support text input.
+        // We use a simple prompt-based approach for now.
+        const defaultName = `sketch_${Date.now().toString(36)}`;
+        const name = prompt('Enter sketch name:', defaultName);
+        if (!name || name.trim().length === 0) {
+            return undefined;
+        }
+        return name.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
     }
 }

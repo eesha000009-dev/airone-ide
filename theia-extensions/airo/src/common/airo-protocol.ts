@@ -9,10 +9,13 @@
 
 export const AIRO_COMPILER_PATH = '/services/airo-compiler';
 export const AIRO_SERIAL_PATH = '/services/airo-serial';
+export const AIRO_SKETCH_PATH = '/services/airo-sketch';
+
+// ─── Compiler Protocol ───────────────────────────────────────────────────────
 
 export interface CompileRequest {
     filePath: string;
-    target: 'esp32' | 'stm32';
+    target: string;
     outputDir: string;
     wifiSsid?: string;
     wifiPass?: string;
@@ -25,6 +28,22 @@ export interface CompileResult {
     generatedFiles?: string[];
 }
 
+export interface VerifyResult {
+    success: boolean;
+    output: string;
+    error?: string;
+    errors?: SyntaxError[];
+}
+
+export interface SyntaxError {
+    line: number;
+    column: number;
+    message: string;
+    severity: 'error' | 'warning';
+}
+
+// ─── Serial Port Protocol ────────────────────────────────────────────────────
+
 export interface SerialPortInfo {
     path: string;
     manufacturer?: string;
@@ -33,8 +52,35 @@ export interface SerialPortInfo {
     productId?: string;
 }
 
+// ─── Board Protocol ──────────────────────────────────────────────────────────
+
+export interface BoardInfo {
+    id: string;
+    name: string;
+    fqbn: string;
+    platform: string;
+}
+
+// ─── Sketch Protocol ─────────────────────────────────────────────────────────
+
+export interface ExampleSketch {
+    name: string;
+    category: string;
+    description: string;
+    code: string;
+}
+
+export interface SketchInfo {
+    name: string;
+    path: string;
+    mainFile: string;
+}
+
+// ─── Service Interfaces (Backend) ────────────────────────────────────────────
+
 export interface AiroCompilerClient {
     compile(request: CompileRequest): Promise<CompileResult>;
+    verify(filePath: string): Promise<VerifyResult>;
     getTemplate(): Promise<string>;
 }
 
@@ -43,9 +89,21 @@ export interface AiroSerialClient {
     connect(portPath: string, baudRate: number): Promise<boolean>;
     disconnect(): Promise<boolean>;
     onData(callback: (data: string) => void): void;
+    removeDataCallback(callback: (data: string) => void): void;
     sendData(data: string): Promise<boolean>;
     isConnected(): boolean;
 }
 
+export interface AiroSketchClient {
+    newSketch(name: string): Promise<SketchInfo>;
+    listExamples(): Promise<ExampleSketch[]>;
+    loadExample(name: string): Promise<string>;
+    getBoards(): Promise<BoardInfo[]>;
+    getDefaultBoard(): Promise<BoardInfo>;
+}
+
+// ─── DI Symbols ──────────────────────────────────────────────────────────────
+
 export const AiroCompilerService = Symbol('AiroCompilerService');
 export const AiroSerialService = Symbol('AiroSerialService');
+export const AiroSketchService = Symbol('AiroSketchService');
