@@ -12,6 +12,7 @@ import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { Message } from '@theia/core/lib/browser/widgets/widget';
 import * as React from 'react';
 import { AiroSerialService, AiroSerialClient, SerialPortInfo } from '../common/airo-protocol';
+import { MessageService } from '@theia/core/lib/common/message-service';
 
 @injectable()
 export class AiroSerialWidget extends ReactWidget {
@@ -19,6 +20,7 @@ export class AiroSerialWidget extends ReactWidget {
     static readonly LABEL = 'Serial Monitor';
 
     @inject(AiroSerialService) protected readonly serialService!: AiroSerialClient;
+    @inject(MessageService) protected readonly messageService!: MessageService;
 
     private lines: string[] = [];
     private connected: boolean = false;

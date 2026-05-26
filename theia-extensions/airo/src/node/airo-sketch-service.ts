@@ -70,6 +70,26 @@ export class AiroSketchService implements AiroSketchClient {
         };
     }
 
+    async newSketchFromExample(name: string, code: string): Promise<SketchInfo> {
+        const workspace = await this.workspaceServer.getMostRecentlyUsedWorkspace();
+        const root = workspace ? fsPathFromUri(workspace) : process.cwd();
+
+        const sketchDir = path.join(root, name);
+        const mainFile = path.join(sketchDir, `${name}.airo`);
+
+        if (!fs.existsSync(sketchDir)) {
+            fs.mkdirSync(sketchDir, { recursive: true });
+        }
+
+        fs.writeFileSync(mainFile, code, { encoding: 'utf8' });
+
+        return {
+            name,
+            path: sketchDir,
+            mainFile
+        };
+    }
+
     async listExamples(): Promise<ExampleSketch[]> {
         return [
             {

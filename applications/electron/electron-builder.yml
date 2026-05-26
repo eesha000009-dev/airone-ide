@@ -26,15 +26,22 @@ files:
 extraResources:
   - from: ../../plugins
     to: app/plugins
+  - from: ../../airo-compiler
+    to: airo-compiler
+
+# ─── Auto-Update Configuration ──────────────────────────────────────────────
+# Publishing to GitHub Releases for auto-update support via electron-updater
+
+publish:
+  provider: github
+  owner: eesha000009-dev
+  repo: airone-ide
+  releaseType: release
 
 win:
   icon: resources/icons/airone-icon.ico
   target:
     - nsis
-  publish:
-    provider: generic
-    url: "https://github.com/eesha000009-dev/airone-ide/releases"
-    useMultipleRangeRequest: false
 mac:
   icon: resources/icons/MacLauncherIcons/icon.icns
   category: public.app-category.developer-tools
@@ -46,9 +53,6 @@ mac:
   target:
     - dmg
     - zip
-  publish:
-    provider: generic
-    url: "https://github.com/eesha000009-dev/airone-ide/releases"
 linux:
   icon: resources/icons/LinuxLauncherIcons
   category: Development
@@ -58,9 +62,6 @@ linux:
   target:
     - deb
     - AppImage
-  publish:
-    provider: generic
-    url: "https://github.com/eesha000009-dev/airone-ide/releases"
 
 nsis:
   menuCategory: true

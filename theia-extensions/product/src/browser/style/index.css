@@ -92,3 +92,66 @@ ul.theia-aboutExtensions {
 .theia-TreeViewContent .theia-TreeNodeContent[title$=".theia"] {
     display: none !important;
 }
+
+/* ─── Hide Unwanted Menu Items ────────────────────────────────────────────── */
+/* In Theia's Electron mode, the menu bar is rendered as DOM elements.
+   We hide the menus we don't want: Selection, Go, Run, Terminal, Help */
+
+/* Target menu bar items by their data attributes or position */
+.p-MenuBar-item[aria-label="Selection"],
+.p-MenuBar-item[aria-label="Go"],
+.p-MenuBar-item[aria-label="Run"],
+.p-MenuBar-item[aria-label="Terminal"],
+.p-MenuBar-item[aria-label="Help"] {
+    display: none !important;
+}
+
+/* Also hide by class-based selectors that Theia uses */
+.theia-menubar .p-MenuBar-item:nth-child(4),  /* Selection (after File, Edit, View) */
+.theia-menubar .p-MenuBar-item:nth-child(5),  /* Go */
+.theia-menubar .p-MenuBar-item:nth-child(6),  /* Run */
+.theia-menubar .p-MenuBar-item:nth-child(7),  /* Terminal */
+.theia-menubar .p-MenuBar-item:nth-child(8) { /* Help */
+    /* Note: This is a fallback - the actual positions may vary.
+       The JS-based approach in theia-ide-contribution.tsx is more reliable. */
+}
+
+/* ─── Hide Unwanted Sidebar Items ─────────────────────────────────────────── */
+
+/* Hide Search from activity bar */
+.p-TabBar-tab[data-id="search-in-workspace"],
+.theia-activity-bar .p-TabBar-tab[data-id="search-in-workspace"] {
+    display: none !important;
+}
+
+/* Hide Debug from activity bar */
+.p-TabBar-tab[data-id="debug:debug-container"],
+.p-TabBar-tab[data-id="debug:view-container"],
+.theia-activity-bar .p-TabBar-tab[data-id="debug:debug-container"],
+.theia-activity-bar .p-TabBar-tab[data-id="debug:view-container"] {
+    display: none !important;
+}
+
+/* Hide Testing from activity bar */
+.p-TabBar-tab[data-id="test-view-container"],
+.p-TabBar-tab[data-id="test:container"],
+.theia-activity-bar .p-TabBar-tab[data-id="test-view-container"],
+.theia-activity-bar .p-TabBar-tab[data-id="test:container"] {
+    display: none !important;
+}
+
+/* ─── Single Tab Mode Styling ─────────────────────────────────────────────── */
+/* Make the editor area look more like Arduino IDE with single file focus */
+
+/* Hide the tab bar when in single tab mode to reduce visual noise */
+.p-DockPanel > .p-TabBar {
+    /* Keep the tab bar but make it minimal */
+    min-height: 0;
+}
+
+/* ─── Hide theia folder in navigator ──────────────────────────────────────── */
+
+.theia-TreeNodeContent[title=".theia"],
+.theia-TreeNodeContent[title=".airone-ide"] {
+    display: none !important;
+}

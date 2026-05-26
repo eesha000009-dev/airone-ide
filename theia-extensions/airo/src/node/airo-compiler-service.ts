@@ -23,6 +23,11 @@ import { AiroBuiltInCompiler } from './airo-built-in-compiler';
  * 2. **Python (airo_compiler)**: Full transpilation to C++ for ESP32.
  *    This is used when Python and airo_compiler are available.
  *    Falls back gracefully when they are not installed.
+ *
+ * The bundled airo_compiler module is looked for in several locations:
+ * - Next to the app resources (in packaged app)
+ * - In the airo-compiler directory at the project root (in dev mode)
+ * - As a system-installed Python module (pip install airo-compiler)
  */
 @injectable()
 export class AiroCompilerService {
@@ -43,20 +48,31 @@ export class AiroCompilerService {
         if (typeof __dirname !== 'undefined' && __dirname.includes('.asar')) {
             return path.join(process.resourcesPath!, 'airo-compiler');
         }
+
         // Dev mode - look for airo-compiler in common locations
-        const relativePath = path.resolve(__dirname, '../../../../../../airo-compiler');
+        const possibleLocations = [
+            path.resolve(__dirname, '../../../../../../airo-compiler'),
+            path.resolve(process.cwd(), 'airo-compiler'),
+            path.resolve(process.cwd(), '../airo-compiler'),
+        ];
+
         try {
             const fs = require('fs');
-            if (fs.existsSync(relativePath)) {
-                return relativePath;
+            for (const loc of possibleLocations) {
+                if (fs.existsSync(path.join(loc, 'airo_compiler', '__init__.py'))) {
+                    return loc;
+                }
             }
         } catch {
             // ignore
         }
-        return relativePath;
+
+        // Fallback
+        return possibleLocations[0];
     }
 
     private resolvePythonPath(): string {
+        // Check for python3 first, then python
         return process.platform === 'win32' ? 'python' : 'python3';
     }
 

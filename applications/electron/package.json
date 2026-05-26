@@ -33,10 +33,14 @@
           "files.exclude": {
             "**/.airone-ide": true,
             "**/.theia": true,
-            "**/build": true
+            "**/build": true,
+            "**/theia-workspace": true
           },
           "editor.showTabs": "single",
-          "workbench.editor.showTabs": "single"
+          "workbench.editor.showTabs": "single",
+          "workbench.editor.highlightModifiedTabs": false,
+          "explorer.autoReveal": true,
+          "files.autoSave": "afterDelay"
         },
         "electron": {
           "showWindowEarly": false,
@@ -79,7 +83,6 @@
     "@theia/preferences": "1.72.0-next.42",
     "@theia/process": "1.72.0-next.42",
     "@theia/scm": "1.72.0-next.42",
-    "@theia/search-in-workspace": "1.72.0-next.42",
     "@theia/terminal": "1.72.0-next.42",
     "@theia/toolbar": "1.72.0-next.42",
     "@theia/userstorage": "1.72.0-next.42",

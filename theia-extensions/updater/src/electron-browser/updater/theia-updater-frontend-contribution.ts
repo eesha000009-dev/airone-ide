@@ -1,5 +1,5 @@
 /********************************************************************************
- * Copyright (C) 2020 TypeFox, EclipseSource and others.
+ * Copyright (C) 2025 Airone and others.
  *
  * This program and the accompanying materials are made available under the
  * terms of the MIT License, which is available in the project root.
@@ -28,7 +28,7 @@ import { URI as VSCodeURI } from 'vscode-uri';
 
 export namespace TheiaUpdaterCommands {
 
-    const category = 'Theia Electron Updater';
+    const category = 'Airone IDE Updater';
 
     export const CHECK_FOR_UPDATES: Command = {
         id: 'electron-theia:check-for-updates',
@@ -192,8 +192,8 @@ export class TheiaUpdaterFrontendContribution implements CommandContribution, Me
 
     protected async handleDownloadUpdate(updateInfo?: UpdateInfo): Promise<void> {
         const message = updateInfo
-            ? `Update to version ${updateInfo.version} found, do you want to update?`
-            : 'Updates found, do you want to update?';
+            ? `Update to Airone IDE version ${updateInfo.version} found, do you want to update?`
+            : 'Updates found for Airone IDE, do you want to update?';
         const actions = ['Not now', 'Yes'];
         const checkForUpdates = this.preferenceService.get<boolean>('updates.checkForUpdates', true);
         if (checkForUpdates) {
@@ -207,7 +207,7 @@ export class TheiaUpdaterFrontendContribution implements CommandContribution, Me
         if (answer === 'Yes') {
             this.stopProgress();
             this.progress = await this.messageService.showProgress({
-                text: 'Theia IDE Update',
+                text: 'Airone IDE Update',
                 options: { cancelable: true }
             }, () => this.updater.cancel());
             let dots = 0;
@@ -222,7 +222,7 @@ export class TheiaUpdaterFrontendContribution implements CommandContribution, Me
     }
 
     protected async handleNoUpdate(): Promise<void> {
-        this.messageService.info('Already using the latest version');
+        this.messageService.info('Airone IDE is already using the latest version');
     }
 
     protected async handleUpdatesAvailable(): Promise<void> {
@@ -231,8 +231,8 @@ export class TheiaUpdaterFrontendContribution implements CommandContribution, Me
             this.stopProgress();
         }
         const message = this.currentUpdateInfo
-            ? `An update to version ${this.currentUpdateInfo.version} has been downloaded and will be automatically installed on exit. Do you want to restart now?`
-            : 'An update has been downloaded and will be automatically installed on exit. Do you want to restart now?';
+            ? `An update to Airone IDE version ${this.currentUpdateInfo.version} has been downloaded and will be automatically installed on exit. Do you want to restart now?`
+            : 'An Airone IDE update has been downloaded and will be automatically installed on exit. Do you want to restart now?';
         const answer = await this.messageService.info(message, 'No', 'Yes');
         if (answer === 'Yes') {
             this.updater.onRestartToUpdateRequested();

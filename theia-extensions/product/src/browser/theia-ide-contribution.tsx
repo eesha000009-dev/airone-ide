@@ -39,8 +39,8 @@ export namespace TheiaIDECommands {
 }
 
 /**
- * Contribution that renames the VS Code Extensions view label to "Libraries"
- * and adds Airone-specific menu entries.
+ * Contribution that renames the VS Code Extensions view label to "Libraries",
+ * adds Airone-specific menu entries, and hides unwanted menus/sidebar items.
  */
 @injectable()
 export class TheiaIDEContribution implements CommandContribution, MenuContribution {
@@ -52,11 +52,13 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     static DOCUMENTATION_URL = 'https://github.com/eesha000009-dev/airone-ide#readme';
 
     private renameObserver: MutationObserver | null = null;
+    private menuHideObserver: MutationObserver | null = null;
 
     constructor() {
         // Rename "Extensions" label to "Libraries" in the sidebar on startup
         // Use MutationObserver to catch dynamic changes
         this.startRenaming();
+        this.startHidingMenus();
     }
 
     protected startRenaming(): void {
@@ -90,6 +92,65 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             }
         };
         startObserving();
+    }
+
+    /**
+     * Hide unwanted menus from the menu bar using DOM manipulation.
+     * In Electron, menus are native and can't be easily removed via Theia's API.
+     * We remove them by manipulating the DOM-based menu in web mode and
+     * also use CSS for the native menu.
+     */
+    protected startHidingMenus(): void {
+        this.hideUnwantedMenus();
+
+        this.menuHideObserver = new MutationObserver(() => {
+            this.hideUnwantedMenus();
+        });
+
+        const startObserving = () => {
+            if (document.body) {
+                this.menuHideObserver!.observe(document.body, {
+                    childList: true,
+                    subtree: true
+                });
+            } else {
+                setTimeout(startObserving, 100);
+            }
+        };
+        startObserving();
+    }
+
+    /**
+     * Hide unwanted menus: Selection, Go, Run, Terminal, Help
+     * Keep only: File, Edit, View, + our Compile/Verify/Upload
+     */
+    protected hideUnwantedMenus(): void {
+        // The Theia menu bar uses various CSS classes
+        // Target menu items by their label text
+        const menuItems = document.querySelectorAll('.p-MenuBar-item, .theia-MenuBar-item, [class*="MenuBar-item"]');
+        const hiddenLabels = ['Selection', 'Go', 'Run', 'Terminal', 'Help'];
+
+        menuItems.forEach(item => {
+            const label = item.textContent?.trim();
+            if (label && hiddenLabels.includes(label)) {
+                if (item instanceof HTMLElement) {
+                    item.style.display = 'none';
+                }
+            }
+        });
+
+        // Also hide via the Theia-specific selectors
+        const allMenuBarChildren = document.querySelectorAll('.theia-menubar, .p-MenuBar');
+        allMenuBarChildren.forEach(menuBar => {
+            const children = menuBar.children;
+            for (let i = 0; i < children.length; i++) {
+                const child = children[i] as HTMLElement;
+                const label = child.textContent?.trim();
+                if (label && hiddenLabels.includes(label)) {
+                    child.style.display = 'none';
+                }
+            }
+        });
     }
 
     /**
@@ -204,6 +265,10 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
         if (this.renameObserver) {
             this.renameObserver.disconnect();
             this.renameObserver = null;
+        }
+        if (this.menuHideObserver) {
+            this.menuHideObserver.disconnect();
+            this.menuHideObserver = null;
         }
     }
 }

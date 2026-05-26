@@ -20,6 +20,7 @@ import { QuickPickService } from '@theia/core/lib/common/quick-pick-service';
 import { OpenerService } from '@theia/core/lib/browser/opener-service';
 import { URI } from '@theia/core/lib/common/uri';
 import { CommandService } from '@theia/core/lib/common/command';
+import { SingleTextInputDialog } from '@theia/core/lib/browser/dialogs';
 import {
     AiroSketchService,
     AiroSerialService,
@@ -71,7 +72,11 @@ export class AiroSidebarWidget extends ReactWidget {
         this._refreshTimer = window.setInterval(() => this.refreshPorts(), 5000);
 
         // Check serial connection status
-        this._serialConnected = this.serialService.isConnected();
+        try {
+            this._serialConnected = this.serialService.isConnected();
+        } catch {
+            this._serialConnected = false;
+        }
         this.update();
     }
 
@@ -128,18 +133,53 @@ export class AiroSidebarWidget extends ReactWidget {
         }
     }
 
+    // ─── Active .airo File Detection ──────────────────────────────────
+
+    /**
+     * Find the active .airo file URI. Checks multiple sources:
+     * 1. The currently active editor
+     * 2. All open editors (in case focus is elsewhere)
+     */
+    protected getActiveAiroUri(): URI | undefined {
+        // First try the active editor
+        try {
+            const activeEditor = this.editorManager.activeEditor;
+            if (activeEditor) {
+                const uri = activeEditor.getResourceUri();
+                if (uri && uri.path.toString().endsWith('.airo')) {
+                    return uri;
+                }
+            }
+        } catch {
+            // Ignore errors accessing active editor
+        }
+
+        // Then try all open editors
+        try {
+            const allEditors = this.editorManager.all;
+            for (const editor of allEditors) {
+                try {
+                    const uri = editor.getResourceUri();
+                    if (uri && uri.path.toString().endsWith('.airo')) {
+                        return uri;
+                    }
+                } catch {
+                    // Skip editors that can't provide a URI
+                }
+            }
+        } catch {
+            // Ignore errors iterating editors
+        }
+
+        return undefined;
+    }
+
     // ─── Actions ───────────────────────────────────────────────────────
 
     protected async verify(): Promise<void> {
-        const editor = this.editorManager.activeEditor;
-        if (!editor) {
-            this.messageService.error('No active editor. Open a .airo file first.');
-            return;
-        }
-
-        const uri = editor.getResourceUri();
-        if (!uri || !uri.path.toString().endsWith('.airo')) {
-            this.messageService.error('Current file is not a .airo file.');
+        const uri = this.getActiveAiroUri();
+        if (!uri) {
+            this.messageService.error('No .airo file open. Create or open a .airo sketch first.');
             return;
         }
 
@@ -183,15 +223,9 @@ export class AiroSidebarWidget extends ReactWidget {
     }
 
     protected async upload(): Promise<void> {
-        const editor = this.editorManager.activeEditor;
-        if (!editor) {
-            this.messageService.error('No active editor. Open a .airo file first.');
-            return;
-        }
-
-        const uri = editor.getResourceUri();
-        if (!uri || !uri.path.toString().endsWith('.airo')) {
-            this.messageService.error('Current file is not a .airo file.');
+        const uri = this.getActiveAiroUri();
+        if (!uri) {
+            this.messageService.error('No .airo file open. Create or open a .airo sketch first.');
             return;
         }
 
@@ -252,6 +286,11 @@ export class AiroSidebarWidget extends ReactWidget {
         }
     }
 
+    protected async compile(): Promise<void> {
+        // Compile is the same as verify in the Arduino paradigm
+        await this.verify();
+    }
+
     protected async selectBoard(board: BoardInfo): Promise<void> {
         this._selectedBoard = board;
         this.messageService.info(`Board: ${board.name}`);
@@ -300,10 +339,31 @@ export class AiroSidebarWidget extends ReactWidget {
         }
     }
 
+    /**
+     * Create a new sketch using a proper dialog (not prompt() which
+     * is not supported in Electron).
+     */
     protected async newSketch(): Promise<void> {
         try {
             const defaultName = `sketch_${Date.now().toString(36)}`;
-            const name = prompt('Enter sketch name:', defaultName);
+
+            // Use SingleTextInputDialog instead of prompt()
+            const dialog = new SingleTextInputDialog({
+                title: 'New Sketch',
+                initialValue: defaultName,
+                placeholder: 'Enter sketch name',
+                validate: (input: string) => {
+                    if (!input || input.trim().length === 0) {
+                        return 'Sketch name cannot be empty';
+                    }
+                    if (!/^[a-zA-Z0-9_-]+$/.test(input.trim())) {
+                        return 'Only letters, numbers, underscores, and hyphens allowed';
+                    }
+                    return '';
+                }
+            });
+
+            const name = await dialog.open();
             if (!name || name.trim().length === 0) {
                 return;
             }
@@ -313,13 +373,18 @@ export class AiroSidebarWidget extends ReactWidget {
             this.messageService.info(`Created sketch: ${sketch.name}`);
 
             // Open the main file in the editor
-            const opener = await this.openerService.getOpener(new URI(sketch.mainFile));
-            await opener.open(new URI(sketch.mainFile));
+            const fileUri = new URI(sketch.mainFile);
+            const opener = await this.openerService.getOpener(fileUri);
+            await opener.open(fileUri);
         } catch (err: any) {
             this.messageService.error('Failed to create sketch: ' + err.message);
         }
     }
 
+    /**
+     * Open an example sketch — creates a new sketch from the example
+     * template and opens it in the editor.
+     */
     protected async openExamples(): Promise<void> {
         try {
             const examples = await this.sketchService.listExamples();
@@ -336,6 +401,18 @@ export class AiroSidebarWidget extends ReactWidget {
 
             if (picked && picked.exampleName) {
                 const code = await this.sketchService.loadExample(picked.exampleName);
+
+                // Create a new sketch from the example code
+                const sketch = await this.sketchService.newSketchFromExample(
+                    `example_${picked.exampleName.toLowerCase()}_${Date.now().toString(36)}`,
+                    code
+                );
+
+                // Open the new sketch file in the editor
+                const fileUri = new URI(sketch.mainFile);
+                const opener = await this.openerService.getOpener(fileUri);
+                await opener.open(fileUri);
+
                 this.messageService.info(`Example loaded: ${picked.exampleName}`);
             }
         } catch (err: any) {

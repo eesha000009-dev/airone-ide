@@ -7,7 +7,7 @@
  * SPDX-License-Identifier: MIT
  ********************************************************************************/
 
-import { injectable } from '@theia/core/shared/inversify';
+import { injectable, inject } from '@theia/core/shared/inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { AiroSidebarWidget } from './airo-sidebar-widget';
 import { CommandContribution, CommandRegistry, Command } from '@theia/core/lib/common/command';
@@ -16,6 +16,34 @@ import { KeybindingContribution, KeybindingRegistry } from '@theia/core/lib/brow
 export const AIRO_SIDEBAR_COMMAND: Command = {
     id: 'airo.showSidebar',
     label: 'Show Airone Panel',
+    category: 'Airone'
+};
+
+/**
+ * Commands that the sidebar widget exposes for other contributions to call.
+ * These are the "fromSidebar" variants that the menu contributions forward to.
+ */
+export const AIRO_VERIFY_FROM_SIDEBAR: Command = {
+    id: 'airo.verify.fromSidebar',
+    label: 'Verify',
+    category: 'Airone'
+};
+
+export const AIRO_UPLOAD_FROM_SIDEBAR: Command = {
+    id: 'airo.upload.fromSidebar',
+    label: 'Upload',
+    category: 'Airone'
+};
+
+export const AIRO_NEW_SKETCH_FROM_SIDEBAR: Command = {
+    id: 'airo.newSketch.fromSidebar',
+    label: 'New Sketch',
+    category: 'Airone'
+};
+
+export const AIRO_EXAMPLES_FROM_SIDEBAR: Command = {
+    id: 'airo.examples.fromSidebar',
+    label: 'Examples',
     category: 'Airone'
 };
 
@@ -56,6 +84,41 @@ export class AiroSidebarContribution extends AbstractViewContribution<AiroSideba
         super.registerCommands(registry);
         registry.registerCommand(AIRO_SIDEBAR_COMMAND, {
             execute: () => this.openView({ activate: true, reveal: true })
+        });
+
+        // Register the "fromSidebar" commands that other contributions can call
+        // These delegate to the sidebar widget's methods
+        registry.registerCommand(AIRO_VERIFY_FROM_SIDEBAR, {
+            execute: async () => {
+                const widget = await this.widget;
+                if (widget) {
+                    (widget as any).verify();
+                }
+            }
+        });
+        registry.registerCommand(AIRO_UPLOAD_FROM_SIDEBAR, {
+            execute: async () => {
+                const widget = await this.widget;
+                if (widget) {
+                    (widget as any).upload();
+                }
+            }
+        });
+        registry.registerCommand(AIRO_NEW_SKETCH_FROM_SIDEBAR, {
+            execute: async () => {
+                const widget = await this.widget;
+                if (widget) {
+                    (widget as any).newSketch();
+                }
+            }
+        });
+        registry.registerCommand(AIRO_EXAMPLES_FROM_SIDEBAR, {
+            execute: async () => {
+                const widget = await this.widget;
+                if (widget) {
+                    (widget as any).openExamples();
+                }
+            }
         });
     }
 

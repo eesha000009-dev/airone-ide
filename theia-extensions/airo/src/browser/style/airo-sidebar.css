@@ -15,6 +15,30 @@
     background-color: var(--theia-icon-foreground);
 }
 
+/* ─── Hide Unwanted Sidebar Items ─────────────────────────────────────────── */
+
+/* Hide Search from activity bar */
+.p-TabBar-tab[data-id="search-in-workspace"],
+.theia-activity-bar .p-TabBar-tab[data-id="search-in-workspace"] {
+    display: none !important;
+}
+
+/* Hide Debug from activity bar */
+.p-TabBar-tab[data-id="debug:debug-container"],
+.p-TabBar-tab[data-id="debug:view-container"],
+.theia-activity-bar .p-TabBar-tab[data-id="debug:debug-container"],
+.theia-activity-bar .p-TabBar-tab[data-id="debug:view-container"] {
+    display: none !important;
+}
+
+/* Hide Testing from activity bar */
+.p-TabBar-tab[data-id="test-view-container"],
+.p-TabBar-tab[data-id="test:container"],
+.theia-activity-bar .p-TabBar-tab[data-id="test-view-container"],
+.theia-activity-bar .p-TabBar-tab[data-id="test:container"] {
+    display: none !important;
+}
+
 /* ─── Sidebar Panel ───────────────────────────────────────────────────────── */
 
 .airo-sidebar-panel {
