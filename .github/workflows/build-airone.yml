@@ -24,6 +24,9 @@ on:
     paths-ignore:
       - '**/*.md'
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     name: Windows Build
