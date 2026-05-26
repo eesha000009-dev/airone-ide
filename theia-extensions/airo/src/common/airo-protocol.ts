@@ -98,6 +98,7 @@ export interface AiroSketchClient {
     newSketch(name: string): Promise<SketchInfo>;
     listExamples(): Promise<ExampleSketch[]>;
     loadExample(name: string): Promise<string>;
+    verify(filePath: string): Promise<VerifyResult>;
     getBoards(): Promise<BoardInfo[]>;
     getDefaultBoard(): Promise<BoardInfo>;
 }
