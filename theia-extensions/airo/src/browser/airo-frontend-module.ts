@@ -14,7 +14,7 @@ import { CommandContribution, MenuContribution } from '@theia/core/lib/common';
 import { KeybindingContribution } from '@theia/core/lib/browser/keybinding';
 import { WidgetFactory } from '@theia/core/lib/browser';
 import { WebSocketConnectionProvider } from '@theia/core/lib/browser/messaging';
-import { ToolbarContribution } from '@theia/toolbar/lib/browser/toolbar-contribution';
+import { ToolbarContribution } from '@theia/toolbar/lib/browser/toolbar-interfaces';
 import { AiroContribution } from './airo-contribution';
 import { AiroToolbarContribution } from './airo-toolbar-contribution';
 import { AiroLanguageContribution } from './airo-language-contribution';
@@ -32,13 +32,11 @@ import {
 export default new ContainerModule((bind, _unbind, isBound, rebind) => {
     // ─── Backend Service Proxies (RPC) ───────────────────────────────────
 
-    // AiroSketchService — frontend proxy to backend
     bind(AiroSketchService).toDynamicValue(ctx => {
         const connectionProvider = ctx.container.get<WebSocketConnectionProvider>(WebSocketConnectionProvider);
         return connectionProvider.createProxy<AiroSketchClient>(AIRO_SKETCH_PATH);
     }).inSingletonScope();
 
-    // AiroSerialService — frontend proxy to backend
     bind(AiroSerialService).toDynamicValue(ctx => {
         const connectionProvider = ctx.container.get<WebSocketConnectionProvider>(WebSocketConnectionProvider);
         return connectionProvider.createProxy<AiroSerialClient>(AIRO_SERIAL_PATH);

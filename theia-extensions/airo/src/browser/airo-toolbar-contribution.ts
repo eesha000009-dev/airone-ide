@@ -7,57 +7,117 @@
  * SPDX-License-Identifier: MIT
  ********************************************************************************/
 
-import { injectable } from '@theia/core/shared/inversify';
-import { ToolbarContribution, ToolbarRegistry } from '@theia/toolbar/lib/browser/toolbar-contribution';
-import {
-    AIRO_COMPILE_COMMAND,
-    AIRO_VERIFY_COMMAND,
-    AIRO_UPLOAD_COMMAND,
-    AIRO_SERIAL_MONITOR_COMMAND
-} from './airo-contribution';
+import { injectable, inject } from '@theia/core/shared/inversify';
+import * as React from 'react';
+import { AbstractToolbarContribution } from '@theia/toolbar/lib/browser/abstract-toolbar-contribution';
+import { CommandService } from '@theia/core/lib/common/command';
+import { MessageService } from '@theia/core/lib/common/message-service';
 
 /**
  * Toolbar contribution that adds Compile, Verify, Upload, and Serial Monitor
  * buttons to the Theia toolbar (the strip below the menu bar).
  */
 @injectable()
-export class AiroToolbarContribution implements ToolbarContribution {
+export class AiroToolbarContribution extends AbstractToolbarContribution {
+    id = 'airo-toolbar';
 
-    registerToolbarItems(registry: ToolbarRegistry): void {
-        // Compile button
-        registry.registerItem({
-            id: 'airo.compile.toolbar',
-            command: AIRO_COMPILE_COMMAND.id,
-            tooltip: 'Compile (Ctrl+Shift+R)',
-            priority: -100,
-            group: 'navigation'
-        });
+    @inject(CommandService)
+    protected readonly commandService: CommandService;
 
-        // Verify button
-        registry.registerItem({
-            id: 'airo.verify.toolbar',
-            command: AIRO_VERIFY_COMMAND.id,
-            tooltip: 'Verify (Ctrl+R)',
-            priority: -90,
-            group: 'navigation'
-        });
+    @inject(MessageService)
+    protected readonly messageService: MessageService;
 
-        // Upload button
-        registry.registerItem({
-            id: 'airo.upload.toolbar',
-            command: AIRO_UPLOAD_COMMAND.id,
-            tooltip: 'Upload (Ctrl+U)',
-            priority: -80,
-            group: 'navigation'
-        });
+    render(): React.ReactNode {
+        return <div className="airo-toolbar-buttons" style={{
+            display: 'flex',
+            gap: '4px',
+            alignItems: 'center',
+            padding: '0 4px'
+        }}>
+            <button
+                className="airo-toolbar-btn airo-toolbar-compile"
+                onClick={() => this.executeCommand('airo.compile')}
+                title="Compile (Ctrl+Shift+R)"
+                style={{
+                    background: '#27ae60',
+                    color: 'white',
+                    border: '1px solid #219a52',
+                    borderRadius: '3px',
+                    padding: '2px 10px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    fontSize: '12px',
+                    whiteSpace: 'nowrap',
+                    lineHeight: '20px'
+                }}
+            >
+                ⏻ Compile
+            </button>
+            <button
+                className="airo-toolbar-btn airo-toolbar-verify"
+                onClick={() => this.executeCommand('airo.verify')}
+                title="Verify (Ctrl+R)"
+                style={{
+                    background: '#2980b9',
+                    color: 'white',
+                    border: '1px solid #2471a3',
+                    borderRadius: '3px',
+                    padding: '2px 10px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    fontSize: '12px',
+                    whiteSpace: 'nowrap',
+                    lineHeight: '20px'
+                }}
+            >
+                ✓ Verify
+            </button>
+            <button
+                className="airo-toolbar-btn airo-toolbar-upload"
+                onClick={() => this.executeCommand('airo.upload')}
+                title="Upload (Ctrl+U)"
+                style={{
+                    background: '#e67e22',
+                    color: 'white',
+                    border: '1px solid #d35400',
+                    borderRadius: '3px',
+                    padding: '2px 10px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    fontSize: '12px',
+                    whiteSpace: 'nowrap',
+                    lineHeight: '20px'
+                }}
+            >
+                → Upload
+            </button>
+            <button
+                className="airo-toolbar-btn airo-toolbar-serial"
+                onClick={() => this.executeCommand('airo.serialMonitor')}
+                title="Serial Monitor (Ctrl+Shift+M)"
+                style={{
+                    background: 'var(--theia-button-background, #555)',
+                    color: 'var(--theia-button-foreground, white)',
+                    border: '1px solid var(--theia-border-color, #444)',
+                    borderRadius: '3px',
+                    padding: '2px 10px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    fontSize: '12px',
+                    whiteSpace: 'nowrap',
+                    lineHeight: '20px'
+                }}
+            >
+                🔌 Serial Monitor
+            </button>
+        </div>;
+    }
 
-        // Serial Monitor button
-        registry.registerItem({
-            id: 'airo.serial.toolbar',
-            command: AIRO_SERIAL_MONITOR_COMMAND.id,
-            tooltip: 'Serial Monitor (Ctrl+Shift+M)',
-            priority: -70,
-            group: 'navigation'
-        });
+    protected async executeCommand(commandId: string): Promise<void> {
+        try {
+            await this.commandService.executeCommand(commandId);
+        } catch (err: any) {
+            this.messageService.error(`Command error: ${err.message}`);
+        }
     }
 }
