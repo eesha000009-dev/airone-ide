@@ -70,11 +70,9 @@ export class AiroSidebarWidget extends ReactWidget {
         // Auto-refresh port list every 5 seconds
         this._refreshTimer = window.setInterval(() => this.refreshPorts(), 5000);
 
-        // Listen for serial connection status
-        this.serialService.isConnected().then(connected => {
-            this._serialConnected = connected;
-            this.update();
-        }).catch(() => { /* ignore */ });
+        // Check serial connection status
+        this._serialConnected = this.serialService.isConnected();
+        this.update();
     }
 
     protected onCloseRequest(msg: Message): void {
