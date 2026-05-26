@@ -19,12 +19,14 @@ import { OutputChannelManager } from '@theia/output/lib/browser/output-channel';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { WidgetManager } from '@theia/core/lib/browser';
 import { AiroSerialWidget } from './airo-serial-widget';
-import { QuickPickService } from '@theia/core/lib/common/quick-pick-service';
+import { QuickPickService, QuickPickItem } from '@theia/core/lib/common/quick-pick-service';
 import { OpenerService } from '@theia/core/lib/browser/opener-service';
 import { URI } from '@theia/core/lib/common/uri';
 import {
     AiroSketchService,
     AiroSerialService,
+    AiroSketchClient,
+    AiroSerialClient,
     BoardInfo,
     SerialPortInfo
 } from '../common/airo-protocol';
@@ -91,8 +93,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     @inject(QuickPickService) protected readonly quickPickService!: QuickPickService;
     @inject(OpenerService) protected readonly openerService!: OpenerService;
 
-    @inject(AiroSketchService) protected readonly sketchService!: AiroSketchService;
-    @inject(AiroSerialService) protected readonly serialService!: AiroSerialService;
+    @inject(AiroSketchService) protected readonly sketchService!: AiroSketchClient;
+    @inject(AiroSerialService) protected readonly serialService!: AiroSerialClient;
 
     /** Currently selected board */
     protected selectedBoard: BoardInfo | undefined;
@@ -379,18 +381,15 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     protected async selectBoard(): Promise<void> {
         try {
             const boards = await this.sketchService.getBoards();
-            const items = boards.map(board => ({
+            const items: (QuickPickItem & { board: BoardInfo })[] = boards.map((board: BoardInfo) => ({
                 label: board.name,
                 description: board.fqbn,
                 detail: `Platform: ${board.platform}`,
                 board
             }));
 
-            const picked = await this.quickPickService.show(items, {
-                placeholder: 'Select a board...',
-                activeItem: this.selectedBoard
-                    ? items.find(i => i.board.id === this.selectedBoard!.id)
-                    : items[0]
+            const picked = await this.quickPickService.show<(QuickPickItem & { board: BoardInfo })>(items, {
+                placeholder: 'Select a board...'
             });
 
             if (picked && picked.board) {
@@ -411,18 +410,15 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 return;
             }
 
-            const items = ports.map(port => ({
+            const items: (QuickPickItem & { port: SerialPortInfo })[] = ports.map((port: SerialPortInfo) => ({
                 label: port.path,
                 description: port.manufacturer || '',
                 detail: port.pnpId || (port.vendorId ? `VID:${port.vendorId} PID:${port.productId}` : ''),
                 port
             }));
 
-            const picked = await this.quickPickService.show(items, {
-                placeholder: 'Select a serial port...',
-                activeItem: this.selectedPort
-                    ? items.find(i => i.port.path === this.selectedPort!.path)
-                    : undefined
+            const picked = await this.quickPickService.show<(QuickPickItem & { port: SerialPortInfo })>(items, {
+                placeholder: 'Select a serial port...'
             });
 
             if (picked && picked.port) {
@@ -466,7 +462,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             this.messageService.info(`Created sketch: ${sketch.name}`);
 
             // Open the main file in the editor
-            await this.openerService.getOpener(new URI(sketch.mainFile)).open(new URI(sketch.mainFile));
+            const opener = await this.openerService.getOpener(new URI(sketch.mainFile));
+            await opener.open(new URI(sketch.mainFile));
         } catch (err: any) {
             this.messageService.error('Failed to create sketch: ' + err.message);
         }
@@ -476,21 +473,21 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     protected async openExamples(): Promise<void> {
         try {
             const examples = await this.sketchService.listExamples();
-            const items = examples.map(ex => ({
+            const items: (QuickPickItem & { exampleName: string })[] = examples.map((ex: { name: string; category: string; description: string }) => ({
                 label: ex.name,
                 description: ex.category,
                 detail: ex.description,
-                example: ex
+                exampleName: ex.name
             }));
 
-            const picked = await this.quickPickService.show(items, {
+            const picked = await this.quickPickService.show<(QuickPickItem & { exampleName: string })>(items, {
                 placeholder: 'Select an example sketch...'
             });
 
-            if (picked && picked.example) {
-                const code = await this.sketchService.loadExample(picked.example.name);
+            if (picked && picked.exampleName) {
+                const code = await this.sketchService.loadExample(picked.exampleName);
                 // Open as a new untitled .airo file
-                this.messageService.info(`Example loaded: ${picked.example.name}`);
+                this.messageService.info(`Example loaded: ${picked.exampleName}`);
             }
         } catch (err: any) {
             this.messageService.error('Failed to load examples: ' + err.message);
@@ -501,7 +498,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     protected async openLanguageReference(): Promise<void> {
         const referenceUrl = 'https://github.com/eesha000009-dev/airone-ide/wiki/Airo-Language-Reference';
         try {
-            await this.openerService.getOpener(new URI(referenceUrl)).open(new URI(referenceUrl));
+            const opener = await this.openerService.getOpener(new URI(referenceUrl));
+            await opener.open(new URI(referenceUrl));
         } catch {
             // Fallback: use window open
             (window as any).open(referenceUrl, '_blank');

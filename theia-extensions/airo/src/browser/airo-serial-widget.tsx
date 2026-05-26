@@ -11,15 +11,14 @@ import { injectable, inject, postConstruct } from '@theia/core/shared/inversify'
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { Message } from '@theia/core/lib/browser/widgets/widget';
 import * as React from 'react';
-import { AiroSerialService } from '../common/airo-protocol';
-import { SerialPortInfo } from '../common/airo-protocol';
+import { AiroSerialService, AiroSerialClient, SerialPortInfo } from '../common/airo-protocol';
 
 @injectable()
 export class AiroSerialWidget extends ReactWidget {
     static readonly ID = 'airo-serial-monitor';
     static readonly LABEL = 'Serial Monitor';
 
-    @inject(AiroSerialService) protected readonly serialService!: AiroSerialService;
+    @inject(AiroSerialService) protected readonly serialService!: AiroSerialClient;
 
     private lines: string[] = [];
     private connected: boolean = false;

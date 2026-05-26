@@ -10,7 +10,6 @@
 import { injectable, inject } from '@theia/core/shared/inversify';
 import * as path from 'path';
 import * as fs from 'fs';
-import { FileUri } from '@theia/core/lib/node/file-uri';
 import { WorkspaceServer } from '@theia/workspace/lib/common';
 import {
     AiroSketchClient,
@@ -18,9 +17,20 @@ import {
     ExampleSketch,
     BoardInfo,
     VerifyResult,
-    SyntaxError,
-    AiroCompilerService
+    SyntaxError
 } from '../common/airo-protocol';
+import { AiroCompilerService } from './airo-compiler-service';
+
+/** Convert a file:// URI to a filesystem path */
+function fsPathFromUri(uri: string): string {
+    const parsed = new URL(uri);
+    let filePath = decodeURIComponent(parsed.pathname);
+    // Windows: remove leading slash from /C:/...
+    if (process.platform === 'win32' && filePath.match(/^\/[A-Za-z]:/)) {
+        filePath = filePath.substring(1);
+    }
+    return filePath;
+}
 
 @injectable()
 export class AiroSketchService implements AiroSketchClient {
@@ -41,7 +51,7 @@ export class AiroSketchService implements AiroSketchClient {
 
     async newSketch(name: string): Promise<SketchInfo> {
         const workspace = await this.workspaceServer.getMostRecentlyUsedWorkspace();
-        const root = workspace ? FileUri.fsPath(workspace) : process.cwd();
+        const root = workspace ? fsPathFromUri(workspace) : process.cwd();
 
         const sketchDir = path.join(root, name);
         const mainFile = path.join(sketchDir, `${name}.airo`);
@@ -111,7 +121,7 @@ export class AiroSketchService implements AiroSketchClient {
     }
 
     async verify(filePath: string): Promise<VerifyResult> {
-        const fsPath = filePath.startsWith('file://') ? FileUri.fsPath(filePath) : filePath;
+        const fsPath = filePath.startsWith('file://') ? fsPathFromUri(filePath) : filePath;
 
         if (!fs.existsSync(fsPath)) {
             return {

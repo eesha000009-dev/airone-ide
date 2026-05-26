@@ -12,7 +12,7 @@ import { CommandContribution, MenuContribution } from '@theia/core/lib/common';
 import { KeybindingContribution } from '@theia/core/lib/browser/keybinding';
 import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
 import { WidgetFactory } from '@theia/core/lib/browser';
-import { WebSocketConnectionProvider } from '@theia/core/lib/browser/messaging/connection';
+import { WebSocketConnectionProvider } from '@theia/core/lib/browser/messaging';
 import { AiroContribution } from './airo-contribution';
 import { AiroLanguageContribution } from './airo-language-contribution';
 import { AiroSerialWidget } from './airo-serial-widget';
