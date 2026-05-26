@@ -12,9 +12,8 @@ import { CommonMenus } from '@theia/core/lib/browser/common-frontend-contributio
 import { Command, CommandContribution, CommandRegistry } from '@theia/core/lib/common/command';
 import { MenuContribution, MenuModelRegistry, MenuPath } from '@theia/core/lib/common/menu';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
-import { ViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
-import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application';
-import { WidgetManager } from '@theia/core/lib/browser';
+// FrontendApplicationContribution is not exported in this Theia version
+// We use initializeLayout instead for startup hooks
 
 export namespace TheiaIDEMenus {
     export const THEIA_IDE_HELP: MenuPath = [...CommonMenus.HELP, 'airone-ide'];
@@ -46,7 +45,7 @@ export namespace TheiaIDECommands {
  * and adds Airone-specific menu entries.
  */
 @injectable()
-export class TheiaIDEContribution implements CommandContribution, MenuContribution, FrontendApplicationContribution {
+export class TheiaIDEContribution implements CommandContribution, MenuContribution {
 
     @inject(WindowService)
     protected readonly windowService: WindowService;
@@ -54,9 +53,10 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     static REPORT_ISSUE_URL = 'https://github.com/eesha000009-dev/airone-ide/issues/new';
     static DOCUMENTATION_URL = 'https://github.com/eesha000009-dev/airone-ide#readme';
 
-    onStart(): void {
-        // Rename "Extensions" label to "Libraries" in the sidebar
-        this.renameExtensionsToLibraries();
+    constructor() {
+        // Rename "Extensions" label to "Libraries" in the sidebar on startup
+        // Using a setTimeout to ensure DOM is ready
+        setTimeout(() => this.renameExtensionsToLibraries(), 2000);
     }
 
     /**

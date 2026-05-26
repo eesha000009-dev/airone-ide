@@ -14,7 +14,6 @@ import { AboutDialog } from '@theia/core/lib/browser/about-dialog';
 import { applyBranding } from './theia-ide-config';
 import { CommandContribution } from '@theia/core/lib/common/command';
 import { ContainerModule } from '@theia/core/shared/inversify';
-import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application';
 import { GettingStartedWidget } from '@theia/getting-started/lib/browser/getting-started-widget';
 import { MenuContribution } from '@theia/core/lib/common/menu';
 import { TheiaIDEAboutDialog } from './theia-ide-about-dialog';
@@ -36,7 +35,7 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
     }
 
     bind(TheiaIDEContribution).toSelf().inSingletonScope();
-    [CommandContribution, MenuContribution, FrontendApplicationContribution].forEach(serviceIdentifier =>
+    [CommandContribution, MenuContribution].forEach(serviceIdentifier =>
         bind(serviceIdentifier).toService(TheiaIDEContribution)
     );
 });
