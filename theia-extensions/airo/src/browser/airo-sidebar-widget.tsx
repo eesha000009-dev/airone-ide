@@ -332,6 +332,11 @@ export class AiroSidebarWidget extends ReactWidget {
             if (widget.isAttached && widget.isVisible) {
                 widget.hide();
             } else {
+                // Show in the bottom panel area
+                const shell = (this.widgetManager as any).shell;
+                if (shell) {
+                    shell.addWidget(widget, { area: 'bottom' });
+                }
                 widget.show();
             }
         } catch (err: any) {

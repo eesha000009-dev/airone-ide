@@ -8,6 +8,15 @@ on:
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a GitHub Release with artifacts'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
   pull_request:
     branches:
       - main
@@ -166,3 +175,70 @@ jobs:
             applications/electron/dist/*.AppImage
             applications/electron/dist/*.deb
           retention-days: 30
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-windows, build-linux]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Windows Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: AironeIDE-Windows
+          path: ./release-artifacts/windows
+
+      - name: Download Linux Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: AironeIDE-Linux
+          path: ./release-artifacts/linux
+
+      - name: List release artifacts
+        run: find ./release-artifacts -type f | head -20
+
+      - name: Generate version tag
+        id: version
+        run: |
+          # Read version from package.json
+          VERSION=$(node -p "require('./applications/electron/package.json').version")
+          # Create a timestamp-based build number for uniqueness
+          BUILD_NUM=$(date +'%Y%m%d%H%M')
+          TAG="v${VERSION}-build.${BUILD_NUM}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "Building release: ${TAG}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Airone IDE ${{ steps.version.outputs.tag }}"
+          body: |
+            ## Airone IDE ${{ steps.version.outputs.tag }}
+
+            ### Downloads
+            - **Windows**: `AironeIDESetup.exe` — Windows installer (NSIS)
+            - **Linux**: `AironeIDE.AppImage` — Portable AppImage
+            - **Linux**: `AironeIDE.deb` — Debian/Ubuntu package
+
+            ### Auto-Update
+            This release is configured for auto-update via `electron-updater`.
+            Existing installations will automatically detect and offer this update.
+
+            ### Changes
+            See commit history for changes since the last release.
+          draft: false
+          prerelease: false
+          files: |
+            ./release-artifacts/windows/*
+            ./release-artifacts/linux/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

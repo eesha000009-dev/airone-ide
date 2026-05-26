@@ -30,6 +30,7 @@ export class AiroSerialWidget extends ReactWidget {
     private refreshing: boolean = false;
     private connectionStatus: 'disconnected' | 'connecting' | 'connected' = 'disconnected';
     private refreshTimer: number | undefined;
+    private pollTimer: number | undefined;
 
     @postConstruct()
     protected init(): void {
@@ -51,6 +52,9 @@ export class AiroSerialWidget extends ReactWidget {
         super.onCloseRequest(msg);
         if (this.refreshTimer !== undefined) {
             clearInterval(this.refreshTimer);
+        }
+        if (this.pollTimer !== undefined) {
+            clearInterval(this.pollTimer);
         }
         if (this.connected) {
             this.serialService.disconnect().catch(() => { /* ignore */ });
@@ -106,10 +110,9 @@ export class AiroSerialWidget extends ReactWidget {
                 this.connected = true;
                 this.connectionStatus = 'connected';
                 this.lines.push(`✓ Connected to ${this.selectedPort} at ${this.baudRate} baud`);
-                this.serialService.onData((data: string) => {
-                    this.lines.push(data);
-                    this.update();
-                });
+
+                // Start polling for serial data (since RPC proxy doesn't support push callbacks)
+                this.startDataPolling();
             } else {
                 this.connected = false;
                 this.connectionStatus = 'disconnected';
@@ -123,8 +126,38 @@ export class AiroSerialWidget extends ReactWidget {
         this.update();
     }
 
+    /** Start polling for serial data */
+    protected startDataPolling(): void {
+        if (this.pollTimer !== undefined) {
+            clearInterval(this.pollTimer);
+        }
+        // Poll every 200ms for available data
+        this.pollTimer = window.setInterval(async () => {
+            if (!this.connected) {
+                return;
+            }
+            try {
+                const data = await this.serialService.readAvailable();
+                if (data && data.length > 0) {
+                    this.lines.push(data);
+                    // Limit buffer to last 500 lines
+                    if (this.lines.length > 500) {
+                        this.lines = this.lines.slice(-500);
+                    }
+                    this.update();
+                }
+            } catch {
+                // Connection may have been lost
+            }
+        }, 200);
+    }
+
     /** Disconnect from the current serial port */
     protected async doDisconnect(): Promise<void> {
+        if (this.pollTimer !== undefined) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = undefined;
+        }
         try {
             await this.serialService.disconnect();
             this.connected = false;
@@ -144,7 +177,7 @@ export class AiroSerialWidget extends ReactWidget {
             return;
         }
         try {
-            const success = await this.serialService.sendData(data);
+            const success = await this.serialService.sendData(data + '\n');
             if (success) {
                 this.lines.push(`> ${data}`);
             } else {

@@ -19,7 +19,8 @@
 
 /* Hide Search from activity bar */
 .p-TabBar-tab[data-id="search-in-workspace"],
-.theia-activity-bar .p-TabBar-tab[data-id="search-in-workspace"] {
+.theia-activity-bar .p-TabBar-tab[data-id="search-in-workspace"],
+#theia-activitybar .p-TabBar-tab[data-id="search-in-workspace"] {
     display: none !important;
 }
 
@@ -27,7 +28,9 @@
 .p-TabBar-tab[data-id="debug:debug-container"],
 .p-TabBar-tab[data-id="debug:view-container"],
 .theia-activity-bar .p-TabBar-tab[data-id="debug:debug-container"],
-.theia-activity-bar .p-TabBar-tab[data-id="debug:view-container"] {
+.theia-activity-bar .p-TabBar-tab[data-id="debug:view-container"],
+#theia-activitybar .p-TabBar-tab[data-id="debug:debug-container"],
+#theia-activitybar .p-TabBar-tab[data-id="debug:view-container"] {
     display: none !important;
 }
 
@@ -35,7 +38,9 @@
 .p-TabBar-tab[data-id="test-view-container"],
 .p-TabBar-tab[data-id="test:container"],
 .theia-activity-bar .p-TabBar-tab[data-id="test-view-container"],
-.theia-activity-bar .p-TabBar-tab[data-id="test:container"] {
+.theia-activity-bar .p-TabBar-tab[data-id="test:container"],
+#theia-activitybar .p-TabBar-tab[data-id="test-view-container"],
+#theia-activitybar .p-TabBar-tab[data-id="test:container"] {
     display: none !important;
 }
 

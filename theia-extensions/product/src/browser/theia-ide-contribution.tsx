@@ -96,9 +96,8 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
 
     /**
      * Hide unwanted menus from the menu bar using DOM manipulation.
-     * In Electron, menus are native and can't be easily removed via Theia's API.
-     * We remove them by manipulating the DOM-based menu in web mode and
-     * also use CSS for the native menu.
+     * We only want: File, Edit, View, Compile, Verify, Upload
+     * Remove: Selection, Go, Run, Help
      */
     protected startHidingMenus(): void {
         this.hideUnwantedMenus();
@@ -121,14 +120,12 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     }
 
     /**
-     * Hide unwanted menus: Selection, Go, Run, Terminal, Help
-     * Keep only: File, Edit, View, + our Compile/Verify/Upload
+     * Hide unwanted menus: Selection, Go, Run, Help
+     * Keep: File, Edit, View, Compile, Verify, Upload
      */
     protected hideUnwantedMenus(): void {
-        // The Theia menu bar uses various CSS classes
-        // Target menu items by their label text
         const menuItems = document.querySelectorAll('.p-MenuBar-item, .theia-MenuBar-item, [class*="MenuBar-item"]');
-        const hiddenLabels = ['Selection', 'Go', 'Run', 'Terminal', 'Help'];
+        const hiddenLabels = ['Selection', 'Go', 'Run', 'Help'];
 
         menuItems.forEach(item => {
             const label = item.textContent?.trim();

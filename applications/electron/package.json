@@ -124,7 +124,7 @@
     "start:debug": "yarn start --log-level=debug",
     "package": "yarn clean:dist && yarn rebuild && electron-builder -c.mac.identity=null --publish never",
     "package:prod": "yarn deploy",
-    "deploy": "yarn clean:dist && yarn rebuild && electron-builder -c.mac.identity=null --publish always",
+    "deploy": "yarn clean:dist && yarn rebuild && electron-builder -c.mac.identity=null --publish never",
     "package:preview": "yarn clean:dist && yarn rebuild && electron-builder -c.mac.identity=null --dir",
     "update:checksum": "ts-node scripts/update-checksum.ts",
     "update:blockmap": "ts-node scripts/update-blockmap.ts",

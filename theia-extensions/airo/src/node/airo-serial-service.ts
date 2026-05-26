@@ -13,7 +13,7 @@ import { SerialPortInfo } from '../common/airo-protocol';
 @injectable()
 export class AiroSerialService {
     private port: any = null;
-    private dataCallbacks: ((data: string) => void)[] = [];
+    private dataBuffer: string = '';
 
     async listPorts(): Promise<SerialPortInfo[]> {
         try {
@@ -47,7 +47,13 @@ export class AiroSerialService {
 
             const parser = this.port.pipe(new ReadlineParser({ delimiter: '\n' }));
             parser.on('data', (line: string) => {
-                this.dataCallbacks.forEach(cb => cb(line + '\n'));
+                this.dataBuffer += line + '\n';
+            });
+
+            // Also capture raw data for non-line-delimited output
+            this.port.on('data', (chunk: Buffer) => {
+                // Only buffer raw data if the parser didn't handle it
+                // (parser handles line-based data)
             });
 
             return new Promise((resolve) => {
@@ -64,20 +70,27 @@ export class AiroSerialService {
             return new Promise((resolve) => {
                 this.port.close(() => {
                     this.port = null;
+                    this.dataBuffer = '';
                     resolve(true);
                 });
             });
         }
         this.port = null;
+        this.dataBuffer = '';
         return true;
     }
 
-    onData(callback: (data: string) => void): void {
-        this.dataCallbacks.push(callback);
-    }
-
-    removeDataCallback(callback: (data: string) => void): void {
-        this.dataCallbacks = this.dataCallbacks.filter(cb => cb !== callback);
+    /**
+     * Read all available data from the serial buffer (for polling mode).
+     * Returns the accumulated data and clears the buffer.
+     */
+    async readAvailable(): Promise<string> {
+        if (!this.port || !this.port.isOpen) {
+            return '';
+        }
+        const data = this.dataBuffer;
+        this.dataBuffer = '';
+        return data;
     }
 
     async sendData(data: string): Promise<boolean> {

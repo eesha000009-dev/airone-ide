@@ -88,8 +88,8 @@ export interface AiroSerialClient {
     listPorts(): Promise<SerialPortInfo[]>;
     connect(portPath: string, baudRate: number): Promise<boolean>;
     disconnect(): Promise<boolean>;
-    onData(callback: (data: string) => void): void;
-    removeDataCallback(callback: (data: string) => void): void;
+    /** Read any available data from the serial port (polling mode) */
+    readAvailable(): Promise<string>;
     sendData(data: string): Promise<boolean>;
     isConnected(): boolean;
 }

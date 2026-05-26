@@ -17,14 +17,15 @@ import { EditorManager } from '@theia/editor/lib/browser';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { OpenerService } from '@theia/core/lib/browser/opener-service';
 import { URI } from '@theia/core/lib/common/uri';
-import { CommonMenus } from '@theia/core/lib/browser/common-frontend-contribution';
 
-// ─── Menu Paths ──────────────────────────────────────────────────────────────
+// ─── Top-Level Menu Paths ──────────────────────────────────────────────────
+// These are registered as top-level menus in the menu bar, appearing
+// after File, Edit, View as: Compile | Verify | Upload
 
+export const AIRONE_COMPILE_MENU: MenuPath = ['menubar', '5_airone_compile'];
+export const AIRONE_VERIFY_MENU: MenuPath = ['menubar', '6_airone_verify'];
+export const AIRONE_UPLOAD_MENU: MenuPath = ['menubar', '7_airone_upload'];
 export const AIRONE_MENU: MenuPath = ['airone_menu'];
-export const AIRONE_COMPILE_MENU: MenuPath = [...CommonMenus.EDIT, '4_airone_compile'];
-export const AIRONE_VERIFY_MENU: MenuPath = [...CommonMenus.EDIT, '5_airone_verify'];
-export const AIRONE_UPLOAD_MENU: MenuPath = [...CommonMenus.EDIT, '6_airone_upload'];
 
 // ─── Commands ────────────────────────────────────────────────────────────────
 
@@ -134,7 +135,6 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         });
 
         // ─── Airone submenu under File for new sketch / examples ───────
-        menus.registerSubmenu(AIRONE_MENU, 'Airone');
         menus.registerMenuAction(AIRONE_MENU, {
             commandId: AIRO_NEW_SKETCH_COMMAND.id,
             label: 'New Sketch',
