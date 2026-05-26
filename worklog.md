@@ -132,3 +132,39 @@ Stage Summary:
 - Unnecessary IDE features removed from dependencies
 - Hidden config folders from file explorer
 - Single-tab editor mode configured
+
+---
+Task ID: 4
+Agent: Major Refactoring Agent
+Task: Fix critical bugs, improve UI to be more Arduino-like, add auto-update
+
+Work Log:
+- Fixed "No active editor" bug in Verify/Upload: now checks all open editors, not just activeEditor
+- Fixed "prompt() is not supported" in New Sketch: replaced with SingleTextInputDialog
+- Fixed Examples not opening: now creates a sketch from example code and opens it in editor
+- Added newSketchFromExample method to AiroSketchClient protocol and backend
+- Added MessageService injection to AiroSerialWidget for better error reporting
+- Removed Testing, Debug, Search from sidebar via CSS selectors
+- Added DOM-based menu hiding: Selection, Go, Run, Terminal, Help removed from menu bar
+- Added Compile, Verify, Upload as top-level menu entries in the menu bar
+- Menu bar is now: File | Edit | View | Compile | Verify | Upload
+- Configured electron-updater for GitHub releases auto-update
+- Updated electron-builder.yml with GitHub provider for publish
+- Branded updater messages from "Theia IDE" to "Airone IDE"
+- Created bundled airo_compiler Python module (airo-compiler/airo_compiler/)
+  - Supports: python -m airo_compiler <file.airo> --target esp32 --output <dir>
+  - Includes .airo to C++ transpiler for ESP32/ESP8266
+  - Bundled as extraResource in electron-builder config
+- Removed @theia/search-in-workspace dependency from electron-app
+- Added files.autoSave preference for better UX
+- Added theia-workspace to files.exclude preferences
+- Fixed TypeScript error in updater (response parameter implicit any type)
+- Removed broken deploy step from CI workflow
+
+Stage Summary:
+- All critical bugs fixed (verify/upload, new sketch, examples, serial monitor)
+- UI simplified: only File/Edit/View/Compile/Verify/Upload menus
+- Sidebar cleaned: only Airone panel, File Explorer, Source Control, Libraries remain
+- Auto-update configured for GitHub releases
+- Bundled airo_compiler Python module for full transpilation support
+- Both Windows and Linux CI/CD builds succeeded
