@@ -63,7 +63,13 @@ jobs:
 
       - name: Ensure Electron binary
         shell: bash
-        run: cd applications/electron && npx electron --version || (echo 'Reinstalling electron...' && npm rebuild electron --runtime=electron --target=39.8.7)
+        run: |
+          # Check if Electron binary exists
+          if [ ! -f "node_modules/electron/dist/version" ]; then
+            echo "Electron binary not found, downloading..."
+            cd node_modules/electron && node install.js && cd ../..
+          fi
+          echo "Electron version: $(node_modules/.bin/electron --version || echo 'unknown')"
 
       - name: Build extensions
         shell: bash
@@ -150,7 +156,13 @@ jobs:
 
       - name: Ensure Electron binary
         shell: bash
-        run: cd applications/electron && npx electron --version || (echo 'Reinstalling electron...' && npm rebuild electron --runtime=electron --target=39.8.7)
+        run: |
+          # Check if Electron binary exists
+          if [ ! -f "node_modules/electron/dist/version" ]; then
+            echo "Electron binary not found, downloading..."
+            cd node_modules/electron && node install.js && cd ../..
+          fi
+          echo "Electron version: $(node_modules/.bin/electron --version || echo 'unknown')"
 
       - name: Build extensions
         shell: bash
