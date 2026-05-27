@@ -65,17 +65,33 @@ jobs:
         shell: bash
         run: |
           echo "Ensuring Electron binary is available..."
-          # Remove any partial/corrupt dist directory first
-          rm -rf node_modules/electron/dist
-          # Run the electron install script to download the binary
-          cd node_modules/electron && node install.js && cd ../..
-          # Verify the binary was downloaded
-          if [ ! -f "node_modules/electron/dist/version" ]; then
-            echo "ERROR: Electron binary still not found after install attempt"
-            echo "Trying npm rebuild as fallback..."
-            npm rebuild electron
+          if [ -f "node_modules/electron/dist/version" ]; then
+            echo "Electron binary already exists: $(cat node_modules/electron/dist/version)"
+          else
+            echo "Electron binary not found, downloading directly..."
+            mkdir -p node_modules/electron/dist
+            ELECTRON_VERSION="v39.8.7"
+          cat > /tmp/download_electron.sh << 'SCRIPT'
+          #!/bin/bash
+          set -e
+          VERSION="v39.8.7"
+          DIST_DIR="node_modules/electron/dist"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            FILE="electron-${VERSION}-win32-x64.zip"
+          else
+            FILE="electron-${VERSION}-linux-x64.zip"
           fi
-          echo "Electron version: $(cat node_modules/electron/dist/version 2>/dev/null || echo 'FAILED TO INSTALL')"
+          URL="https://github.com/electron/electron/releases/download/${VERSION}/${FILE}"
+          echo "Downloading ${URL}..."
+          curl -L --retry 3 -o /tmp/electron.zip "${URL}"
+          echo "Extracting to ${DIST_DIR}..."
+          unzip -o /tmp/electron.zip -d "${DIST_DIR}"
+          echo "${VERSION#v}" > "${DIST_DIR}/version"
+          echo "Downloaded Electron ${VERSION}"
+          SCRIPT
+          bash /tmp/download_electron.sh
+          fi
+          echo "Final Electron version: $(cat node_modules/electron/dist/version 2>/dev/null || echo 'FAILED')"
 
       - name: Build extensions
         shell: bash
@@ -164,17 +180,22 @@ jobs:
         shell: bash
         run: |
           echo "Ensuring Electron binary is available..."
-          # Remove any partial/corrupt dist directory first
-          rm -rf node_modules/electron/dist
-          # Run the electron install script to download the binary
-          cd node_modules/electron && node install.js && cd ../..
-          # Verify the binary was downloaded
-          if [ ! -f "node_modules/electron/dist/version" ]; then
-            echo "ERROR: Electron binary still not found after install attempt"
-            echo "Trying npm rebuild as fallback..."
-            npm rebuild electron
+          if [ -f "node_modules/electron/dist/version" ]; then
+            echo "Electron binary already exists: $(cat node_modules/electron/dist/version)"
+          else
+            echo "Electron binary not found, downloading directly..."
+            mkdir -p node_modules/electron/dist
+            VERSION="v39.8.7"
+            FILE="electron-${VERSION}-linux-x64.zip"
+            URL="https://github.com/electron/electron/releases/download/${VERSION}/${FILE}"
+            echo "Downloading ${URL}..."
+            curl -L --retry 3 -o /tmp/electron.zip "${URL}"
+            echo "Extracting to node_modules/electron/dist..."
+            unzip -o /tmp/electron.zip -d node_modules/electron/dist
+            echo "39.8.7" > node_modules/electron/dist/version
+            echo "Downloaded Electron ${VERSION}"
           fi
-          echo "Electron version: $(cat node_modules/electron/dist/version 2>/dev/null || echo 'FAILED TO INSTALL')"
+          echo "Final Electron version: $(cat node_modules/electron/dist/version 2>/dev/null || echo 'FAILED')"
 
       - name: Build extensions
         shell: bash
