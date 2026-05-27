@@ -64,12 +64,18 @@ jobs:
       - name: Ensure Electron binary
         shell: bash
         run: |
-          # Check if Electron binary exists
+          echo "Ensuring Electron binary is available..."
+          # Remove any partial/corrupt dist directory first
+          rm -rf node_modules/electron/dist
+          # Run the electron install script to download the binary
+          cd node_modules/electron && node install.js && cd ../..
+          # Verify the binary was downloaded
           if [ ! -f "node_modules/electron/dist/version" ]; then
-            echo "Electron binary not found, downloading..."
-            cd node_modules/electron && node install.js && cd ../..
+            echo "ERROR: Electron binary still not found after install attempt"
+            echo "Trying npm rebuild as fallback..."
+            npm rebuild electron
           fi
-          echo "Electron version: $(node_modules/.bin/electron --version || echo 'unknown')"
+          echo "Electron version: $(cat node_modules/electron/dist/version 2>/dev/null || echo 'FAILED TO INSTALL')"
 
       - name: Build extensions
         shell: bash
@@ -157,12 +163,18 @@ jobs:
       - name: Ensure Electron binary
         shell: bash
         run: |
-          # Check if Electron binary exists
+          echo "Ensuring Electron binary is available..."
+          # Remove any partial/corrupt dist directory first
+          rm -rf node_modules/electron/dist
+          # Run the electron install script to download the binary
+          cd node_modules/electron && node install.js && cd ../..
+          # Verify the binary was downloaded
           if [ ! -f "node_modules/electron/dist/version" ]; then
-            echo "Electron binary not found, downloading..."
-            cd node_modules/electron && node install.js && cd ../..
+            echo "ERROR: Electron binary still not found after install attempt"
+            echo "Trying npm rebuild as fallback..."
+            npm rebuild electron
           fi
-          echo "Electron version: $(node_modules/.bin/electron --version || echo 'unknown')"
+          echo "Electron version: $(cat node_modules/electron/dist/version 2>/dev/null || echo 'FAILED TO INSTALL')"
 
       - name: Build extensions
         shell: bash
