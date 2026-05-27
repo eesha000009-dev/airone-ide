@@ -61,6 +61,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Ensure Electron binary
+        shell: bash
+        run: cd applications/electron && npx electron --version || (echo 'Reinstalling electron...' && npm rebuild electron --runtime=electron --target=39.8.7)
+
       - name: Build extensions
         shell: bash
         run: yarn build:extensions
@@ -142,6 +146,10 @@ jobs:
         run: yarn --skip-integrity-check --network-timeout 100000
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Ensure Electron binary
+        shell: bash
+        run: cd applications/electron && npx electron --version || (echo 'Reinstalling electron...' && npm rebuild electron --runtime=electron --target=39.8.7)
 
       - name: Build extensions
         shell: bash
