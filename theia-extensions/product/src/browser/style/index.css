@@ -16,8 +16,8 @@
     background-position: center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 40px;
-    height: 40px;
+    width: 58px;
+    height: 58px;
 }
 
 body[data-theia-branding="next"] {
@@ -99,7 +99,7 @@ ul.theia-aboutExtensions {
 
 /* ─── Hide Unwanted Menu Items ────────────────────────────────────────────── */
 /* We only want: File, Edit, View, Libraries, Tools
-   Hide everything else: Selection, Go, Run, Terminal, Help, Compile, Verify, Upload */
+   Hide everything else: Selection, Go, Run, Terminal, Help, Compile, Verify, Upload, Sketch */
 
 .p-MenuBar-item[aria-label="Selection"],
 .p-MenuBar-item[aria-label="Go"],
@@ -108,7 +108,8 @@ ul.theia-aboutExtensions {
 .p-MenuBar-item[aria-label="Help"],
 .p-MenuBar-item[aria-label="Compile"],
 .p-MenuBar-item[aria-label="Verify"],
-.p-MenuBar-item[aria-label="Upload"] {
+.p-MenuBar-item[aria-label="Upload"],
+.p-MenuBar-item[aria-label="Sketch"] {
     display: none !important;
 }
 
@@ -119,7 +120,8 @@ ul.theia-aboutExtensions {
 .theia-menubar .p-MenuBar-item[aria-label="Help"],
 .theia-menubar .p-MenuBar-item[aria-label="Compile"],
 .theia-menubar .p-MenuBar-item[aria-label="Verify"],
-.theia-menubar .p-MenuBar-item[aria-label="Upload"] {
+.theia-menubar .p-MenuBar-item[aria-label="Upload"],
+.theia-menubar .p-MenuBar-item[aria-label="Sketch"] {
     display: none !important;
 }
 
@@ -137,16 +139,19 @@ div[data-area="left"] {
     max-width: 0 !important;
     overflow: hidden !important;
     visibility: hidden !important;
+    position: absolute !important;
+    left: -9999px !important;
+    pointer-events: none !important;
 }
 
 /* ─── Make Menu Bar Logo Bigger ──────────────────────────────────────────── */
 
 .theia-icon {
-    width: 40px !important;
-    height: 40px !important;
-    min-width: 40px !important;
-    min-height: 40px !important;
-    background-size: 36px 36px !important;
+    width: 58px !important;
+    height: 58px !important;
+    min-width: 58px !important;
+    min-height: 58px !important;
+    background-size: 52px 52px !important;
     padding: 4px !important;
 }
 
@@ -154,5 +159,28 @@ div[data-area="left"] {
 
 .theia-TreeNodeContent[title=".theia"],
 .theia-TreeNodeContent[title=".airone-ide"] {
+    display: none !important;
+}
+
+/* ─── Secondary Toolbar Row (below menu bar) ──────────────────────────────── */
+
+#airo-secondary-toolbar.airo-secondary-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    height: 38px;
+    min-height: 38px;
+    max-height: 38px;
+    background: var(--theia-editorWidget-background, #f3f3f3);
+    border-bottom: 1px solid var(--theia-border-color, #ccc);
+    padding: 0 8px;
+    box-sizing: border-box;
+    z-index: 10;
+    flex-shrink: 0;
+}
+
+/* Hide old airo-toolbar-group that was in the menu bar */
+#airo-toolbar-group.airo-toolbar-group {
     display: none !important;
 }

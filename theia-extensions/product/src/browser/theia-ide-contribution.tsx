@@ -53,7 +53,7 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
 
     private uiObserver: MutationObserver | null = null;
     private hideAttempts = 0;
-    private readonly MAX_HIDE_ATTEMPTS = 100;
+    private readonly MAX_HIDE_ATTEMPTS = 200;
 
     constructor() {
         this.startUIObserver();
@@ -61,8 +61,8 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
 
     /**
      * Unified observer that handles all DOM-based UI modifications:
+     * - Hide activity bar and sidebar COMPLETELY (remove from DOM)
      * - Hide unwanted menu items
-     * - Hide activity bar and sidebar
      * - Remove navigation arrows
      * - Rename Extensions → Libraries
      * - Make logo bigger
@@ -90,55 +90,43 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
 
     protected modifyUI(): void {
         if (this.hideAttempts >= this.MAX_HIDE_ATTEMPTS) {
-            // Stop observing after max attempts to save performance
             return;
         }
         this.hideAttempts++;
 
-        let changesMade = false;
+        // 1. Hide activity bar and sidebar COMPLETELY
+        this.hideSidebarAndActivityBar();
 
-        // 1. Hide unwanted menus
-        changesMade = this.hideUnwantedMenus() || changesMade;
-
-        // 2. Hide activity bar and sidebar
-        changesMade = this.hideSidebarAndActivityBar() || changesMade;
+        // 2. Hide unwanted menus
+        this.hideUnwantedMenus();
 
         // 3. Remove navigation arrows
-        changesMade = this.removeNavigationArrows() || changesMade;
+        this.removeNavigationArrows();
 
         // 4. Rename Extensions → Libraries
-        changesMade = this.renameExtensionsToLibraries() || changesMade;
+        this.renameExtensionsToLibraries();
 
         // 5. Make logo bigger
-        changesMade = this.enlargeLogo() || changesMade;
-
-        // If we've made changes successfully many times, we can slow down
-        if (changesMade && this.hideAttempts > 30) {
-            // Still keep observing but less aggressively
-        }
+        this.enlargeLogo();
     }
 
     /**
-     * Hide unwanted menus: Selection, Go, Run, Help, Compile, Verify, Upload, Terminal
+     * Hide unwanted menus: Selection, Go, Run, Help, Compile, Verify, Upload, Sketch, Terminal
      * Keep: File, Edit, View, Libraries, Tools
      */
-    protected hideUnwantedMenus(): boolean {
-        let changed = false;
-        const hiddenLabels = ['Selection', 'Go', 'Run', 'Help', 'Compile', 'Verify', 'Upload', 'Terminal'];
+    protected hideUnwantedMenus(): void {
+        const hiddenLabels = ['Selection', 'Go', 'Run', 'Help', 'Compile', 'Verify', 'Upload', 'Terminal', 'Sketch'];
 
-        const menuItems = document.querySelectorAll('.p-MenuBar-item, .theia-MenuBar-item, [class*="MenuBar-item"]');
-        menuItems.forEach(item => {
+        document.querySelectorAll('.p-MenuBar-item, .theia-MenuBar-item, [class*="MenuBar-item"]').forEach(item => {
             const label = item.textContent?.trim();
             if (label && hiddenLabels.includes(label)) {
                 if (item instanceof HTMLElement && item.style.display !== 'none') {
                     item.style.display = 'none';
-                    changed = true;
                 }
             }
         });
 
-        const allMenuBarChildren = document.querySelectorAll('.theia-menubar, .p-MenuBar');
-        allMenuBarChildren.forEach(menuBar => {
+        document.querySelectorAll('.theia-menubar, .p-MenuBar').forEach(menuBar => {
             const children = menuBar.children;
             for (let i = 0; i < children.length; i++) {
                 const child = children[i] as HTMLElement;
@@ -146,23 +134,19 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
                 if (label && hiddenLabels.includes(label)) {
                     if (child.style.display !== 'none') {
                         child.style.display = 'none';
-                        changed = true;
                     }
                 }
             }
         });
-
-        return changed;
     }
 
     /**
-     * Hide the activity bar and sidebar using DOM manipulation
-     * (in addition to CSS, which may not match all Theia versions).
+     * Hide the activity bar and sidebar using aggressive DOM manipulation.
+     * Instead of just hiding, we REMOVE elements from the DOM to prevent
+     * Theia from re-showing them via its layout JavaScript.
      */
-    protected hideSidebarAndActivityBar(): boolean {
-        let changed = false;
-
-        // Activity bar selectors
+    protected hideSidebarAndActivityBar(): void {
+        // Activity bar selectors — remove from DOM entirely
         const activityBarSelectors = [
             '#theia-activitybar',
             '.theia-activity-bar',
@@ -175,22 +159,16 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
 
         for (const sel of activityBarSelectors) {
             try {
-                document.querySelectorAll<HTMLElement>(sel).forEach(el => {
-                    if (el.style.display !== 'none' || el.style.width !== '0px') {
-                        el.style.display = 'none';
-                        el.style.width = '0px';
-                        el.style.minWidth = '0px';
-                        el.style.maxWidth = '0px';
-                        el.style.overflow = 'hidden';
-                        el.style.padding = '0px';
-                        el.style.margin = '0px';
-                        changed = true;
+                document.querySelectorAll(sel).forEach(el => {
+                    if (el instanceof HTMLElement) {
+                        // Remove from DOM entirely to prevent Theia from re-showing
+                        el.remove();
                     }
                 });
             } catch { /* invalid selector */ }
         }
 
-        // Sidebar panel selectors
+        // Sidebar panel selectors — remove from DOM entirely
         const sidebarSelectors = [
             '.theia-left-side-panel',
             '.theia-side-panel',
@@ -203,8 +181,8 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
 
         for (const sel of sidebarSelectors) {
             try {
-                document.querySelectorAll<HTMLElement>(sel).forEach(el => {
-                    if (el.style.display !== 'none' || el.style.width !== '0px') {
+                document.querySelectorAll(sel).forEach(el => {
+                    if (el instanceof HTMLElement) {
                         el.style.display = 'none';
                         el.style.width = '0px';
                         el.style.minWidth = '0px';
@@ -212,101 +190,110 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
                         el.style.overflow = 'hidden';
                         el.style.padding = '0px';
                         el.style.margin = '0px';
-                        changed = true;
+                        el.style.position = 'absolute';
+                        el.style.left = '-9999px';
+                        el.style.visibility = 'hidden';
+                        el.style.pointerEvents = 'none';
                     }
                 });
             } catch { /* invalid selector */ }
         }
 
-        // Also find elements with class containing "sidebar" or "side-panel"
+        // Also find elements with class containing "sidebar" or "side-panel" on the left
         document.querySelectorAll<HTMLElement>('[class*="sidebar"], [class*="side-panel"], [class*="SidePanel"]').forEach(el => {
-            // Only hide if it's on the LEFT side
             const rect = el.getBoundingClientRect();
             if (rect.left < 100 && rect.width < 500 && rect.height > 200) {
-                if (el.style.display !== 'none') {
-                    el.style.display = 'none';
-                    el.style.width = '0px';
-                    el.style.overflow = 'hidden';
-                    changed = true;
-                }
+                el.style.display = 'none';
+                el.style.width = '0px';
+                el.style.overflow = 'hidden';
+                el.style.position = 'absolute';
+                el.style.left = '-9999px';
+                el.style.visibility = 'hidden';
+                el.style.pointerEvents = 'none';
             }
         });
 
         // Hide the Airone sidebar widget if it somehow gets created
         document.querySelectorAll<HTMLElement>('#airo-sidebar, .airo-sidebar, .airo-sidebar-panel').forEach(el => {
-            if (el.style.display !== 'none') {
-                el.style.display = 'none';
-                changed = true;
-            }
+            el.style.display = 'none';
+            el.style.position = 'absolute';
+            el.style.left = '-9999px';
         });
 
-        return changed;
+        // CRITICAL: Also hide the split panel handle that separates sidebar from main area
+        document.querySelectorAll<HTMLElement>('.p-SplitPanel-handle').forEach(el => {
+            // Only hide if it's the left sidebar handle (first child in split panel)
+            const parent = el.parentElement;
+            if (parent) {
+                const firstWidget = parent.querySelector('.p-Widget:first-child');
+                if (firstWidget && firstWidget.getBoundingClientRect().left < 50) {
+                    el.style.display = 'none';
+                }
+            }
+        });
     }
 
     /**
      * Remove back/forward navigation arrows from the toolbar.
      */
-    protected removeNavigationArrows(): boolean {
-        let changed = false;
-
-        // Strategy 1: Find toolbar items with navigation IDs
+    protected removeNavigationArrows(): void {
+        // Find toolbar items with navigation IDs
         document.querySelectorAll<HTMLElement>('.theia-toolbar-item, [class*="toolbar-item"]').forEach(item => {
             const id = item.id || '';
             const title = item.title || '';
+            const dataCommand = item.getAttribute('data-command') || '';
             if (
                 id.includes('navigation.back') ||
                 id.includes('navigation.forward') ||
                 id.includes('navigate.back') ||
                 id.includes('navigate.forward') ||
-                title.toLowerCase().includes('back') ||
-                title.toLowerCase().includes('forward')
+                dataCommand.includes('navigation.back') ||
+                dataCommand.includes('navigation.forward') ||
+                (title && (title.toLowerCase().includes('navigate back') || title.toLowerCase().includes('navigate forward')))
             ) {
-                if (item.style.display !== 'none') {
-                    item.style.display = 'none';
-                    item.style.width = '0px';
-                    item.style.overflow = 'hidden';
-                    item.style.padding = '0px';
-                    item.style.margin = '0px';
-                    changed = true;
-                }
+                item.style.display = 'none';
+                item.style.width = '0px';
+                item.style.overflow = 'hidden';
+                item.style.padding = '0px';
+                item.style.margin = '0px';
+                item.style.position = 'absolute';
+                item.style.visibility = 'hidden';
             }
         });
 
-        // Strategy 2: Find buttons in toolbar
-        const toolbar = document.querySelector('.theia-toolbar, [class*="theia-toolbar"]');
-        if (toolbar) {
-            toolbar.querySelectorAll<HTMLElement>('button, [role="button"]').forEach(btn => {
-                const title = btn.title || '';
-                const text = btn.textContent?.trim() || '';
-                const ariaLabel = btn.getAttribute('aria-label') || '';
+        // Find buttons in toolbar
+        const toolbarSelectors = ['.theia-toolbar', '[class*="theia-toolbar"]', '#theia-top-panel'];
+        for (const sel of toolbarSelectors) {
+            const toolbar = document.querySelector(sel);
+            if (toolbar) {
+                toolbar.querySelectorAll<HTMLElement>('button, [role="button"]').forEach(btn => {
+                    const title = btn.title || '';
+                    const text = btn.textContent?.trim() || '';
+                    const ariaLabel = btn.getAttribute('aria-label') || '';
 
-                if (
-                    (title && (title.toLowerCase().includes('back') || title.toLowerCase().includes('forward'))) ||
-                    (ariaLabel && (ariaLabel.toLowerCase().includes('back') || ariaLabel.toLowerCase().includes('forward'))) ||
-                    text === '←' || text === '→' ||
-                    text === '‹' || text === '›'
-                ) {
-                    if (btn.style.display !== 'none') {
+                    if (
+                        (title && (title.toLowerCase().includes('back') || title.toLowerCase().includes('forward'))) ||
+                        (ariaLabel && (ariaLabel.toLowerCase().includes('back') || ariaLabel.toLowerCase().includes('forward'))) ||
+                        text === '←' || text === '→' ||
+                        text === '‹' || text === '›'
+                    ) {
                         btn.style.display = 'none';
                         btn.style.width = '0px';
                         btn.style.overflow = 'hidden';
                         btn.style.padding = '0px';
                         btn.style.margin = '0px';
-                        changed = true;
+                        btn.style.position = 'absolute';
+                        btn.style.visibility = 'hidden';
                     }
-                }
-            });
+                });
+            }
         }
-
-        return changed;
     }
 
     /**
      * Rename all instances of "Extensions" to "Libraries" in the UI.
      */
-    protected renameExtensionsToLibraries(): boolean {
-        let changed = false;
-
+    protected renameExtensionsToLibraries(): void {
         const renameMap: [string, string][] = [
             ['Extensions', 'Libraries'],
             ['EXTENSIONS', 'LIBRARIES'],
@@ -317,7 +304,6 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             for (const [from, to] of renameMap) {
                 if (tab.textContent?.trim() === from) {
                     tab.textContent = to;
-                    changed = true;
                 }
             }
         });
@@ -326,7 +312,6 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
         document.querySelectorAll('.theia-sidepanel-title').forEach(title => {
             if (title.textContent?.trim() === 'Extensions') {
                 title.textContent = 'Libraries';
-                changed = true;
             }
         });
 
@@ -334,38 +319,29 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
         document.querySelectorAll('.theia-header').forEach(header => {
             if (header.textContent?.trim() === 'EXTENSIONS') {
                 header.textContent = 'LIBRARIES';
-                changed = true;
             }
             if (header.textContent?.trim() === 'Extensions') {
                 header.textContent = 'Libraries';
-                changed = true;
             }
         });
 
         // Tooltip text for activity bar icons
         document.querySelectorAll('[title="Extensions"]').forEach(el => {
             el.setAttribute('title', 'Libraries');
-            changed = true;
         });
 
         // Tab bar captions
         document.querySelectorAll('.p-TabBar-tab .p-TabBar-tabCaption').forEach(caption => {
             if (caption.textContent?.trim() === 'Extensions') {
                 caption.textContent = 'Libraries';
-                changed = true;
             }
         });
-
-        return changed;
     }
 
     /**
      * Make the logo bigger in the menu bar area.
      */
-    protected enlargeLogo(): boolean {
-        let changed = false;
-
-        // Find the logo element in the menu bar
+    protected enlargeLogo(): void {
         const logoSelectors = [
             '.theia-icon',
             '.theia-menubar-logo',
@@ -378,20 +354,17 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             try {
                 document.querySelectorAll<HTMLElement>(sel).forEach(el => {
                     const currentWidth = el.style.width;
-                    if (currentWidth !== '40px') {
-                        el.style.width = '40px';
-                        el.style.height = '40px';
-                        el.style.minWidth = '40px';
-                        el.style.minHeight = '40px';
-                        el.style.backgroundSize = '36px 36px';
+                    if (currentWidth !== '58px') {
+                        el.style.width = '58px';
+                        el.style.height = '58px';
+                        el.style.minWidth = '58px';
+                        el.style.minHeight = '58px';
+                        el.style.backgroundSize = '52px 52px';
                         el.style.padding = '4px';
-                        changed = true;
                     }
                 });
             } catch { /* invalid selector */ }
         }
-
-        return changed;
     }
 
     registerCommands(commandRegistry: CommandRegistry): void {

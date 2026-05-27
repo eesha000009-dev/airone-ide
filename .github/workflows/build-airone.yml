@@ -99,6 +99,7 @@ jobs:
           path: |
             applications/electron/dist/*.exe
             applications/electron/dist/*.blockmap
+            applications/electron/dist/latest.yml
           retention-days: 30
 
       - name: Upload Windows Installer (PR)
@@ -185,6 +186,7 @@ jobs:
           path: |
             applications/electron/dist/*.AppImage
             applications/electron/dist/*.deb
+            applications/electron/dist/latest-linux.yml
           retention-days: 30
 
   create-release:
@@ -241,7 +243,7 @@ jobs:
             - **Linux**: `AironeIDE.deb` — Debian/Ubuntu package
 
             ### Auto-Update
-            This release is configured for auto-update via `electron-updater`.
+            This release includes `latest.yml` and `latest-linux.yml` for auto-update via `electron-updater`.
             Existing installations will automatically detect and offer this update.
 
             ### Changes

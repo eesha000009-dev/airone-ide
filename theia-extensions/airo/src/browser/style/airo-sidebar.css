@@ -1,12 +1,58 @@
 /********************************************************************************
  * Copyright (C) 2025 Airone and others.
  *
- * Airone IDE Styles — No sidebar, toolbar-based interface
+ * Airone IDE Styles — No sidebar, separate toolbar row
  * SPDX-License-Identifier: MIT
  ********************************************************************************/
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   1. HIDE ENTIRE ACTIVITY BAR + SIDEBAR
+   1. SECONDARY TOOLBAR ROW (Below the menu bar)
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+#airo-secondary-toolbar.airo-secondary-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    height: 38px;
+    min-height: 38px;
+    max-height: 38px;
+    background: var(--theia-editorWidget-background, #f3f3f3);
+    border-bottom: 1px solid var(--theia-border-color, #ccc);
+    padding: 0 8px;
+    box-sizing: border-box;
+    z-index: 10;
+    flex-shrink: 0;
+}
+
+.airo-toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.airo-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+/* Style the Airone toolbar buttons */
+.airo-toolbar-btn {
+    font-weight: 700 !important;
+    border-radius: 4px !important;
+    padding: 4px 14px !important;
+    cursor: pointer !important;
+    font-size: 13px !important;
+    white-space: nowrap !important;
+    line-height: 24px !important;
+    letter-spacing: 0.3px !important;
+    text-shadow: 0 1px 1px rgba(0,0,0,0.2) !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   2. HIDE ENTIRE ACTIVITY BAR + SIDEBAR
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 /* Activity bar (left strip with icons) — use every known selector */
@@ -30,6 +76,9 @@ div[class*="ActivityBar"],
     border: none !important;
     overflow: hidden !important;
     visibility: hidden !important;
+    position: absolute !important;
+    left: -9999px !important;
+    pointer-events: none !important;
 }
 
 /* Left sidebar panel (the area that shows sidebar content) */
@@ -51,6 +100,9 @@ div[data-area="left"],
     border: none !important;
     overflow: hidden !important;
     visibility: hidden !important;
+    position: absolute !important;
+    left: -9999px !important;
+    pointer-events: none !important;
 }
 
 /* Hide the sidebar resize handle */
@@ -95,7 +147,7 @@ div[data-area="right"],
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   2. HIDE BACK / FORWARD NAVIGATION ARROWS
+   3. HIDE BACK / FORWARD NAVIGATION ARROWS
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 /* Theia toolbar navigation items by ID */
@@ -111,6 +163,8 @@ div[data-area="right"],
     padding: 0 !important;
     margin: 0 !important;
     overflow: hidden !important;
+    position: absolute !important;
+    visibility: hidden !important;
 }
 
 /* Generic back/forward buttons in toolbar */
@@ -132,6 +186,8 @@ button[aria-label="Forward"],
     padding: 0 !important;
     margin: 0 !important;
     overflow: hidden !important;
+    position: absolute !important;
+    visibility: hidden !important;
 }
 
 /* Also hide by class patterns */
@@ -143,76 +199,21 @@ button[aria-label="Forward"],
     width: 0 !important;
     min-width: 0 !important;
     overflow: hidden !important;
+    position: absolute !important;
+    visibility: hidden !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   3. TOOLBAR CUSTOMIZATION — Airone Buttons
+   4. REMOVE OLD TOOLBAR GROUP (if it was injected in the wrong place)
    ═══════════════════════════════════════════════════════════════════════════════ */
 
-/* Container for our toolbar buttons — push to the right */
-.airo-toolbar-group {
-    display: flex;
-    align-items: center;
-    margin-left: auto;
-    padding-right: 8px;
-    gap: 2px;
-}
-
-/* Style the Airone toolbar buttons — bigger and bolder */
-.airo-toolbar-btn {
-    font-weight: 700 !important;
-    border-radius: 4px !important;
-    padding: 4px 14px !important;
-    cursor: pointer !important;
-    font-size: 13px !important;
-    white-space: nowrap !important;
-    line-height: 24px !important;
-    letter-spacing: 0.3px !important;
-    text-shadow: 0 1px 1px rgba(0,0,0,0.2) !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.15) !important;
-}
-
-/* Also style the Theia-native toolbar items for airo commands */
-.theia-toolbar .theia-toolbar-item[id*="airo.compile"] button,
-.theia-toolbar .theia-toolbar-item[id*="airo.verify"] button,
-.theia-toolbar .theia-toolbar-item[id*="airo.upload"] button,
-.theia-toolbar .theia-toolbar-item[id*="airo.serial"] button,
-.theia-toolbar .theia-toolbar-item[id*="airo.check"] button {
-    font-weight: 700;
-    border-radius: 4px;
-    padding: 4px 14px;
-}
-
-/* Compile button */
-.theia-toolbar .theia-toolbar-item[id*="airo.compile"] button {
-    background: #27ae60 !important;
-    color: white !important;
-    border: 1px solid #27ae60 !important;
-}
-
-/* Verify button */
-.theia-toolbar .theia-toolbar-item[id*="airo.verify"] button {
-    background: #2980b9 !important;
-    color: white !important;
-    border: 1px solid #2980b9 !important;
-}
-
-/* Upload button */
-.theia-toolbar .theia-toolbar-item[id*="airo.upload"] button {
-    background: #e67e22 !important;
-    color: white !important;
-    border: 1px solid #e67e22 !important;
-}
-
-/* Serial Monitor button */
-.theia-toolbar .theia-toolbar-item[id*="airo.serial"] button {
-    background: #555 !important;
-    color: white !important;
-    border: 1px solid #444 !important;
+/* Hide the old airo-toolbar-group that was injected into the menu bar */
+#airo-toolbar-group.airo-toolbar-group {
+    display: none !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   4. MAKE LOGO BIGGER — In menu bar, about dialog, getting started
+   5. MAKE LOGO BIGGER — In menu bar, about dialog, getting started
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 /* Make the Theia logo in the top-left menu bar bigger */
@@ -221,11 +222,11 @@ button[aria-label="Forward"],
 .p-MenuBar-logo,
 [class*="MenuBar-logo"],
 [class*="menubar-logo"] {
-    background-size: 36px 36px !important;
-    width: 40px !important;
-    height: 40px !important;
-    min-width: 40px !important;
-    min-height: 40px !important;
+    background-size: 52px 52px !important;
+    width: 58px !important;
+    height: 58px !important;
+    min-width: 58px !important;
+    min-height: 58px !important;
     padding: 4px !important;
 }
 
@@ -252,7 +253,7 @@ button[aria-label="Forward"],
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   5. HIDE UNWANTED MENU ITEMS
+   6. HIDE UNWANTED MENU ITEMS
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 /* Only want: File, Edit, View, Libraries, Tools */
@@ -263,7 +264,8 @@ button[aria-label="Forward"],
 .p-MenuBar-item[aria-label="Help"],
 .p-MenuBar-item[aria-label="Compile"],
 .p-MenuBar-item[aria-label="Verify"],
-.p-MenuBar-item[aria-label="Upload"] {
+.p-MenuBar-item[aria-label="Upload"],
+.p-MenuBar-item[aria-label="Sketch"] {
     display: none !important;
 }
 
@@ -274,12 +276,13 @@ button[aria-label="Forward"],
 .theia-menubar .p-MenuBar-item[aria-label="Help"],
 .theia-menubar .p-MenuBar-item[aria-label="Compile"],
 .theia-menubar .p-MenuBar-item[aria-label="Verify"],
-.theia-menubar .p-MenuBar-item[aria-label="Upload"] {
+.theia-menubar .p-MenuBar-item[aria-label="Upload"],
+.theia-menubar .p-MenuBar-item[aria-label="Sketch"] {
     display: none !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   6. HIDE .theia AND .airone-ide FOLDERS FROM FILE EXPLORER
+   7. HIDE .theia AND .airone-ide FOLDERS FROM FILE EXPLORER
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 .theia-TreeView .theia-TreeNodeContent[data-file$=".airone-ide"],
