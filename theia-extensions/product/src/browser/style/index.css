@@ -8,7 +8,7 @@
  ********************************************************************************/
 
 :root {
-    --theia-branding-logo: url(../icons/TheiaIDE.png);
+    --theia-branding-logo: url(../icons/512-512.png);
 }
 
 .theia-icon {
@@ -16,10 +16,12 @@
     background-position: center;
     background-repeat: no-repeat;
     background-size: contain;
+    width: 40px;
+    height: 40px;
 }
 
 body[data-theia-branding="next"] {
-    --theia-branding-logo: url(../icons/TheiaIDE-next.png);
+    --theia-branding-logo: url(../icons/512-512-next.png);
 }
 
 body[data-theia-branding="next"] .theia-icon {
@@ -45,16 +47,16 @@ body[data-theia-branding="next"] .theia-icon {
     padding-left: 20px;
 }
 
-/* ─── Make logo bigger in Getting Started / About dialog ──────────────────── */
+/* ─── Make logo MUCH bigger in Getting Started / About dialog ───────────────── */
 
 .gs-logo {
     background-image: var(--theia-branding-logo);
     background-position: center center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 400px;
-    height: 200px;
-    padding: 20px;
+    width: 500px;
+    height: 260px;
+    padding: 30px;
 }
 
 .ad-logo {
@@ -62,9 +64,9 @@ body[data-theia-branding="next"] .theia-icon {
     background-position: center center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 400px;
-    height: 200px;
-    padding: 20px;
+    width: 500px;
+    height: 260px;
+    padding: 30px;
 }
 
 .ad-float {
@@ -123,36 +125,29 @@ ul.theia-aboutExtensions {
 
 /* ─── Hide Entire Sidebar / Activity Bar ─────────────────────────────────── */
 
+#theia-activitybar,
 .theia-activity-bar,
 .p-TabBar.theia-activity-bar,
-#theia-activitybar {
+.theia-left-side-panel,
+.theia-sidebar-container,
+div[data-area="left"] {
     display: none !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    overflow: hidden !important;
+    visibility: hidden !important;
 }
 
-/* ─── Hide Unwanted Sidebar Items (redundant safety) ─────────────────────── */
+/* ─── Make Menu Bar Logo Bigger ──────────────────────────────────────────── */
 
-.p-TabBar-tab[data-id="search-in-workspace"],
-.theia-activity-bar .p-TabBar-tab[data-id="search-in-workspace"],
-#theia-activitybar .p-TabBar-tab[data-id="search-in-workspace"] {
-    display: none !important;
-}
-
-.p-TabBar-tab[data-id="debug:debug-container"],
-.p-TabBar-tab[data-id="debug:view-container"],
-.theia-activity-bar .p-TabBar-tab[data-id="debug:debug-container"],
-.theia-activity-bar .p-TabBar-tab[data-id="debug:view-container"],
-#theia-activitybar .p-TabBar-tab[data-id="debug:debug-container"],
-#theia-activitybar .p-TabBar-tab[data-id="debug:view-container"] {
-    display: none !important;
-}
-
-.p-TabBar-tab[data-id="test-view-container"],
-.p-TabBar-tab[data-id="test:container"],
-.theia-activity-bar .p-TabBar-tab[data-id="test-view-container"],
-.theia-activity-bar .p-TabBar-tab[data-id="test:container"],
-#theia-activitybar .p-TabBar-tab[data-id="test-view-container"],
-#theia-activitybar .p-TabBar-tab[data-id="test:container"] {
-    display: none !important;
+.theia-icon {
+    width: 40px !important;
+    height: 40px !important;
+    min-width: 40px !important;
+    min-height: 40px !important;
+    background-size: 36px 36px !important;
+    padding: 4px !important;
 }
 
 /* ─── Hide theia folder in navigator ──────────────────────────────────────── */

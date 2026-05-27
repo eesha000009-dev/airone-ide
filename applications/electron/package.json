@@ -46,8 +46,8 @@
           "showWindowEarly": false,
           "splashScreenOptions": {
             "content": "resources/AironeIDESplash.svg",
-            "height": 243,
-            "width": 446
+            "height": 400,
+            "width": 600
           }
         }
       }

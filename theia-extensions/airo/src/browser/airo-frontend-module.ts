@@ -59,11 +59,15 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
     bind(AiroLanguageContribution).toSelf().inSingletonScope();
     bind(LanguageGrammarDefinitionContribution).toService(AiroLanguageContribution);
 
-    // ─── Serial Monitor Widget ───────────────────────────────────────────
+    // ─── Serial Monitor Widget (kept for bottom panel) ───────────────────
 
     bind(AiroSerialWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(context => ({
         id: AiroSerialWidget.ID,
         createWidget: () => context.container.get<AiroSerialWidget>(AiroSerialWidget),
     })).inSingletonScope();
+
+    // NOTE: AiroSidebarWidget and AiroSidebarContribution are intentionally
+    // NOT registered. The sidebar has been removed per the Arduino-IDE
+    // paradigm — all controls live in the toolbar below the menu bar.
 });
