@@ -51,7 +51,6 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     static REPORT_ISSUE_URL = 'https://github.com/eesha000009-dev/airone-ide/issues/new';
     static DOCUMENTATION_URL = 'https://github.com/eesha000009-dev/airone-ide#readme';
 
-    private renameObserver: MutationObserver | null = null;
     private uiObserver: MutationObserver | null = null;
     private hideAttempts = 0;
     private readonly MAX_HIDE_ATTEMPTS = 100;
@@ -414,10 +413,6 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     }
 
     dispose(): void {
-        if (this.renameObserver) {
-            this.renameObserver.disconnect();
-            this.renameObserver = null;
-        }
         if (this.uiObserver) {
             this.uiObserver.disconnect();
             this.uiObserver = null;
