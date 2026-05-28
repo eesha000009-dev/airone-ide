@@ -16,8 +16,10 @@
     background-position: center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 58px;
-    height: 58px;
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
 }
 
 body[data-theia-branding="next"] {
@@ -54,9 +56,9 @@ body[data-theia-branding="next"] .theia-icon {
     background-position: center center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 500px;
-    height: 260px;
-    padding: 30px;
+    width: 600px !important;
+    height: 320px !important;
+    padding: 30px !important;
 }
 
 .ad-logo {
@@ -64,9 +66,9 @@ body[data-theia-branding="next"] .theia-icon {
     background-position: center center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 500px;
-    height: 260px;
-    padding: 30px;
+    width: 600px !important;
+    height: 320px !important;
+    padding: 30px !important;
 }
 
 .ad-float {
@@ -144,15 +146,27 @@ div[data-area="left"] {
     pointer-events: none !important;
 }
 
-/* ─── Make Menu Bar Logo Bigger ──────────────────────────────────────────── */
+/* ─── Hide Theia Built-in Toolbar (we have our own secondary toolbar) ──────── */
+
+#theia-toolbar,
+.theia-toolbar,
+[class*="theia-toolbar"]:not(.airo-secondary-toolbar):not(#airo-secondary-toolbar),
+[id*="theia-toolbar"] {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+}
+
+/* ─── Make Menu Bar Logo Proportional ──────────────────────────────────────── */
 
 .theia-icon {
-    width: 58px !important;
-    height: 58px !important;
-    min-width: 58px !important;
-    min-height: 58px !important;
-    background-size: 52px 52px !important;
-    padding: 4px !important;
+    width: 40px !important;
+    height: 40px !important;
+    min-width: 40px !important;
+    min-height: 40px !important;
+    background-size: 36px 36px !important;
+    padding: 2px !important;
 }
 
 /* ─── Hide theia folder in navigator ──────────────────────────────────────── */
@@ -165,19 +179,19 @@ div[data-area="left"] {
 /* ─── Secondary Toolbar Row (below menu bar) ──────────────────────────────── */
 
 #airo-secondary-toolbar.airo-secondary-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    height: 38px;
-    min-height: 38px;
-    max-height: 38px;
-    background: var(--theia-editorWidget-background, #f3f3f3);
-    border-bottom: 1px solid var(--theia-border-color, #ccc);
-    padding: 0 8px;
-    box-sizing: border-box;
-    z-index: 10;
-    flex-shrink: 0;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    width: 100% !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    max-height: 40px !important;
+    background: var(--theia-editorWidget-background, #f3f3f3) !important;
+    border-bottom: 1px solid var(--theia-border-color, #ccc) !important;
+    padding: 0 8px !important;
+    box-sizing: border-box !important;
+    z-index: 10 !important;
+    flex-shrink: 0 !important;
 }
 
 /* Hide old airo-toolbar-group that was in the menu bar */

@@ -29,7 +29,7 @@
         "applicationName": "Airone IDE",
         "reloadOnReconnect": true,
         "preferences": {
-          "toolbar.showToolbar": true,
+          "toolbar.showToolbar": false,
           "files.exclude": {
             "**/.airone-ide": true,
             "**/.theia": true,

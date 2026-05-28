@@ -17,13 +17,13 @@ import { MessageService } from '@theia/core/lib/common/message-service';
  * for Compile, Verify, Upload, Serial Monitor, and Check for Updates buttons.
  *
  * Layout:
- *   ┌─────────────────────────────────────────────────────────────┐
- *   │ [Logo] File  Edit  View  Libraries  Tools    [Cmd Palette] │ ← Menu bar row
- *   ├─────────────────────────────────────────────────────────────┤
- *   │ [Compile] [Verify] [Upload] [Serial Monitor]  [↻ Updates]  │ ← Our toolbar row
- *   ├─────────────────────────────────────────────────────────────┤
- *   │ Main content area                                           │
- *   └─────────────────────────────────────────────────────────────┘
+ *   ┌──────────────────────────────────────────────────────────────────┐
+ *   │ [Logo] File  Edit  View  Libraries  Tools          [Cmd Palette]│ ← Menu bar row
+ *   ├──────────────────────────────────────────────────────────────────┤
+ *   │ [▶ Compile] [✓ Verify] [↑ Upload]  [⎆ Serial] [↻ Updates]     │ ← Our toolbar row
+ *   ├──────────────────────────────────────────────────────────────────┤
+ *   │ Main content area                                                │
+ *   └──────────────────────────────────────────────────────────────────┘
  */
 @injectable()
 export class AiroToolbarContribution implements FrontendApplicationContribution {
@@ -45,14 +45,12 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
     }
 
     protected scheduleInject(): void {
-        // Try immediately
         this.tryInject();
 
         if (this.injected) {
             return;
         }
 
-        // Also use MutationObserver as backup
         this.observer = new MutationObserver(() => {
             if (!this.injected) {
                 this.tryInject();
@@ -68,7 +66,6 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         };
         startObserving();
 
-        // Also use timed retries as ultimate fallback
         this.retryTimer = setInterval(() => {
             if (this.injected || this.retryCount >= this.MAX_RETRIES) {
                 if (this.retryTimer) {
@@ -87,7 +84,6 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         }
         this.retryCount++;
 
-        // Check if already injected
         if (document.getElementById('airo-secondary-toolbar')) {
             this.injected = true;
             this.cleanup();
@@ -97,7 +93,7 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         // Strategy 1: Find the top panel container
         const topPanel = this.findTopPanel();
         if (topPanel) {
-            this.insertToolbar(topPanel);
+            this.insertToolbarAfter(topPanel);
             return;
         }
 
@@ -107,18 +103,15 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             document.querySelector('[class*="theia-shell"]');
 
         if (shell && shell.firstElementChild) {
-            this.insertToolbar(shell.firstElementChild as HTMLElement);
+            this.insertToolbarAfter(shell.firstElementChild as HTMLElement);
             return;
         }
 
         // Strategy 3: Find any menubar and insert after its parent
         const menuBar = document.querySelector('.p-MenuBar, .theia-MenuBar, [class*="MenuBar"]');
-        if (menuBar) {
-            const parent = menuBar.parentElement;
-            if (parent) {
-                this.insertToolbar(parent);
-                return;
-            }
+        if (menuBar && menuBar.parentElement) {
+            this.insertToolbarAfter(menuBar.parentElement);
+            return;
         }
 
         // Strategy 4: Find the main content panel and insert before it
@@ -132,10 +125,8 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         }
     }
 
-    protected insertToolbar(afterElement: HTMLElement): void {
+    protected insertToolbarAfter(afterElement: HTMLElement): void {
         const toolbarRow = this.createToolbarRow();
-
-        // Insert after the top panel (so it appears below the menu bar)
         if (afterElement.parentNode) {
             if (afterElement.nextSibling) {
                 afterElement.parentNode.insertBefore(toolbarRow, afterElement.nextSibling);
@@ -143,23 +134,51 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
                 afterElement.parentNode.appendChild(toolbarRow);
             }
         }
-
         this.injected = true;
+        this.hideTheiaToolbar();
         this.removeNavigationArrows();
         this.cleanup();
     }
 
     protected insertToolbarBefore(beforeElement: HTMLElement): void {
         const toolbarRow = this.createToolbarRow();
-
         if (beforeElement.parentNode) {
             beforeElement.parentNode.insertBefore(toolbarRow, beforeElement);
         }
-
         this.injected = true;
+        this.hideTheiaToolbar();
         this.removeNavigationArrows();
         this.cleanup();
     }
+
+    // ─── SVG Icons ────────────────────────────────────────────────────────────
+
+    protected get compileIconSvg(): string {
+        // Play/clock circle icon for Compile
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+    }
+
+    protected get verifyIconSvg(): string {
+        // Checkmark circle for Verify
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`;
+    }
+
+    protected get uploadIconSvg(): string {
+        // Upload arrow for Upload
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`;
+    }
+
+    protected get serialIconSvg(): string {
+        // Monitor/screen for Serial Monitor
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`;
+    }
+
+    protected get updateIconSvg(): string {
+        // Refresh/sync for Check Updates
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`;
+    }
+
+    // ─── Toolbar Creation ─────────────────────────────────────────────────────
 
     protected createToolbarRow(): HTMLElement {
         const toolbarRow = document.createElement('div');
@@ -170,29 +189,54 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         const leftGroup = document.createElement('div');
         leftGroup.className = 'airo-toolbar-left';
 
-        leftGroup.appendChild(this.createButton('airo-compile-btn', '⏻ Compile', '#27ae60', '#219a52', () => {
-            this.executeCommand('airo.compile');
-        }));
+        leftGroup.appendChild(this.createButton(
+            'airo-compile-btn',
+            this.compileIconSvg,
+            'Compile',
+            '#27ae60',
+            '#219a52',
+            () => this.executeCommand('airo.compile')
+        ));
 
-        leftGroup.appendChild(this.createButton('airo-verify-btn', '✓ Verify', '#2980b9', '#2471a3', () => {
-            this.executeCommand('airo.verify');
-        }));
+        leftGroup.appendChild(this.createButton(
+            'airo-verify-btn',
+            this.verifyIconSvg,
+            'Verify',
+            '#2980b9',
+            '#2471a3',
+            () => this.executeCommand('airo.verify')
+        ));
 
-        leftGroup.appendChild(this.createButton('airo-upload-btn', '→ Upload', '#e67e22', '#d35400', () => {
-            this.executeCommand('airo.upload');
-        }));
+        leftGroup.appendChild(this.createButton(
+            'airo-upload-btn',
+            this.uploadIconSvg,
+            'Upload',
+            '#e67e22',
+            '#d35400',
+            () => this.executeCommand('airo.upload')
+        ));
 
         // Right group: Serial Monitor, Check Updates
         const rightGroup = document.createElement('div');
         rightGroup.className = 'airo-toolbar-right';
 
-        rightGroup.appendChild(this.createButton('airo-serial-btn', '⎆ Serial Monitor', '#555555', '#444444', () => {
-            this.executeCommand('airo.serialMonitor');
-        }));
+        rightGroup.appendChild(this.createButton(
+            'airo-serial-btn',
+            this.serialIconSvg,
+            'Serial Monitor',
+            '#555555',
+            '#444444',
+            () => this.executeCommand('airo.serialMonitor')
+        ));
 
-        rightGroup.appendChild(this.createButton('airo-update-btn', '↻ Check Updates', '#7b1fa2', '#6a1b9a', () => {
-            this.executeCommand('airo.checkUpdates');
-        }));
+        rightGroup.appendChild(this.createButton(
+            'airo-update-btn',
+            this.updateIconSvg,
+            'Check Updates',
+            '#7b1fa2',
+            '#6a1b9a',
+            () => this.executeCommand('airo.checkUpdates')
+        ));
 
         toolbarRow.appendChild(leftGroup);
         toolbarRow.appendChild(rightGroup);
@@ -200,39 +244,9 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         return toolbarRow;
     }
 
-    /**
-     * Find the Theia top panel that contains the menu bar.
-     */
-    protected findTopPanel(): HTMLElement | null {
-        // Theia 1.72 top panel selectors - try most specific first
-        const selectors = [
-            '#theia-top-panel',
-            '.theia-top-panel',
-            '#theia-top-panel-container',
-            '[class*="top-panel"]',
-            '[id*="top-panel"]',
-        ];
-
-        for (const sel of selectors) {
-            try {
-                const el = document.querySelector<HTMLElement>(sel);
-                if (el && el.offsetHeight > 0) {
-                    return el;
-                }
-            } catch { /* invalid selector */ }
-        }
-
-        // Fallback: find the menu bar and return its parent
-        const menuBar = document.querySelector('.p-MenuBar, .theia-MenuBar, [class*="MenuBar"]');
-        if (menuBar && menuBar.parentElement) {
-            return menuBar.parentElement;
-        }
-
-        return null;
-    }
-
     protected createButton(
         id: string,
+        iconSvg: string,
         label: string,
         bg: string,
         hoverBg: string,
@@ -240,27 +254,49 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
     ): HTMLButtonElement {
         const btn = document.createElement('button');
         btn.id = id;
-        btn.textContent = label;
         btn.title = label;
         btn.className = 'airo-toolbar-btn';
+
+        // Create icon span
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'airo-toolbar-icon';
+        iconSpan.innerHTML = iconSvg;
+        iconSpan.style.cssText = `
+            display: inline-flex;
+            align-items: center;
+            margin-right: 5px;
+            line-height: 1;
+        `;
+
+        // Create label span
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'airo-toolbar-label';
+        labelSpan.textContent = label;
+
+        btn.appendChild(iconSpan);
+        btn.appendChild(labelSpan);
+
         btn.style.cssText = `
             background: ${bg};
             color: white;
             border: 1px solid ${hoverBg};
             border-radius: 4px;
-            padding: 4px 14px;
+            padding: 4px 12px;
             cursor: pointer;
             font-weight: 700;
             font-size: 13px;
             white-space: nowrap;
             line-height: 24px;
-            margin-left: 6px;
+            margin-left: 4px;
             margin-right: 2px;
             transition: filter 0.15s ease, transform 0.1s ease;
             letter-spacing: 0.3px;
             text-shadow: 0 1px 1px rgba(0,0,0,0.2);
             box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+            display: inline-flex;
+            align-items: center;
         `;
+
         btn.addEventListener('mouseenter', () => {
             btn.style.filter = 'brightness(1.2)';
             btn.style.transform = 'translateY(-1px)';
@@ -273,23 +309,43 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         return btn;
     }
 
-    // ─── Remove Navigation Arrows ───────────────────────────────────────
+    // ─── Hide Theia's Built-in Toolbar ────────────────────────────────────────
+
+    protected hideTheiaToolbar(): void {
+        // Hide the Theia toolbar container (we have our own secondary toolbar)
+        const toolbarSelectors = [
+            '#theia-toolbar',
+            '.theia-toolbar',
+            '[class*="theia-toolbar"]',
+            '[id*="theia-toolbar"]',
+        ];
+
+        for (const sel of toolbarSelectors) {
+            try {
+                document.querySelectorAll<HTMLElement>(sel).forEach(el => {
+                    // Don't hide our own toolbar
+                    if (!el.id.startsWith('airo-') && !el.className.includes('airo-')) {
+                        el.style.display = 'none';
+                        el.style.height = '0';
+                        el.style.minHeight = '0';
+                        el.style.overflow = 'hidden';
+                    }
+                });
+            } catch { /* invalid selector */ }
+        }
+    }
+
+    // ─── Remove Navigation Arrows ─────────────────────────────────────────────
 
     protected removeNavigationArrows(): void {
-        // Remove back/forward navigation buttons from the Theia toolbar area
-        // Try multiple strategies to find and hide them
-
-        // Strategy 1: By data-command attribute
         document.querySelectorAll<HTMLElement>('[data-command*="navigation.back"], [data-command*="navigation.forward"]').forEach(el => {
             this.hideElement(el);
         });
 
-        // Strategy 2: By ID patterns
         document.querySelectorAll<HTMLElement>('[id*="navigation.back"], [id*="navigation.forward"], [id*="navigate.back"], [id*="navigate.forward"]').forEach(el => {
             this.hideElement(el);
         });
 
-        // Strategy 3: By title/aria-label
         document.querySelectorAll<HTMLElement>('button, [role="button"]').forEach(btn => {
             const title = (btn.title || '').toLowerCase();
             const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
@@ -303,45 +359,11 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
                 text === '←' || text === '→' ||
                 text === '‹' || text === '›'
             ) {
-                // Don't hide our own buttons
                 if (!btn.id.startsWith('airo-')) {
                     this.hideElement(btn);
                 }
             }
         });
-
-        // Strategy 4: By class patterns in toolbar area
-        document.querySelectorAll<HTMLElement>('.theia-toolbar-item, [class*="toolbar-item"]').forEach(item => {
-            const id = item.id || '';
-            const title = item.title || '';
-            const dataCommand = item.getAttribute('data-command') || '';
-
-            if (
-                id.includes('navigation') ||
-                dataCommand.includes('navigation') ||
-                (title && (title.toLowerCase().includes('back') || title.toLowerCase().includes('forward')))
-            ) {
-                this.hideElement(item);
-            }
-        });
-
-        // Strategy 5: Find the entire Theia toolbar and hide navigation items within it
-        const toolbarArea = document.querySelector('.theia-toolbar, [class*="theia-toolbar"]');
-        if (toolbarArea) {
-            toolbarArea.querySelectorAll<HTMLElement>('*').forEach(el => {
-                const cls = el.className || '';
-                const title = el.title || '';
-                const id = el.id || '';
-
-                if (
-                    cls.includes('navigation') ||
-                    id.includes('navigation') ||
-                    (title && (title.toLowerCase().includes('back') || title.toLowerCase().includes('forward')))
-                ) {
-                    this.hideElement(el);
-                }
-            });
-        }
     }
 
     protected hideElement(el: HTMLElement): void {

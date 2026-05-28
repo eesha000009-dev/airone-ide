@@ -103,10 +103,13 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
         // 3. Remove navigation arrows
         this.removeNavigationArrows();
 
-        // 4. Rename Extensions → Libraries
+        // 4. Hide Theia's built-in toolbar (we use our own secondary toolbar)
+        this.hideTheiaToolbar();
+
+        // 5. Rename Extensions → Libraries
         this.renameExtensionsToLibraries();
 
-        // 5. Make logo bigger
+        // 6. Make logo bigger
         this.enlargeLogo();
     }
 
@@ -339,6 +342,30 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     }
 
     /**
+     * Hide Theia's built-in toolbar (we have our own secondary toolbar row).
+     */
+    protected hideTheiaToolbar(): void {
+        const toolbarSelectors = [
+            '#theia-toolbar',
+            '.theia-toolbar',
+        ];
+
+        for (const sel of toolbarSelectors) {
+            try {
+                document.querySelectorAll<HTMLElement>(sel).forEach(el => {
+                    // Don't hide our own toolbar
+                    if (!el.id.startsWith('airo-') && !el.className.includes('airo-')) {
+                        el.style.display = 'none';
+                        el.style.height = '0';
+                        el.style.minHeight = '0';
+                        el.style.overflow = 'hidden';
+                    }
+                });
+            } catch { /* invalid selector */ }
+        }
+    }
+
+    /**
      * Make the logo bigger in the menu bar area.
      */
     protected enlargeLogo(): void {
@@ -354,13 +381,13 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             try {
                 document.querySelectorAll<HTMLElement>(sel).forEach(el => {
                     const currentWidth = el.style.width;
-                    if (currentWidth !== '58px') {
-                        el.style.width = '58px';
-                        el.style.height = '58px';
-                        el.style.minWidth = '58px';
-                        el.style.minHeight = '58px';
-                        el.style.backgroundSize = '52px 52px';
-                        el.style.padding = '4px';
+                    if (currentWidth !== '40px') {
+                        el.style.width = '40px';
+                        el.style.height = '40px';
+                        el.style.minWidth = '40px';
+                        el.style.minHeight = '40px';
+                        el.style.backgroundSize = '36px 36px';
+                        el.style.padding = '2px';
                     }
                 });
             } catch { /* invalid selector */ }

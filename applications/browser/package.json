@@ -24,7 +24,7 @@
         "applicationName": "Airone IDE",
         "warnOnPotentiallyInsecureHostPattern": false,
         "preferences": {
-          "toolbar.showToolbar": true,
+          "toolbar.showToolbar": false,
           "files.enableTrash": false,
           "security.workspace.trust.enabled": false
         },
