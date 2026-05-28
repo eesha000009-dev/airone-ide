@@ -157,7 +157,6 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             }
         }
         this.injected = true;
-        this.hideTheiaToolbar();
         this.removeNavigationArrows();
         this.cleanup();
     }
@@ -168,7 +167,6 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             beforeElement.parentNode.insertBefore(toolbarRow, beforeElement);
         }
         this.injected = true;
-        this.hideTheiaToolbar();
         this.removeNavigationArrows();
         this.cleanup();
     }
@@ -329,32 +327,6 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         });
         btn.addEventListener('click', onClick);
         return btn;
-    }
-
-    // ─── Hide Theia's Built-in Toolbar ────────────────────────────────────────
-
-    protected hideTheiaToolbar(): void {
-        // Hide the Theia toolbar container (we have our own secondary toolbar)
-        const toolbarSelectors = [
-            '#theia-toolbar',
-            '.theia-toolbar',
-            '[class*="theia-toolbar"]',
-            '[id*="theia-toolbar"]',
-        ];
-
-        for (const sel of toolbarSelectors) {
-            try {
-                document.querySelectorAll<HTMLElement>(sel).forEach(el => {
-                    // Don't hide our own toolbar
-                    if (!el.id.startsWith('airo-') && !el.className.includes('airo-')) {
-                        el.style.display = 'none';
-                        el.style.height = '0';
-                        el.style.minHeight = '0';
-                        el.style.overflow = 'hidden';
-                    }
-                });
-            } catch { /* invalid selector */ }
-        }
     }
 
     // ─── Remove Navigation Arrows ─────────────────────────────────────────────

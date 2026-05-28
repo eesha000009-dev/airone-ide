@@ -146,18 +146,6 @@ div[data-area="left"] {
     pointer-events: none !important;
 }
 
-/* ─── Hide Theia Built-in Toolbar (we have our own secondary toolbar) ──────── */
-
-#theia-toolbar,
-.theia-toolbar,
-[class*="theia-toolbar"]:not(.airo-secondary-toolbar):not(#airo-secondary-toolbar),
-[id*="theia-toolbar"] {
-    display: none !important;
-    height: 0 !important;
-    min-height: 0 !important;
-    overflow: hidden !important;
-}
-
 /* ─── Make Menu Bar Logo Proportional ──────────────────────────────────────── */
 
 .theia-icon {
@@ -194,7 +182,3 @@ div[data-area="left"] {
     flex-shrink: 0 !important;
 }
 
-/* Hide old airo-toolbar-group that was in the menu bar */
-#airo-toolbar-group.airo-toolbar-group {
-    display: none !important;
-}

@@ -100,8 +100,7 @@ div[class*="ActivityBar"],
 div[data-area="left"],
 .theia-sidebar-panel,
 #sidebar-left,
-#sidebar-left-content,
-.p-SplitPanel > .p-Widget:first-child {
+#sidebar-left-content {
     display: none !important;
     width: 0 !important;
     min-width: 0 !important;
@@ -220,28 +219,6 @@ button[aria-label="Forward"],
     overflow: hidden !important;
     position: absolute !important;
     visibility: hidden !important;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════════
-   4. HIDE THEIA'S BUILT-IN TOOLBAR (we use our own secondary toolbar)
-   ═══════════════════════════════════════════════════════════════════════════════ */
-
-#theia-toolbar,
-.theia-toolbar,
-[class*="theia-toolbar"]:not(.airo-secondary-toolbar):not(#airo-secondary-toolbar),
-[id*="theia-toolbar"] {
-    display: none !important;
-    height: 0 !important;
-    min-height: 0 !important;
-    overflow: hidden !important;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════════
-   5. REMOVE OLD TOOLBAR GROUP
-   ═══════════════════════════════════════════════════════════════════════════════ */
-
-#airo-toolbar-group.airo-toolbar-group {
-    display: none !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════

@@ -24,7 +24,6 @@
         "applicationName": "Airone IDE",
         "warnOnPotentiallyInsecureHostPattern": false,
         "preferences": {
-          "toolbar.showToolbar": false,
           "files.enableTrash": false,
           "security.workspace.trust.enabled": false
         },
@@ -87,7 +86,6 @@
     "@theia/terminal-manager": "1.72.0-next.42",
     "@theia/test": "1.72.0-next.42",
     "@theia/timeline": "1.72.0-next.42",
-    "@theia/toolbar": "1.72.0-next.42",
     "@theia/typehierarchy": "1.72.0-next.42",
     "@theia/userstorage": "1.72.0-next.42",
     "@theia/variable-resolver": "1.72.0-next.42",
