@@ -99,10 +99,13 @@ ul.theia-aboutExtensions {
     display: none !important;
 }
 
-/* ─── Hide Unwanted Menu Items ────────────────────────────────────────────── */
-/* We only want: File, Edit, View, Libraries, Tools
-   Hide everything else: Selection, Go, Run, Terminal, Help, Compile, Verify, Upload, Sketch */
+/* ═══════════════════════════════════════════════════════════════════════════════
+   HIDE UNWANTED MENU ITEMS — ONLY SHOW: File, Edit, View, Libraries, Tools
+   ═══════════════════════════════════════════════════════════════════════════════
+   We use MULTIPLE selector strategies because Theia's DOM varies between versions.
+   The aria-label approach, the span text approach, and nth-child approach. */
 
+/* Strategy 1: aria-label attribute (Theia 1.72+) */
 .p-MenuBar-item[aria-label="Selection"],
 .p-MenuBar-item[aria-label="Go"],
 .p-MenuBar-item[aria-label="Run"],
@@ -115,6 +118,7 @@ ul.theia-aboutExtensions {
     display: none !important;
 }
 
+/* Strategy 2: Nested within menubar container */
 .theia-menubar .p-MenuBar-item[aria-label="Selection"],
 .theia-menubar .p-MenuBar-item[aria-label="Go"],
 .theia-menubar .p-MenuBar-item[aria-label="Run"],
@@ -127,7 +131,18 @@ ul.theia-aboutExtensions {
     display: none !important;
 }
 
-/* ─── Hide Entire Sidebar / Activity Bar ─────────────────────────────────── */
+/* Strategy 3: Using data attributes (some Theia versions use these) */
+.p-MenuBar-item[data-type="command"][data-command*="selection"],
+.p-MenuBar-item[data-type="command"][data-command*="go.to"],
+.p-MenuBar-item[data-type="command"][data-command*="run"],
+.p-MenuBar-item[data-type="command"][data-command*="terminal"],
+.p-MenuBar-item[data-type="command"][data-command*="help"] {
+    display: none !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   HIDE ENTIRE SIDEBAR / ACTIVITY BAR
+   ═══════════════════════════════════════════════════════════════════════════════ */
 
 #theia-activitybar,
 .theia-activity-bar,
@@ -146,7 +161,9 @@ div[data-area="left"] {
     pointer-events: none !important;
 }
 
-/* ─── Make Menu Bar Logo BIGGER ──────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════════
+   MAKE MENU BAR LOGO BIGGER
+   ═══════════════════════════════════════════════════════════════════════════════ */
 
 .theia-icon {
     width: 48px !important;
@@ -164,11 +181,14 @@ div[data-area="left"] {
     display: none !important;
 }
 
-/* ─── Ensure the top panel (menu bar area) is ALWAYS visible ─────────── */
+/* ═══════════════════════════════════════════════════════════════════════════════
+   ENSURE THE TOP PANEL IS VISIBLE (but NOT overriding menu item hiding)
+   NOTE: We must NOT use broad selectors like [class*="MenuBar"] here because
+   that would match individual menu items and override display:none on hidden ones.
+   ═══════════════════════════════════════════════════════════════════════════════ */
 
 #theia-top-panel,
-.theia-top-panel,
-.p-Widget.theia-top-panel {
+.theia-top-panel {
     display: flex !important;
     visibility: visible !important;
     position: relative !important;
@@ -177,20 +197,43 @@ div[data-area="left"] {
     overflow: visible !important;
     pointer-events: auto !important;
     z-index: 100 !important;
+    flex-shrink: 0 !important;
 }
 
-/* Ensure the menu bar itself is ALWAYS visible */
-.p-MenuBar,
-.theia-MenuBar,
-.theia-menubar,
-[id*="menubar"],
-[class*="MenuBar"] {
+/* The menu bar CONTAINER (not items) must be visible */
+.p-MenuBar.p-Widget,
+.theia-MenuBar.theia-Widget,
+.theia-menubar {
     display: flex !important;
     visibility: visible !important;
     position: relative !important;
     height: auto !important;
     overflow: visible !important;
     pointer-events: auto !important;
+    flex-shrink: 0 !important;
+}
+
+/* CRITICAL: Dropdown menus must NOT be clipped by any parent */
+.p-MenuBar.p-Widget .p-Menu,
+.p-Widget.p-Menu,
+.p-Menu-popup,
+.p-Widget.p-MenuBar-item,
+.p-MenuBar-item {
+    overflow: visible !important;
+}
+
+/* Ensure the shell top area allows dropdown overflow */
+#theia-shell,
+.theia-shell {
+    overflow: visible !important;
+}
+
+/* Make sure the application shell allows menus to overflow */
+.p-Widget.boxlayout,
+.p-Widget.dockpanel,
+.p-DockPanel,
+.p-BoxLayout {
+    overflow: visible !important;
 }
 
 /* ─── Secondary Toolbar Row (below menu bar) ──────────────────────────────── */
@@ -212,4 +255,3 @@ div[data-area="left"] {
     position: relative !important;
     visibility: visible !important;
 }
-

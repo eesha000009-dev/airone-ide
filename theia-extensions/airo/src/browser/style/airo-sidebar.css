@@ -9,11 +9,9 @@
    1. SECONDARY TOOLBAR ROW (Below the menu bar)
    ═══════════════════════════════════════════════════════════════════════════════ */
 
-/* ─── Ensure the top panel (menu bar area) is ALWAYS visible ─────────── */
-
+/* Ensure the top panel container is visible (but NOT broad selectors that override menu hiding) */
 #theia-top-panel,
-.theia-top-panel,
-.p-Widget.theia-top-panel {
+.theia-top-panel {
     display: flex !important;
     visibility: visible !important;
     position: relative !important;
@@ -22,20 +20,41 @@
     overflow: visible !important;
     pointer-events: auto !important;
     z-index: 100 !important;
+    flex-shrink: 0 !important;
 }
 
-/* Ensure the menu bar itself is ALWAYS visible */
-.p-MenuBar,
-.theia-MenuBar,
-.theia-menubar,
-[id*="menubar"],
-[class*="MenuBar"] {
+/* The menu bar CONTAINER only — do NOT use broad [class*="MenuBar"] here */
+.p-MenuBar.p-Widget,
+.theia-MenuBar.theia-Widget,
+.theia-menubar {
     display: flex !important;
     visibility: visible !important;
     position: relative !important;
     height: auto !important;
     overflow: visible !important;
     pointer-events: auto !important;
+    flex-shrink: 0 !important;
+}
+
+/* CRITICAL: Dropdown menus must NOT be clipped by any parent */
+.p-MenuBar.p-Widget .p-Menu,
+.p-Widget.p-Menu,
+.p-Menu-popup,
+.p-MenuBar-item {
+    overflow: visible !important;
+}
+
+/* Ensure the shell allows dropdown overflow */
+#theia-shell,
+.theia-shell {
+    overflow: visible !important;
+}
+
+.p-Widget.boxlayout,
+.p-Widget.dockpanel,
+.p-DockPanel,
+.p-BoxLayout {
+    overflow: visible !important;
 }
 
 #airo-secondary-toolbar.airo-secondary-toolbar {
@@ -220,8 +239,6 @@ button[aria-label="Forward"],
     display: none !important;
     width: 0 !important;
     min-width: 0 !important;
-    padding: 0 !important;
-    margin: 0 !important;
     overflow: hidden !important;
     position: absolute !important;
     visibility: hidden !important;
@@ -291,10 +308,12 @@ button[aria-label="Forward"],
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   7. HIDE UNWANTED MENU ITEMS
-   ═══════════════════════════════════════════════════════════════════════════════ */
+   7. HIDE UNWANTED MENU ITEMS — ONLY SHOW: File, Edit, View, Libraries, Tools
+   ═══════════════════════════════════════════════════════════════════════════════
+   IMPORTANT: These rules MUST come AFTER any "ensure visible" rules so that
+   !important on display:none takes priority over !important on display:flex */
 
-/* Only want: File, Edit, View, Libraries, Tools */
+/* Strategy 1: aria-label attribute (Theia 1.72+) */
 .p-MenuBar-item[aria-label="Selection"],
 .p-MenuBar-item[aria-label="Go"],
 .p-MenuBar-item[aria-label="Run"],
@@ -307,6 +326,7 @@ button[aria-label="Forward"],
     display: none !important;
 }
 
+/* Strategy 2: Nested within menubar container */
 .theia-menubar .p-MenuBar-item[aria-label="Selection"],
 .theia-menubar .p-MenuBar-item[aria-label="Go"],
 .theia-menubar .p-MenuBar-item[aria-label="Run"],

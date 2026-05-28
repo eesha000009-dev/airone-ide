@@ -53,7 +53,7 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
 
     private uiObserver: MutationObserver | null = null;
     private hideAttempts = 0;
-    private readonly MAX_HIDE_ATTEMPTS = 200;
+    private readonly MAX_HIDE_ATTEMPTS = 500;
 
     constructor() {
         this.startUIObserver();
@@ -116,31 +116,115 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     /**
      * Hide unwanted menus: Selection, Go, Run, Help, Compile, Verify, Upload, Sketch, Terminal
      * Keep: File, Edit, View, Libraries, Tools
+     *
+     * Uses MULTIPLE strategies because Theia's DOM varies and CSS alone may not work:
+     * 1. aria-label attribute matching
+     * 2. textContent matching (direct and inner span)
+     * 3. Direct child iteration of menu bar
      */
     protected hideUnwantedMenus(): void {
         const hiddenLabels = ['Selection', 'Go', 'Run', 'Help', 'Compile', 'Verify', 'Upload', 'Terminal', 'Sketch'];
 
-        document.querySelectorAll('.p-MenuBar-item, .theia-MenuBar-item, [class*="MenuBar-item"]').forEach(item => {
-            const label = item.textContent?.trim();
-            if (label && hiddenLabels.includes(label)) {
-                if (item instanceof HTMLElement && item.style.display !== 'none') {
-                    item.style.display = 'none';
-                }
-            }
-        });
+        // Strategy 1: Match by aria-label attribute (most reliable in Theia 1.72+)
+        for (const label of hiddenLabels) {
+            try {
+                document.querySelectorAll<HTMLElement>(`.p-MenuBar-item[aria-label="${label}"]`).forEach(el => {
+                    el.style.display = 'none';
+                    el.style.visibility = 'hidden';
+                    el.style.width = '0';
+                    el.style.minWidth = '0';
+                    el.style.padding = '0';
+                    el.style.margin = '0';
+                    el.style.overflow = 'hidden';
+                    el.style.position = 'absolute';
+                });
+            } catch { /* invalid selector */ }
+        }
 
-        document.querySelectorAll('.theia-menubar, .p-MenuBar').forEach(menuBar => {
+        // Strategy 2: Match all MenuBar items by text content
+        const menuBarItemSelectors = [
+            '.p-MenuBar-item',
+            '.theia-MenuBar-item',
+            '[class*="MenuBar-item"]',
+            '.p-MenuBar > .p-Widget',
+        ];
+
+        for (const sel of menuBarItemSelectors) {
+            try {
+                document.querySelectorAll<HTMLElement>(sel).forEach(item => {
+                    // Get the FIRST text node directly (avoid matching nested menus)
+                    const directText = this.getDirectTextContent(item);
+                    const fullText = item.textContent?.trim() || '';
+                    const ariaLabel = item.getAttribute('aria-label') || '';
+
+                    for (const hidden of hiddenLabels) {
+                        if (directText === hidden || fullText === hidden || ariaLabel === hidden) {
+                            item.style.display = 'none';
+                            item.style.visibility = 'hidden';
+                            item.style.width = '0';
+                            item.style.minWidth = '0';
+                            item.style.padding = '0';
+                            item.style.margin = '0';
+                            item.style.overflow = 'hidden';
+                            item.style.position = 'absolute';
+                            break;
+                        }
+                    }
+                });
+            } catch { /* invalid selector */ }
+        }
+
+        // Strategy 3: Direct child iteration of the menu bar container
+        document.querySelectorAll('.theia-menubar, .p-MenuBar, [class*="MenuBar"]').forEach(menuBar => {
+            // Skip if this is a menu ITEM, not the container
+            if (menuBar.classList.contains('p-MenuBar-item') || menuBar.classList.contains('theia-MenuBar-item')) {
+                return;
+            }
             const children = menuBar.children;
             for (let i = 0; i < children.length; i++) {
                 const child = children[i] as HTMLElement;
-                const label = child.textContent?.trim();
-                if (label && hiddenLabels.includes(label)) {
-                    if (child.style.display !== 'none') {
+                const directText = this.getDirectTextContent(child);
+                const fullText = child.textContent?.trim() || '';
+                const ariaLabel = child.getAttribute('aria-label') || '';
+
+                for (const hidden of hiddenLabels) {
+                    if (directText === hidden || fullText === hidden || ariaLabel === hidden) {
                         child.style.display = 'none';
+                        child.style.visibility = 'hidden';
+                        child.style.width = '0';
+                        child.style.minWidth = '0';
+                        child.style.padding = '0';
+                        child.style.margin = '0';
+                        child.style.overflow = 'hidden';
+                        child.style.position = 'absolute';
+                        break;
                     }
                 }
             }
         });
+    }
+
+    /**
+     * Get the direct text content of an element (not including child elements).
+     * This is important because menu items may have child spans or submenus.
+     */
+    protected getDirectTextContent(el: Element): string {
+        let text = '';
+        for (const node of Array.from(el.childNodes)) {
+            if (node.nodeType === Node.TEXT_NODE) {
+                text += node.textContent?.trim() || '';
+            } else if (node.nodeType === Node.ELEMENT_NODE) {
+                const htmlNode = node as Element;
+                // Only get text from spans that are direct labels, not submenu containers
+                if (htmlNode.tagName === 'SPAN' || htmlNode.tagName === 'DIV' ||
+                    htmlNode.className.includes('label') || htmlNode.className.includes('Label')) {
+                    if (!htmlNode.className.includes('submenu') && !htmlNode.className.includes('arrow')) {
+                        text += htmlNode.textContent?.trim() || '';
+                    }
+                }
+            }
+        }
+        return text.trim();
     }
 
     /**
@@ -345,14 +429,16 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
      * Ensure Theia's built-in toolbar is hidden WITHOUT hiding the menu bar.
      * The toolbar.showToolbar: false preference should handle this, but we
      * also do it via DOM as a safety net. We ONLY hide elements that are
-     * specifically the Theia toolbar container, NOT the top panel or menu bar.
+     * specifically the Theia toolbar, NOT the top panel or menu bar.
      */
     protected hideTheiaToolbar(): void {
-        // Only target the specific toolbar container — NOT the top panel
-        // (which contains the menu bar that we want to keep visible)
+        // Only target the specific Theia toolbar containers
+        // NEVER hide #theia-top-panel or .p-MenuBar — those contain the menu bar!
         const toolbarSelectors = [
             '#theia-toolbar-container',
             '.theia-toolbar-container',
+            '#theia-toolbar',
+            '.theia-toolbar',
         ];
 
         for (const sel of toolbarSelectors) {
@@ -368,21 +454,6 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
                 });
             } catch { /* invalid selector */ }
         }
-
-        // Also hide any remaining toolbar items (back/forward arrows, etc.)
-        // but NOT the menu bar or command palette
-        document.querySelectorAll<HTMLElement>('.theia-toolbar-item').forEach(item => {
-            const id = item.id || '';
-            const dataCommand = item.getAttribute('data-command') || '';
-            if (
-                id.includes('navigation.back') ||
-                id.includes('navigation.forward') ||
-                dataCommand.includes('navigation.back') ||
-                dataCommand.includes('navigation.forward')
-            ) {
-                item.style.display = 'none';
-            }
-        });
     }
 
     /**
