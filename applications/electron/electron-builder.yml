@@ -68,6 +68,7 @@ nsis:
   oneClick: false
   perMachine: false
   installerHeaderIcon: resources/icons/airone-icon.ico
+  installerHeader: resources/icons/installer-header-banner.bmp
   installerIcon: resources/icons/airone-icon.ico
   uninstallerIcon: resources/icons/airone-icon.ico
   installerSidebar: resources/icons/InstallerSidebarImage/164-314Windows.bmp

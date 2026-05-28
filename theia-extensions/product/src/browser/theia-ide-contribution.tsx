@@ -342,12 +342,17 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     }
 
     /**
-     * Hide Theia's built-in toolbar (we have our own secondary toolbar row).
+     * Ensure Theia's built-in toolbar is hidden WITHOUT hiding the menu bar.
+     * The toolbar.showToolbar: false preference should handle this, but we
+     * also do it via DOM as a safety net. We ONLY hide elements that are
+     * specifically the Theia toolbar container, NOT the top panel or menu bar.
      */
     protected hideTheiaToolbar(): void {
+        // Only target the specific toolbar container — NOT the top panel
+        // (which contains the menu bar that we want to keep visible)
         const toolbarSelectors = [
-            '#theia-toolbar',
-            '.theia-toolbar',
+            '#theia-toolbar-container',
+            '.theia-toolbar-container',
         ];
 
         for (const sel of toolbarSelectors) {
@@ -363,6 +368,21 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
                 });
             } catch { /* invalid selector */ }
         }
+
+        // Also hide any remaining toolbar items (back/forward arrows, etc.)
+        // but NOT the menu bar or command palette
+        document.querySelectorAll<HTMLElement>('.theia-toolbar-item').forEach(item => {
+            const id = item.id || '';
+            const dataCommand = item.getAttribute('data-command') || '';
+            if (
+                id.includes('navigation.back') ||
+                id.includes('navigation.forward') ||
+                dataCommand.includes('navigation.back') ||
+                dataCommand.includes('navigation.forward')
+            ) {
+                item.style.display = 'none';
+            }
+        });
     }
 
     /**
@@ -381,12 +401,12 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             try {
                 document.querySelectorAll<HTMLElement>(sel).forEach(el => {
                     const currentWidth = el.style.width;
-                    if (currentWidth !== '40px') {
-                        el.style.width = '40px';
-                        el.style.height = '40px';
-                        el.style.minWidth = '40px';
-                        el.style.minHeight = '40px';
-                        el.style.backgroundSize = '36px 36px';
+                    if (currentWidth !== '48px') {
+                        el.style.width = '48px';
+                        el.style.height = '48px';
+                        el.style.minWidth = '48px';
+                        el.style.minHeight = '48px';
+                        el.style.backgroundSize = '44px 44px';
                         el.style.padding = '2px';
                     }
                 });

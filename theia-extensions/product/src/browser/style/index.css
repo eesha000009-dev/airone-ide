@@ -16,10 +16,10 @@
     background-position: center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 40px;
-    height: 40px;
-    min-width: 40px;
-    min-height: 40px;
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+    min-height: 48px;
 }
 
 body[data-theia-branding="next"] {
@@ -56,9 +56,9 @@ body[data-theia-branding="next"] .theia-icon {
     background-position: center center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 600px !important;
-    height: 320px !important;
-    padding: 30px !important;
+    width: 700px !important;
+    height: 400px !important;
+    padding: 40px !important;
 }
 
 .ad-logo {
@@ -66,9 +66,9 @@ body[data-theia-branding="next"] .theia-icon {
     background-position: center center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 600px !important;
-    height: 320px !important;
-    padding: 30px !important;
+    width: 700px !important;
+    height: 400px !important;
+    padding: 40px !important;
 }
 
 .ad-float {
@@ -146,14 +146,14 @@ div[data-area="left"] {
     pointer-events: none !important;
 }
 
-/* ─── Make Menu Bar Logo Proportional ──────────────────────────────────────── */
+/* ─── Make Menu Bar Logo BIGGER ──────────────────────────────────────── */
 
 .theia-icon {
-    width: 40px !important;
-    height: 40px !important;
-    min-width: 40px !important;
-    min-height: 40px !important;
-    background-size: 36px 36px !important;
+    width: 48px !important;
+    height: 48px !important;
+    min-width: 48px !important;
+    min-height: 48px !important;
+    background-size: 44px 44px !important;
     padding: 2px !important;
 }
 
@@ -164,6 +164,35 @@ div[data-area="left"] {
     display: none !important;
 }
 
+/* ─── Ensure the top panel (menu bar area) is ALWAYS visible ─────────── */
+
+#theia-top-panel,
+.theia-top-panel,
+.p-Widget.theia-top-panel {
+    display: flex !important;
+    visibility: visible !important;
+    position: relative !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    pointer-events: auto !important;
+    z-index: 100 !important;
+}
+
+/* Ensure the menu bar itself is ALWAYS visible */
+.p-MenuBar,
+.theia-MenuBar,
+.theia-menubar,
+[id*="menubar"],
+[class*="MenuBar"] {
+    display: flex !important;
+    visibility: visible !important;
+    position: relative !important;
+    height: auto !important;
+    overflow: visible !important;
+    pointer-events: auto !important;
+}
+
 /* ─── Secondary Toolbar Row (below menu bar) ──────────────────────────────── */
 
 #airo-secondary-toolbar.airo-secondary-toolbar {
@@ -171,14 +200,16 @@ div[data-area="left"] {
     align-items: center !important;
     justify-content: space-between !important;
     width: 100% !important;
-    height: 40px !important;
-    min-height: 40px !important;
-    max-height: 40px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    max-height: 44px !important;
     background: var(--theia-editorWidget-background, #f3f3f3) !important;
     border-bottom: 1px solid var(--theia-border-color, #ccc) !important;
     padding: 0 8px !important;
     box-sizing: border-box !important;
     z-index: 10 !important;
     flex-shrink: 0 !important;
+    position: relative !important;
+    visibility: visible !important;
 }
 

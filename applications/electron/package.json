@@ -30,6 +30,7 @@
         "reloadOnReconnect": true,
         "preferences": {
           "window.menuBarVisibility": "visible",
+          "toolbar.showToolbar": false,
           "files.exclude": {
             "**/.airone-ide": true,
             "**/.theia": true,

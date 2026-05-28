@@ -9,14 +9,43 @@
    1. SECONDARY TOOLBAR ROW (Below the menu bar)
    ═══════════════════════════════════════════════════════════════════════════════ */
 
+/* ─── Ensure the top panel (menu bar area) is ALWAYS visible ─────────── */
+
+#theia-top-panel,
+.theia-top-panel,
+.p-Widget.theia-top-panel {
+    display: flex !important;
+    visibility: visible !important;
+    position: relative !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    pointer-events: auto !important;
+    z-index: 100 !important;
+}
+
+/* Ensure the menu bar itself is ALWAYS visible */
+.p-MenuBar,
+.theia-MenuBar,
+.theia-menubar,
+[id*="menubar"],
+[class*="MenuBar"] {
+    display: flex !important;
+    visibility: visible !important;
+    position: relative !important;
+    height: auto !important;
+    overflow: visible !important;
+    pointer-events: auto !important;
+}
+
 #airo-secondary-toolbar.airo-secondary-toolbar {
     display: flex !important;
     align-items: center !important;
     justify-content: space-between !important;
     width: 100% !important;
-    height: 40px !important;
-    min-height: 40px !important;
-    max-height: 40px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    max-height: 44px !important;
     background: var(--theia-editorWidget-background, #f3f3f3) !important;
     border-bottom: 1px solid var(--theia-border-color, #ccc) !important;
     padding: 0 8px !important;
@@ -225,40 +254,40 @@ button[aria-label="Forward"],
    6. MAKE LOGO BIGGER — In menu bar, about dialog, getting started
    ═══════════════════════════════════════════════════════════════════════════════ */
 
-/* Menu bar logo - proportional to menu bar height */
+/* Menu bar logo - BIGGER for visibility */
 .theia-icon,
 .theia-menubar-logo,
 .p-MenuBar-logo,
 [class*="MenuBar-logo"],
 [class*="menubar-logo"] {
-    background-size: 36px 36px !important;
-    width: 40px !important;
-    height: 40px !important;
-    min-width: 40px !important;
-    min-height: 40px !important;
+    background-size: 44px 44px !important;
+    width: 48px !important;
+    height: 48px !important;
+    min-width: 48px !important;
+    min-height: 48px !important;
     padding: 2px !important;
 }
 
-/* Getting started page logo */
+/* Getting started page logo - MUCH BIGGER */
 .gs-logo {
     background-image: var(--theia-branding-logo);
     background-position: center center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 600px !important;
-    height: 320px !important;
-    padding: 30px !important;
+    width: 700px !important;
+    height: 400px !important;
+    padding: 40px !important;
 }
 
-/* About dialog logo */
+/* About dialog logo - MUCH BIGGER */
 .ad-logo {
     background-image: var(--theia-branding-logo);
     background-position: center center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 600px !important;
-    height: 320px !important;
-    padding: 30px !important;
+    width: 700px !important;
+    height: 400px !important;
+    padding: 40px !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
