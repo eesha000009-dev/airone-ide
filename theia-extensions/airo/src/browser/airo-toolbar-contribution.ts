@@ -37,26 +37,48 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
     private observer: MutationObserver | null = null;
     private injected = false;
     private retryCount = 0;
-    private readonly MAX_RETRIES = 80;
+    private readonly MAX_RETRIES = 150;
+    private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
     onStart(): void {
-        this.injectToolbar();
+        this.scheduleInject();
     }
 
-    // ─── Toolbar Injection ─────────────────────────────────────────────
-
-    protected injectToolbar(): void {
+    protected scheduleInject(): void {
+        // Try immediately
         this.tryInject();
 
+        if (this.injected) {
+            return;
+        }
+
+        // Also use MutationObserver as backup
         this.observer = new MutationObserver(() => {
             if (!this.injected) {
                 this.tryInject();
             }
         });
 
-        if (document.body) {
-            this.observer.observe(document.body, { childList: true, subtree: true });
-        }
+        const startObserving = () => {
+            if (document.body) {
+                this.observer!.observe(document.body, { childList: true, subtree: true });
+            } else {
+                setTimeout(startObserving, 50);
+            }
+        };
+        startObserving();
+
+        // Also use timed retries as ultimate fallback
+        this.retryTimer = setInterval(() => {
+            if (this.injected || this.retryCount >= this.MAX_RETRIES) {
+                if (this.retryTimer) {
+                    clearInterval(this.retryTimer);
+                    this.retryTimer = null;
+                }
+                return;
+            }
+            this.tryInject();
+        }, 300);
     }
 
     protected tryInject(): void {
@@ -68,16 +90,78 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         // Check if already injected
         if (document.getElementById('airo-secondary-toolbar')) {
             this.injected = true;
+            this.cleanup();
             return;
         }
 
-        // Find the top panel container (which holds the menu bar)
+        // Strategy 1: Find the top panel container
         const topPanel = this.findTopPanel();
-        if (!topPanel) {
+        if (topPanel) {
+            this.insertToolbar(topPanel);
             return;
         }
 
-        // Create a NEW, SEPARATE toolbar row
+        // Strategy 2: Find the shell and look for its first child
+        const shell = document.getElementById('theia-shell') ||
+            document.querySelector('.theia-shell') ||
+            document.querySelector('[class*="theia-shell"]');
+
+        if (shell && shell.firstElementChild) {
+            this.insertToolbar(shell.firstElementChild as HTMLElement);
+            return;
+        }
+
+        // Strategy 3: Find any menubar and insert after its parent
+        const menuBar = document.querySelector('.p-MenuBar, .theia-MenuBar, [class*="MenuBar"]');
+        if (menuBar) {
+            const parent = menuBar.parentElement;
+            if (parent) {
+                this.insertToolbar(parent);
+                return;
+            }
+        }
+
+        // Strategy 4: Find the main content panel and insert before it
+        const mainPanel = document.getElementById('theia-main-content-panel') ||
+            document.querySelector('.theia-main-content-panel') ||
+            document.querySelector('[class*="main-content-panel"]');
+
+        if (mainPanel && mainPanel.parentElement) {
+            this.insertToolbarBefore(mainPanel);
+            return;
+        }
+    }
+
+    protected insertToolbar(afterElement: HTMLElement): void {
+        const toolbarRow = this.createToolbarRow();
+
+        // Insert after the top panel (so it appears below the menu bar)
+        if (afterElement.parentNode) {
+            if (afterElement.nextSibling) {
+                afterElement.parentNode.insertBefore(toolbarRow, afterElement.nextSibling);
+            } else {
+                afterElement.parentNode.appendChild(toolbarRow);
+            }
+        }
+
+        this.injected = true;
+        this.removeNavigationArrows();
+        this.cleanup();
+    }
+
+    protected insertToolbarBefore(beforeElement: HTMLElement): void {
+        const toolbarRow = this.createToolbarRow();
+
+        if (beforeElement.parentNode) {
+            beforeElement.parentNode.insertBefore(toolbarRow, beforeElement);
+        }
+
+        this.injected = true;
+        this.removeNavigationArrows();
+        this.cleanup();
+    }
+
+    protected createToolbarRow(): HTMLElement {
         const toolbarRow = document.createElement('div');
         toolbarRow.id = 'airo-secondary-toolbar';
         toolbarRow.className = 'airo-secondary-toolbar';
@@ -113,45 +197,33 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         toolbarRow.appendChild(leftGroup);
         toolbarRow.appendChild(rightGroup);
 
-        // Insert the new toolbar row RIGHT AFTER the top panel
-        // (so it appears below the menu bar, not inside it)
-        if (topPanel.parentNode) {
-            topPanel.parentNode.insertBefore(toolbarRow, topPanel.nextSibling);
-        }
-
-        this.injected = true;
-
-        // Also remove navigation arrows from the existing toolbar
-        this.removeNavigationArrows();
-
-        if (this.observer) {
-            this.observer.disconnect();
-        }
+        return toolbarRow;
     }
 
     /**
      * Find the Theia top panel that contains the menu bar.
-     * This is the container we insert AFTER (not into).
      */
     protected findTopPanel(): HTMLElement | null {
-        // Theia's top panel selectors
+        // Theia 1.72 top panel selectors - try most specific first
         const selectors = [
             '#theia-top-panel',
             '.theia-top-panel',
+            '#theia-top-panel-container',
             '[class*="top-panel"]',
+            '[id*="top-panel"]',
         ];
 
         for (const sel of selectors) {
             try {
                 const el = document.querySelector<HTMLElement>(sel);
-                if (el) {
+                if (el && el.offsetHeight > 0) {
                     return el;
                 }
             } catch { /* invalid selector */ }
         }
 
         // Fallback: find the menu bar and return its parent
-        const menuBar = document.querySelector('.p-MenuBar, .theia-menubar, [class*="MenuBar"]');
+        const menuBar = document.querySelector('.p-MenuBar, .theia-MenuBar, [class*="MenuBar"]');
         if (menuBar && menuBar.parentElement) {
             return menuBar.parentElement;
         }
@@ -163,7 +235,7 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         id: string,
         label: string,
         bg: string,
-        border: string,
+        hoverBg: string,
         onClick: () => void
     ): HTMLButtonElement {
         const btn = document.createElement('button');
@@ -174,7 +246,7 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         btn.style.cssText = `
             background: ${bg};
             color: white;
-            border: 1px solid ${border};
+            border: 1px solid ${hoverBg};
             border-radius: 4px;
             padding: 4px 14px;
             cursor: pointer;
@@ -205,52 +277,85 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
 
     protected removeNavigationArrows(): void {
         // Remove back/forward navigation buttons from the Theia toolbar area
-        // These are typically inside the top panel / menu bar area
+        // Try multiple strategies to find and hide them
 
-        const topPanel = this.findTopPanel();
-        if (!topPanel) {
-            return;
-        }
+        // Strategy 1: By data-command attribute
+        document.querySelectorAll<HTMLElement>('[data-command*="navigation.back"], [data-command*="navigation.forward"]').forEach(el => {
+            this.hideElement(el);
+        });
 
-        // Find and hide all navigation-related items
-        const allElements = topPanel.querySelectorAll('*');
-        allElements.forEach(el => {
-            if (!(el instanceof HTMLElement)) {
-                return;
-            }
-            const id = el.id || '';
-            const title = el.title || '';
-            const textContent = el.textContent?.trim() || '';
-            const className = el.className || '';
-            const ariaLabel = el.getAttribute('aria-label') || '';
-            const dataCommand = el.getAttribute('data-command') || '';
+        // Strategy 2: By ID patterns
+        document.querySelectorAll<HTMLElement>('[id*="navigation.back"], [id*="navigation.forward"], [id*="navigate.back"], [id*="navigate.forward"]').forEach(el => {
+            this.hideElement(el);
+        });
 
-            // Match navigation back/forward
-            const isNavArrow =
-                id.includes('navigation.back') ||
-                id.includes('navigation.forward') ||
-                id.includes('navigate.back') ||
-                id.includes('navigate.forward') ||
-                dataCommand.includes('navigation.back') ||
-                dataCommand.includes('navigation.forward') ||
-                (title && (title.toLowerCase().includes('navigate back') || title.toLowerCase().includes('navigate forward'))) ||
-                (ariaLabel && (ariaLabel.toLowerCase().includes('navigate back') || ariaLabel.toLowerCase().includes('navigate forward'))) ||
-                // Theia 1.72 toolbar items
-                (className.includes('toolbar-item') && (title.toLowerCase().includes('back') || title.toLowerCase().includes('forward')));
+        // Strategy 3: By title/aria-label
+        document.querySelectorAll<HTMLElement>('button, [role="button"]').forEach(btn => {
+            const title = (btn.title || '').toLowerCase();
+            const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+            const text = (btn.textContent || '').trim();
 
-            if (isNavArrow) {
-                el.style.display = 'none';
-                el.style.width = '0';
-                el.style.height = '0';
-                el.style.overflow = 'hidden';
-                el.style.padding = '0';
-                el.style.margin = '0';
-                el.style.border = 'none';
-                el.style.minWidth = '0';
-                el.style.position = 'absolute';
-                el.style.visibility = 'hidden';
+            if (
+                title.includes('navigate back') || title.includes('navigate forward') ||
+                title === 'back' || title === 'forward' ||
+                ariaLabel.includes('navigate back') || ariaLabel.includes('navigate forward') ||
+                ariaLabel === 'back' || ariaLabel === 'forward' ||
+                text === '←' || text === '→' ||
+                text === '‹' || text === '›'
+            ) {
+                // Don't hide our own buttons
+                if (!btn.id.startsWith('airo-')) {
+                    this.hideElement(btn);
+                }
             }
         });
+
+        // Strategy 4: By class patterns in toolbar area
+        document.querySelectorAll<HTMLElement>('.theia-toolbar-item, [class*="toolbar-item"]').forEach(item => {
+            const id = item.id || '';
+            const title = item.title || '';
+            const dataCommand = item.getAttribute('data-command') || '';
+
+            if (
+                id.includes('navigation') ||
+                dataCommand.includes('navigation') ||
+                (title && (title.toLowerCase().includes('back') || title.toLowerCase().includes('forward')))
+            ) {
+                this.hideElement(item);
+            }
+        });
+
+        // Strategy 5: Find the entire Theia toolbar and hide navigation items within it
+        const toolbarArea = document.querySelector('.theia-toolbar, [class*="theia-toolbar"]');
+        if (toolbarArea) {
+            toolbarArea.querySelectorAll<HTMLElement>('*').forEach(el => {
+                const cls = el.className || '';
+                const title = el.title || '';
+                const id = el.id || '';
+
+                if (
+                    cls.includes('navigation') ||
+                    id.includes('navigation') ||
+                    (title && (title.toLowerCase().includes('back') || title.toLowerCase().includes('forward')))
+                ) {
+                    this.hideElement(el);
+                }
+            });
+        }
+    }
+
+    protected hideElement(el: HTMLElement): void {
+        el.style.display = 'none';
+        el.style.width = '0';
+        el.style.height = '0';
+        el.style.overflow = 'hidden';
+        el.style.padding = '0';
+        el.style.margin = '0';
+        el.style.border = 'none';
+        el.style.minWidth = '0';
+        el.style.position = 'absolute';
+        el.style.visibility = 'hidden';
+        el.style.pointerEvents = 'none';
     }
 
     protected async executeCommand(commandId: string): Promise<void> {
@@ -261,9 +366,18 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         }
     }
 
-    dispose(): void {
+    protected cleanup(): void {
         if (this.observer) {
             this.observer.disconnect();
+            this.observer = null;
         }
+        if (this.retryTimer) {
+            clearInterval(this.retryTimer);
+            this.retryTimer = null;
+        }
+    }
+
+    dispose(): void {
+        this.cleanup();
     }
 }

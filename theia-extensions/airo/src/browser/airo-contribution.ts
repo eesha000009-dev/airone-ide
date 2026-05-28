@@ -103,6 +103,12 @@ export const AIRO_CHECK_UPDATES_COMMAND: Command = {
     category: 'Airone'
 };
 
+export const AIRO_MANAGE_LIBRARIES_COMMAND: Command = {
+    id: 'airo.manageLibraries',
+    label: 'Manage Libraries',
+    category: 'Airone'
+};
+
 /** Helper to convert a filesystem path to a proper file:// URI */
 function toFileUri(fsPath: string): URI {
     const normalized = fsPath.replace(/\\/g, '/');
@@ -456,6 +462,41 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         }
     }
 
+    protected async manageLibraries(): Promise<void> {
+        const builtinLibs = [
+            { label: 'WiFi', desc: 'WiFi connectivity for ESP32' },
+            { label: 'Wire (I2C)', desc: 'I2C communication protocol' },
+            { label: 'SPI', desc: 'SPI communication protocol' },
+            { label: 'Serial', desc: 'Serial communication' },
+            { label: 'EEPROM', desc: 'Persistent storage' },
+            { label: 'Servo', desc: 'Servo motor control' },
+            { label: 'ArduinoJson', desc: 'JSON parsing and creation' },
+            { label: 'WebServer', desc: 'HTTP web server' },
+            { label: 'HTTPClient', desc: 'HTTP client requests' },
+            { label: 'BLE', desc: 'Bluetooth Low Energy' },
+            { label: 'MQTT', desc: 'MQTT messaging protocol' },
+            { label: 'OTA', desc: 'Over-the-air updates' },
+        ];
+
+        const items: (QuickPickItem & { libName: string })[] = builtinLibs.map(lib => ({
+            label: lib.label,
+            description: 'Built-in',
+            detail: lib.desc,
+            libName: lib.label
+        }));
+
+        const picked = await this.quickPickService.show<(QuickPickItem & { libName: string })>(items, {
+            placeholder: 'Select a library to view details...'
+        });
+
+        if (picked) {
+            this.messageService.info(
+                `${picked.libName} is included by default in all Airone projects. ` +
+                `Use the #library# section in your .airo file to include it: # call body/comm/${picked.libName.toLowerCase().replace(/[^a-z0-9]/g, '')}.airo.`
+            );
+        }
+    }
+
     // ─── Command Registration ────────────────────────────────────────────
 
     registerCommands(commands: CommandRegistry): void {
@@ -492,7 +533,15 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             isEnabled: () => true
         });
         commands.registerCommand(AIRO_CHECK_UPDATES_COMMAND, {
-            execute: () => commands.executeCommand('electron-theia:check-for-updates'),
+            execute: async () => {
+                try {
+                    // Try the built-in electron updater command first
+                    await commands.executeCommand('electron-theia:check-for-updates');
+                } catch {
+                    // If the updater command fails (e.g., no internet, dev mode), show a friendly message
+                    this.messageService.info('Airone IDE — No updates available at this time. You can check again later or download from GitHub Releases.');
+                }
+            },
             isEnabled: () => true
         });
 
@@ -518,6 +567,12 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 }
             });
         }
+
+        // Manage Libraries command — shows a QuickPick with available libraries
+        commands.registerCommand(AIRO_MANAGE_LIBRARIES_COMMAND, {
+            execute: () => this.manageLibraries(),
+            isEnabled: () => true
+        });
     }
 
     // ─── Menu Registration ───────────────────────────────────────────────
@@ -564,7 +619,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         }
 
         menus.registerMenuAction(AIRONE_LIBRARIES_MANAGE, {
-            commandId: 'airone-ide:open-libraries',
+            commandId: AIRO_MANAGE_LIBRARIES_COMMAND.id,
             label: 'Manage Libraries...',
             order: 'z'
         });

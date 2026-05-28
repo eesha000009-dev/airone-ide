@@ -119,6 +119,45 @@ jobs:
           NODE_OPTIONS: --max_old_space_size=4096
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: List dist contents
+        shell: bash
+        run: |
+          echo "=== Dist directory contents ==="
+          ls -la applications/electron/dist/ 2>/dev/null || echo "dist dir not found"
+          echo "=== Looking for latest.yml ==="
+          find applications/electron/dist -name "latest*.yml" -type f 2>/dev/null || echo "No yml files found"
+
+      - name: Generate latest.yml if missing
+        shell: bash
+        run: |
+          DIST_DIR="applications/electron/dist"
+          if [ ! -f "${DIST_DIR}/latest.yml" ]; then
+            echo "latest.yml not found, generating it..."
+            EXE_FILE=$(ls ${DIST_DIR}/*.exe 2>/dev/null | head -1)
+            if [ -n "$EXE_FILE" ]; then
+              EXE_NAME=$(basename "$EXE_FILE")
+              EXE_SIZE=$(stat -c%s "$EXE_FILE" 2>/dev/null || wc -c < "$EXE_FILE")
+              SHA512=$(sha512sum "$EXE_FILE" | cut -d' ' -f1)
+              cat > "${DIST_DIR}/latest.yml" << EOF
+          version: $(node -p "require('./applications/electron/package.json').version")
+          files:
+            - url: ${EXE_NAME}
+              sha512: ${SHA512}
+              size: ${EXE_SIZE}
+          path: ${EXE_NAME}
+          sha512: ${SHA512}
+          releaseDate: '$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")'
+          EOF
+              echo "Generated latest.yml:"
+              cat "${DIST_DIR}/latest.yml"
+            else
+              echo "WARNING: No exe file found in dist directory"
+            fi
+          else
+            echo "latest.yml already exists:"
+            cat "${DIST_DIR}/latest.yml"
+          fi
+
       - name: Upload Windows Installer
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
@@ -223,6 +262,45 @@ jobs:
           NODE_OPTIONS: --max_old_space_size=4096
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: List dist contents
+        shell: bash
+        run: |
+          echo "=== Dist directory contents ==="
+          ls -la applications/electron/dist/ 2>/dev/null || echo "dist dir not found"
+          echo "=== Looking for latest-linux.yml ==="
+          find applications/electron/dist -name "latest*.yml" -type f 2>/dev/null || echo "No yml files found"
+
+      - name: Generate latest-linux.yml if missing
+        shell: bash
+        run: |
+          DIST_DIR="applications/electron/dist"
+          if [ ! -f "${DIST_DIR}/latest-linux.yml" ]; then
+            echo "latest-linux.yml not found, generating it..."
+            APPIMAGE_FILE=$(ls ${DIST_DIR}/*.AppImage 2>/dev/null | head -1)
+            if [ -n "$APPIMAGE_FILE" ]; then
+              APPIMAGE_NAME=$(basename "$APPIMAGE_FILE")
+              APPIMAGE_SIZE=$(stat -c%s "$APPIMAGE_FILE" 2>/dev/null || wc -c < "$APPIMAGE_FILE")
+              SHA512=$(sha512sum "$APPIMAGE_FILE" | cut -d' ' -f1)
+              cat > "${DIST_DIR}/latest-linux.yml" << EOF
+          version: $(node -p "require('./applications/electron/package.json').version")
+          files:
+            - url: ${APPIMAGE_NAME}
+              sha512: ${SHA512}
+              size: ${APPIMAGE_SIZE}
+          path: ${APPIMAGE_NAME}
+          sha512: ${SHA512}
+          releaseDate: '$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")'
+          EOF
+              echo "Generated latest-linux.yml:"
+              cat "${DIST_DIR}/latest-linux.yml"
+            else
+              echo "WARNING: No AppImage file found in dist directory"
+            fi
+          else
+            echo "latest-linux.yml already exists:"
+            cat "${DIST_DIR}/latest-linux.yml"
+          fi
+
       - name: Upload Linux AppImage
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
@@ -260,7 +338,32 @@ jobs:
           path: ./release-artifacts/linux
 
       - name: List release artifacts
-        run: find ./release-artifacts -type f | head -20
+        run: |
+          echo "=== All release artifacts ==="
+          find ./release-artifacts -type f | sort
+          echo "=== Windows artifacts ==="
+          ls -la ./release-artifacts/windows/ 2>/dev/null || echo "No windows artifacts"
+          echo "=== Linux artifacts ==="
+          ls -la ./release-artifacts/linux/ 2>/dev/null || echo "No linux artifacts"
+
+      - name: Verify update metadata files
+        run: |
+          echo "Checking for latest.yml (Windows auto-update)..."
+          if [ -f "./release-artifacts/windows/latest.yml" ]; then
+            echo "✓ latest.yml found:"
+            cat ./release-artifacts/windows/latest.yml
+          else
+            echo "✗ latest.yml NOT found - auto-update will NOT work on Windows!"
+          fi
+
+          echo ""
+          echo "Checking for latest-linux.yml (Linux auto-update)..."
+          if [ -f "./release-artifacts/linux/latest-linux.yml" ]; then
+            echo "✓ latest-linux.yml found:"
+            cat ./release-artifacts/linux/latest-linux.yml
+          else
+            echo "✗ latest-linux.yml NOT found - auto-update will NOT work on Linux!"
+          fi
 
       - name: Generate version tag
         id: version

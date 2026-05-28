@@ -10,31 +10,34 @@
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 #airo-secondary-toolbar.airo-secondary-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    height: 38px;
-    min-height: 38px;
-    max-height: 38px;
-    background: var(--theia-editorWidget-background, #f3f3f3);
-    border-bottom: 1px solid var(--theia-border-color, #ccc);
-    padding: 0 8px;
-    box-sizing: border-box;
-    z-index: 10;
-    flex-shrink: 0;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    width: 100% !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    max-height: 40px !important;
+    background: var(--theia-editorWidget-background, #f3f3f3) !important;
+    border-bottom: 1px solid var(--theia-border-color, #ccc) !important;
+    padding: 0 8px !important;
+    box-sizing: border-box !important;
+    z-index: 10 !important;
+    flex-shrink: 0 !important;
+    position: relative !important;
+    visibility: visible !important;
+    opacity: 1 !important;
 }
 
 .airo-toolbar-left {
-    display: flex;
-    align-items: center;
-    gap: 2px;
+    display: flex !important;
+    align-items: center !important;
+    gap: 2px !important;
 }
 
 .airo-toolbar-right {
-    display: flex;
-    align-items: center;
-    gap: 2px;
+    display: flex !important;
+    align-items: center !important;
+    gap: 2px !important;
 }
 
 /* Style the Airone toolbar buttons */
@@ -147,7 +150,7 @@ div[data-area="right"],
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   3. HIDE BACK / FORWARD NAVIGATION ARROWS
+   3. HIDE BACK / FORWARD NAVIGATION ARROWS (comprehensive)
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 /* Theia toolbar navigation items by ID */
@@ -195,6 +198,18 @@ button[aria-label="Forward"],
 .theia-toolbar-item[data-command*="navigation.forward"],
 .theia-toolbar-item[data-command*="navigate.back"],
 .theia-toolbar-item[data-command*="navigate.forward"] {
+    display: none !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    position: absolute !important;
+    visibility: hidden !important;
+}
+
+/* Hide ALL toolbar items that contain navigation commands */
+[class*="toolbar-item"][data-command*="navigation"],
+[class*="toolbar-item"][data-command*="navigate.back"],
+[class*="toolbar-item"][data-command*="navigate.forward"] {
     display: none !important;
     width: 0 !important;
     min-width: 0 !important;

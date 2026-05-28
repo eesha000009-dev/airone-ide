@@ -376,7 +376,11 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
         });
         commandRegistry.registerCommand(TheiaIDECommands.OPEN_LIBRARIES, {
             execute: () => {
-                commandRegistry.executeCommand('workbench.view.extensions');
+                // Delegate to airo.manageLibraries which shows a QuickPick
+                // (don't try to open the hidden sidebar)
+                commandRegistry.executeCommand('airo.manageLibraries').catch(() => {
+                    // Fallback: show a message
+                });
             }
         });
     }
