@@ -40,7 +40,11 @@ export namespace TheiaIDECommands {
 /**
  * Contribution that renames the VS Code Extensions view label to "Libraries",
  * adds Airone-specific menu entries, and hides unwanted menus/sidebar items.
- * Uses BOTH CSS and DOM manipulation for maximum reliability.
+ *
+ * Uses WHITELIST approach for menus: ALL menus are hidden via CSS, then only
+ * the allowed ones (File, Edit, View, Libraries, Tools) are shown. This is
+ * more reliable than a blacklist because any new menus Theia adds are
+ * automatically hidden.
  */
 @injectable()
 export class TheiaIDEContribution implements CommandContribution, MenuContribution {
@@ -50,6 +54,9 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
 
     static REPORT_ISSUE_URL = 'https://github.com/eesha000009-dev/airone-ide/issues/new';
     static DOCUMENTATION_URL = 'https://github.com/eesha000009-dev/airone-ide#readme';
+
+    /** Only these menu labels should be visible in the menu bar */
+    static readonly ALLOWED_MENU_LABELS = new Set(['File', 'Edit', 'View', 'Libraries', 'Tools']);
 
     private uiObserver: MutationObserver | null = null;
     private hideAttempts = 0;
@@ -61,8 +68,8 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
 
     /**
      * Unified observer that handles all DOM-based UI modifications:
-     * - Hide activity bar and sidebar COMPLETELY (remove from DOM)
-     * - Hide unwanted menu items
+     * - Hide activity bar and sidebar COMPLETELY
+     * - Hide unwanted menus (whitelist approach)
      * - Remove navigation arrows
      * - Rename Extensions → Libraries
      * - Make logo bigger
@@ -97,13 +104,13 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
         // 1. Hide activity bar and sidebar COMPLETELY
         this.hideSidebarAndActivityBar();
 
-        // 2. Hide unwanted menus
+        // 2. Hide unwanted menus (whitelist: show only allowed)
         this.hideUnwantedMenus();
 
         // 3. Remove navigation arrows
         this.removeNavigationArrows();
 
-        // 4. Hide Theia's built-in toolbar (we use our own secondary toolbar)
+        // 4. Hide Theia's built-in toolbar
         this.hideTheiaToolbar();
 
         // 5. Rename Extensions → Libraries
@@ -114,67 +121,39 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     }
 
     /**
-     * Hide unwanted menus: Selection, Go, Run, Help, Compile, Verify, Upload, Sketch, Terminal
-     * Keep: File, Edit, View, Libraries, Tools
+     * WHITELIST APPROACH: Hide all menu bar items, then show only the
+     * allowed ones. This is more reliable than blacklisting because any
+     * new menus Theia adds will automatically be hidden.
      *
-     * Uses MULTIPLE strategies because Theia's DOM varies and CSS alone may not work:
-     * 1. aria-label attribute matching
-     * 2. textContent matching (direct and inner span)
-     * 3. Direct child iteration of menu bar
+     * We iterate ALL .p-MenuBar-item elements and check their text content
+     * or aria-label against our ALLOWED set.
      */
     protected hideUnwantedMenus(): void {
-        const hiddenLabels = ['Selection', 'Go', 'Run', 'Help', 'Compile', 'Verify', 'Upload', 'Terminal', 'Sketch'];
+        const allowed = TheiaIDEContribution.ALLOWED_MENU_LABELS;
 
-        // Strategy 1: Match by aria-label attribute (most reliable in Theia 1.72+)
-        for (const label of hiddenLabels) {
-            try {
-                document.querySelectorAll<HTMLElement>(`.p-MenuBar-item[aria-label="${label}"]`).forEach(el => {
-                    el.style.display = 'none';
-                    el.style.visibility = 'hidden';
-                    el.style.width = '0';
-                    el.style.minWidth = '0';
-                    el.style.padding = '0';
-                    el.style.margin = '0';
-                    el.style.overflow = 'hidden';
-                    el.style.position = 'absolute';
-                });
-            } catch { /* invalid selector */ }
-        }
-
-        // Strategy 2: Match all MenuBar items by text content
+        // Find all menu bar items
         const menuBarItemSelectors = [
             '.p-MenuBar-item',
             '.theia-MenuBar-item',
             '[class*="MenuBar-item"]',
-            '.p-MenuBar > .p-Widget',
         ];
 
         for (const sel of menuBarItemSelectors) {
             try {
                 document.querySelectorAll<HTMLElement>(sel).forEach(item => {
-                    // Get the FIRST text node directly (avoid matching nested menus)
-                    const directText = this.getDirectTextContent(item);
-                    const fullText = item.textContent?.trim() || '';
-                    const ariaLabel = item.getAttribute('aria-label') || '';
-
-                    for (const hidden of hiddenLabels) {
-                        if (directText === hidden || fullText === hidden || ariaLabel === hidden) {
-                            item.style.display = 'none';
-                            item.style.visibility = 'hidden';
-                            item.style.width = '0';
-                            item.style.minWidth = '0';
-                            item.style.padding = '0';
-                            item.style.margin = '0';
-                            item.style.overflow = 'hidden';
-                            item.style.position = 'absolute';
-                            break;
-                        }
+                    const text = this.getMenuItemLabel(item);
+                    if (!allowed.has(text)) {
+                        // Hide this menu item
+                        item.style.display = 'none';
+                    } else {
+                        // Ensure allowed items are visible
+                        item.style.display = '';
                     }
                 });
             } catch { /* invalid selector */ }
         }
 
-        // Strategy 3: Direct child iteration of the menu bar container
+        // Also iterate direct children of the menu bar container
         document.querySelectorAll('.theia-menubar, .p-MenuBar, [class*="MenuBar"]').forEach(menuBar => {
             // Skip if this is a menu ITEM, not the container
             if (menuBar.classList.contains('p-MenuBar-item') || menuBar.classList.contains('theia-MenuBar-item')) {
@@ -183,30 +162,39 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             const children = menuBar.children;
             for (let i = 0; i < children.length; i++) {
                 const child = children[i] as HTMLElement;
-                const directText = this.getDirectTextContent(child);
-                const fullText = child.textContent?.trim() || '';
-                const ariaLabel = child.getAttribute('aria-label') || '';
-
-                for (const hidden of hiddenLabels) {
-                    if (directText === hidden || fullText === hidden || ariaLabel === hidden) {
-                        child.style.display = 'none';
-                        child.style.visibility = 'hidden';
-                        child.style.width = '0';
-                        child.style.minWidth = '0';
-                        child.style.padding = '0';
-                        child.style.margin = '0';
-                        child.style.overflow = 'hidden';
-                        child.style.position = 'absolute';
-                        break;
-                    }
+                const text = this.getMenuItemLabel(child);
+                if (!allowed.has(text)) {
+                    child.style.display = 'none';
+                } else {
+                    child.style.display = '';
                 }
             }
         });
     }
 
     /**
+     * Get the label text of a menu item. Checks aria-label first (most reliable),
+     * then direct text content, then inner span text.
+     */
+    protected getMenuItemLabel(el: Element): string {
+        // Check aria-label first (most reliable in Theia 1.72+)
+        const ariaLabel = el.getAttribute('aria-label');
+        if (ariaLabel) {
+            return ariaLabel;
+        }
+
+        // Check direct text content
+        const directText = this.getDirectTextContent(el);
+        if (directText) {
+            return directText;
+        }
+
+        // Fallback: full text content trimmed
+        return el.textContent?.trim() || '';
+    }
+
+    /**
      * Get the direct text content of an element (not including child elements).
-     * This is important because menu items may have child spans or submenus.
      */
     protected getDirectTextContent(el: Element): string {
         let text = '';
@@ -215,7 +203,6 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
                 text += node.textContent?.trim() || '';
             } else if (node.nodeType === Node.ELEMENT_NODE) {
                 const htmlNode = node as Element;
-                // Only get text from spans that are direct labels, not submenu containers
                 if (htmlNode.tagName === 'SPAN' || htmlNode.tagName === 'DIV' ||
                     htmlNode.className.includes('label') || htmlNode.className.includes('Label')) {
                     if (!htmlNode.className.includes('submenu') && !htmlNode.className.includes('arrow')) {
@@ -229,8 +216,6 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
 
     /**
      * Hide the activity bar and sidebar using aggressive DOM manipulation.
-     * Instead of just hiding, we REMOVE elements from the DOM to prevent
-     * Theia from re-showing them via its layout JavaScript.
      */
     protected hideSidebarAndActivityBar(): void {
         // Activity bar selectors — remove from DOM entirely
@@ -248,7 +233,6 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             try {
                 document.querySelectorAll(sel).forEach(el => {
                     if (el instanceof HTMLElement) {
-                        // Remove from DOM entirely to prevent Theia from re-showing
                         el.remove();
                     }
                 });
@@ -263,7 +247,6 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             '#sidebar-left',
             '#sidebar-left-content',
             '[data-area="left"]',
-            '.p-DockPanel > [data-area="left"]',
         ];
 
         for (const sel of sidebarSelectors) {
@@ -286,7 +269,7 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             } catch { /* invalid selector */ }
         }
 
-        // Also find elements with class containing "sidebar" or "side-panel" on the left
+        // Hide any sidebar-like elements on the left
         document.querySelectorAll<HTMLElement>('[class*="sidebar"], [class*="side-panel"], [class*="SidePanel"]').forEach(el => {
             const rect = el.getBoundingClientRect();
             if (rect.left < 100 && rect.width < 500 && rect.height > 200) {
@@ -306,25 +289,12 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             el.style.position = 'absolute';
             el.style.left = '-9999px';
         });
-
-        // CRITICAL: Also hide the split panel handle that separates sidebar from main area
-        document.querySelectorAll<HTMLElement>('.p-SplitPanel-handle').forEach(el => {
-            // Only hide if it's the left sidebar handle (first child in split panel)
-            const parent = el.parentElement;
-            if (parent) {
-                const firstWidget = parent.querySelector('.p-Widget:first-child');
-                if (firstWidget && firstWidget.getBoundingClientRect().left < 50) {
-                    el.style.display = 'none';
-                }
-            }
-        });
     }
 
     /**
      * Remove back/forward navigation arrows from the toolbar.
      */
     protected removeNavigationArrows(): void {
-        // Find toolbar items with navigation IDs
         document.querySelectorAll<HTMLElement>('.theia-toolbar-item, [class*="toolbar-item"]').forEach(item => {
             const id = item.id || '';
             const title = item.title || '';
@@ -339,12 +309,6 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
                 (title && (title.toLowerCase().includes('navigate back') || title.toLowerCase().includes('navigate forward')))
             ) {
                 item.style.display = 'none';
-                item.style.width = '0px';
-                item.style.overflow = 'hidden';
-                item.style.padding = '0px';
-                item.style.margin = '0px';
-                item.style.position = 'absolute';
-                item.style.visibility = 'hidden';
             }
         });
 
@@ -365,12 +329,6 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
                         text === '‹' || text === '›'
                     ) {
                         btn.style.display = 'none';
-                        btn.style.width = '0px';
-                        btn.style.overflow = 'hidden';
-                        btn.style.padding = '0px';
-                        btn.style.margin = '0px';
-                        btn.style.position = 'absolute';
-                        btn.style.visibility = 'hidden';
                     }
                 });
             }
@@ -426,14 +384,9 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     }
 
     /**
-     * Ensure Theia's built-in toolbar is hidden WITHOUT hiding the menu bar.
-     * The toolbar.showToolbar: false preference should handle this, but we
-     * also do it via DOM as a safety net. We ONLY hide elements that are
-     * specifically the Theia toolbar, NOT the top panel or menu bar.
+     * Hide Theia's built-in toolbar (only the toolbar container, NOT the menu bar).
      */
     protected hideTheiaToolbar(): void {
-        // Only target the specific Theia toolbar containers
-        // NEVER hide #theia-top-panel or .p-MenuBar — those contain the menu bar!
         const toolbarSelectors = [
             '#theia-toolbar-container',
             '.theia-toolbar-container',
@@ -444,7 +397,6 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
         for (const sel of toolbarSelectors) {
             try {
                 document.querySelectorAll<HTMLElement>(sel).forEach(el => {
-                    // Don't hide our own toolbar
                     if (!el.id.startsWith('airo-') && !el.className.includes('airo-')) {
                         el.style.display = 'none';
                         el.style.height = '0';
@@ -494,8 +446,6 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
         });
         commandRegistry.registerCommand(TheiaIDECommands.OPEN_LIBRARIES, {
             execute: () => {
-                // Delegate to airo.manageLibraries which shows a QuickPick
-                // (don't try to open the hidden sidebar)
                 commandRegistry.executeCommand('airo.manageLibraries').catch(() => {
                     // Fallback: show a message
                 });

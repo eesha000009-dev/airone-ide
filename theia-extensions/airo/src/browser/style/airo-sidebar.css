@@ -9,7 +9,7 @@
    1. SECONDARY TOOLBAR ROW (Below the menu bar)
    ═══════════════════════════════════════════════════════════════════════════════ */
 
-/* Ensure the top panel container is visible (but NOT broad selectors that override menu hiding) */
+/* Ensure the top panel container is visible */
 #theia-top-panel,
 .theia-top-panel {
     display: flex !important;
@@ -17,7 +17,6 @@
     position: relative !important;
     width: 100% !important;
     height: auto !important;
-    overflow: visible !important;
     pointer-events: auto !important;
     z-index: 100 !important;
     flex-shrink: 0 !important;
@@ -31,30 +30,8 @@
     visibility: visible !important;
     position: relative !important;
     height: auto !important;
-    overflow: visible !important;
     pointer-events: auto !important;
     flex-shrink: 0 !important;
-}
-
-/* CRITICAL: Dropdown menus must NOT be clipped by any parent */
-.p-MenuBar.p-Widget .p-Menu,
-.p-Widget.p-Menu,
-.p-Menu-popup,
-.p-MenuBar-item {
-    overflow: visible !important;
-}
-
-/* Ensure the shell allows dropdown overflow */
-#theia-shell,
-.theia-shell {
-    overflow: visible !important;
-}
-
-.p-Widget.boxlayout,
-.p-Widget.dockpanel,
-.p-DockPanel,
-.p-BoxLayout {
-    overflow: visible !important;
 }
 
 #airo-secondary-toolbar.airo-secondary-toolbar {
@@ -268,7 +245,7 @@ button[aria-label="Forward"],
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   6. MAKE LOGO BIGGER — In menu bar, about dialog, getting started
+   4. MAKE LOGO BIGGER — In menu bar, about dialog, getting started
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 /* Menu bar logo - BIGGER for visibility */
@@ -308,39 +285,30 @@ button[aria-label="Forward"],
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   7. HIDE UNWANTED MENU ITEMS — ONLY SHOW: File, Edit, View, Libraries, Tools
+   5. MENU BAR — WHITELIST APPROACH: Hide ALL menu items, show only wanted ones
    ═══════════════════════════════════════════════════════════════════════════════
-   IMPORTANT: These rules MUST come AFTER any "ensure visible" rules so that
-   !important on display:none takes priority over !important on display:flex */
+   IMPORTANT: This must come AFTER the "ensure visible" rules for the menu bar
+   CONTAINER so that the container stays visible while individual items are hidden.
+   Using a whitelist approach (hide all, show wanted) is more reliable than
+   a blacklist approach (show all, hide unwanted) because any new menus that
+   Theia adds will automatically be hidden. */
 
-/* Strategy 1: aria-label attribute (Theia 1.72+) */
-.p-MenuBar-item[aria-label="Selection"],
-.p-MenuBar-item[aria-label="Go"],
-.p-MenuBar-item[aria-label="Run"],
-.p-MenuBar-item[aria-label="Terminal"],
-.p-MenuBar-item[aria-label="Help"],
-.p-MenuBar-item[aria-label="Compile"],
-.p-MenuBar-item[aria-label="Verify"],
-.p-MenuBar-item[aria-label="Upload"],
-.p-MenuBar-item[aria-label="Sketch"] {
+/* Step 1: Hide ALL menu bar items */
+.p-MenuBar-item {
     display: none !important;
 }
 
-/* Strategy 2: Nested within menubar container */
-.theia-menubar .p-MenuBar-item[aria-label="Selection"],
-.theia-menubar .p-MenuBar-item[aria-label="Go"],
-.theia-menubar .p-MenuBar-item[aria-label="Run"],
-.theia-menubar .p-MenuBar-item[aria-label="Terminal"],
-.theia-menubar .p-MenuBar-item[aria-label="Help"],
-.theia-menubar .p-MenuBar-item[aria-label="Compile"],
-.theia-menubar .p-MenuBar-item[aria-label="Verify"],
-.theia-menubar .p-MenuBar-item[aria-label="Upload"],
-.theia-menubar .p-MenuBar-item[aria-label="Sketch"] {
-    display: none !important;
+/* Step 2: Show ONLY the menus we want — by aria-label attribute */
+.p-MenuBar-item[aria-label="File"],
+.p-MenuBar-item[aria-label="Edit"],
+.p-MenuBar-item[aria-label="View"],
+.p-MenuBar-item[aria-label="Libraries"],
+.p-MenuBar-item[aria-label="Tools"] {
+    display: flex !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   8. HIDE .theia AND .airone-ide FOLDERS FROM FILE EXPLORER
+   6. HIDE .theia AND .airone-ide FOLDERS FROM FILE EXPLORER
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 .theia-TreeView .theia-TreeNodeContent[data-file$=".airone-ide"],

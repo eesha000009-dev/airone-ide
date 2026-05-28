@@ -100,44 +100,24 @@ ul.theia-aboutExtensions {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   HIDE UNWANTED MENU ITEMS — ONLY SHOW: File, Edit, View, Libraries, Tools
+   MENU BAR — WHITELIST APPROACH: Hide ALL menu items, then show ONLY the
+   ones we want: File, Edit, View, Libraries, Tools
    ═══════════════════════════════════════════════════════════════════════════════
-   We use MULTIPLE selector strategies because Theia's DOM varies between versions.
-   The aria-label approach, the span text approach, and nth-child approach. */
+   This is more reliable than a blacklist because any new menus Theia adds
+   will automatically be hidden. */
 
-/* Strategy 1: aria-label attribute (Theia 1.72+) */
-.p-MenuBar-item[aria-label="Selection"],
-.p-MenuBar-item[aria-label="Go"],
-.p-MenuBar-item[aria-label="Run"],
-.p-MenuBar-item[aria-label="Terminal"],
-.p-MenuBar-item[aria-label="Help"],
-.p-MenuBar-item[aria-label="Compile"],
-.p-MenuBar-item[aria-label="Verify"],
-.p-MenuBar-item[aria-label="Upload"],
-.p-MenuBar-item[aria-label="Sketch"] {
+/* Step 1: Hide ALL menu bar items */
+.p-MenuBar-item {
     display: none !important;
 }
 
-/* Strategy 2: Nested within menubar container */
-.theia-menubar .p-MenuBar-item[aria-label="Selection"],
-.theia-menubar .p-MenuBar-item[aria-label="Go"],
-.theia-menubar .p-MenuBar-item[aria-label="Run"],
-.theia-menubar .p-MenuBar-item[aria-label="Terminal"],
-.theia-menubar .p-MenuBar-item[aria-label="Help"],
-.theia-menubar .p-MenuBar-item[aria-label="Compile"],
-.theia-menubar .p-MenuBar-item[aria-label="Verify"],
-.theia-menubar .p-MenuBar-item[aria-label="Upload"],
-.theia-menubar .p-MenuBar-item[aria-label="Sketch"] {
-    display: none !important;
-}
-
-/* Strategy 3: Using data attributes (some Theia versions use these) */
-.p-MenuBar-item[data-type="command"][data-command*="selection"],
-.p-MenuBar-item[data-type="command"][data-command*="go.to"],
-.p-MenuBar-item[data-type="command"][data-command*="run"],
-.p-MenuBar-item[data-type="command"][data-command*="terminal"],
-.p-MenuBar-item[data-type="command"][data-command*="help"] {
-    display: none !important;
+/* Step 2: Show ONLY the menus we want — by aria-label */
+.p-MenuBar-item[aria-label="File"],
+.p-MenuBar-item[aria-label="Edit"],
+.p-MenuBar-item[aria-label="View"],
+.p-MenuBar-item[aria-label="Libraries"],
+.p-MenuBar-item[aria-label="Tools"] {
+    display: flex !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
@@ -182,9 +162,7 @@ div[data-area="left"] {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   ENSURE THE TOP PANEL IS VISIBLE (but NOT overriding menu item hiding)
-   NOTE: We must NOT use broad selectors like [class*="MenuBar"] here because
-   that would match individual menu items and override display:none on hidden ones.
+   ENSURE THE TOP PANEL AND MENU BAR CONTAINER ARE VISIBLE
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 #theia-top-panel,
@@ -194,7 +172,6 @@ div[data-area="left"] {
     position: relative !important;
     width: 100% !important;
     height: auto !important;
-    overflow: visible !important;
     pointer-events: auto !important;
     z-index: 100 !important;
     flex-shrink: 0 !important;
@@ -208,32 +185,8 @@ div[data-area="left"] {
     visibility: visible !important;
     position: relative !important;
     height: auto !important;
-    overflow: visible !important;
     pointer-events: auto !important;
     flex-shrink: 0 !important;
-}
-
-/* CRITICAL: Dropdown menus must NOT be clipped by any parent */
-.p-MenuBar.p-Widget .p-Menu,
-.p-Widget.p-Menu,
-.p-Menu-popup,
-.p-Widget.p-MenuBar-item,
-.p-MenuBar-item {
-    overflow: visible !important;
-}
-
-/* Ensure the shell top area allows dropdown overflow */
-#theia-shell,
-.theia-shell {
-    overflow: visible !important;
-}
-
-/* Make sure the application shell allows menus to overflow */
-.p-Widget.boxlayout,
-.p-Widget.dockpanel,
-.p-DockPanel,
-.p-BoxLayout {
-    overflow: visible !important;
 }
 
 /* ─── Secondary Toolbar Row (below menu bar) ──────────────────────────────── */
