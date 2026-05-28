@@ -22,7 +22,8 @@
     flex-shrink: 0 !important;
 }
 
-/* The menu bar CONTAINER only — do NOT use broad [class*="MenuBar"] here */
+/* The menu bar CONTAINER — use both lm- (Lumino) and p- (PhosphorJS) selectors */
+.lm-MenuBar.lm-Widget,
 .p-MenuBar.p-Widget,
 .theia-MenuBar.theia-Widget,
 .theia-menubar {
@@ -91,15 +92,19 @@
    2. HIDE ENTIRE ACTIVITY BAR + SIDEBAR
    ═══════════════════════════════════════════════════════════════════════════════ */
 
-/* Activity bar (left strip with icons) */
+/* Activity bar (left strip with icons) — both lm- and p- prefixes */
 #theia-activitybar,
 .theia-activity-bar,
+.lm-TabBar.theia-activity-bar,
 .p-TabBar.theia-activity-bar,
+.lm-Widget.theia-activity-bar,
 .p-Widget.theia-activity-bar,
 div[class*="activity-bar"],
 div[class*="activitybar"],
 div[class*="ActivityBar"],
+.lm-DockPanel > .lm-Widget[data-mode="activity-bar"],
 .p-DockPanel > .p-Widget[data-mode="activity-bar"],
+.theia-left-side-panel > .lm-TabBar,
 .theia-left-side-panel > .p-TabBar,
 .theia-sidebar-left-tabbar,
 #sidebar-left-tabbar {
@@ -117,10 +122,11 @@ div[class*="ActivityBar"],
     pointer-events: none !important;
 }
 
-/* Left sidebar panel */
+/* Left sidebar panel — both lm- and p- prefixes */
 .theia-side-panel,
 .theia-left-side-panel,
 .theia-sidebar-container,
+.lm-DockPanel > .lm-Widget[data-area="left"],
 .p-DockPanel > .p-Widget[data-area="left"],
 div[data-area="left"],
 .theia-sidebar-panel,
@@ -142,12 +148,14 @@ div[data-area="left"],
 
 /* Hide the sidebar resize handle */
 .theia-sidebar-resize-handle,
+.lm-SplitPanel-handle[data-orientation="vertical"],
 .p-SplitPanel-handle[data-orientation="vertical"] {
     display: none !important;
 }
 
 /* Right sidebar too */
 .theia-right-side-panel,
+.lm-DockPanel > .lm-Widget[data-area="right"],
 .p-DockPanel > .p-Widget[data-area="right"],
 div[data-area="right"],
 #sidebar-right {
@@ -159,24 +167,38 @@ div[data-area="right"],
 }
 
 /* Hide any leftover sidebar widget containers */
+.lm-Widget.aero-sidebar,
 .p-Widget.aero-sidebar,
+.lm-Widget[id="airo-sidebar"],
 .p-Widget[id="airo-sidebar"],
+.lm-Widget.airo-sidebar,
 .p-Widget.airo-sidebar,
 .airo-sidebar-panel {
     display: none !important;
 }
 
 /* Hide individual activity bar items as safety net */
+.lm-TabBar-tab[data-id="search-in-workspace"],
 .p-TabBar-tab[data-id="search-in-workspace"],
+.lm-TabBar-tab[data-id="debug:debug-container"],
 .p-TabBar-tab[data-id="debug:debug-container"],
+.lm-TabBar-tab[data-id="debug:view-container"],
 .p-TabBar-tab[data-id="debug:view-container"],
+.lm-TabBar-tab[data-id="test-view-container"],
+.p-TabBar-tab[data-id="test:container"],
 .p-TabBar-tab[data-id="test-view-container"],
 .p-TabBar-tab[data-id="test:container"],
+.lm-TabBar-tab[data-id="airo-sidebar"],
 .p-TabBar-tab[data-id="airo-sidebar"],
+.lm-TabBar-tab[data-id="extensions-view-container"],
 .p-TabBar-tab[data-id="extensions-view-container"],
+.lm-TabBar-tab[data-id="explorer-view-container"],
 .p-TabBar-tab[data-id="explorer-view-container"],
+.lm-TabBar-tab[data-id="scm-view-container"],
 .p-TabBar-tab[data-id="scm-view-container"],
+.lm-TabBar-tab[data-id="output.view"],
 .p-TabBar-tab[data-id="output.view"],
+.theia-activity-bar .lm-TabBar-tab,
 .theia-activity-bar .p-TabBar-tab {
     display: none !important;
 }
@@ -251,6 +273,7 @@ button[aria-label="Forward"],
 /* Menu bar logo - BIGGER for visibility */
 .theia-icon,
 .theia-menubar-logo,
+.lm-MenuBar-logo,
 .p-MenuBar-logo,
 [class*="MenuBar-logo"],
 [class*="menubar-logo"] {
@@ -287,23 +310,25 @@ button[aria-label="Forward"],
 /* ═══════════════════════════════════════════════════════════════════════════════
    5. MENU BAR — WHITELIST APPROACH: Hide ALL menu items, show only wanted ones
    ═══════════════════════════════════════════════════════════════════════════════
-   IMPORTANT: This must come AFTER the "ensure visible" rules for the menu bar
-   CONTAINER so that the container stays visible while individual items are hidden.
-   Using a whitelist approach (hide all, show wanted) is more reliable than
-   a blacklist approach (show all, hide unwanted) because any new menus that
-   Theia adds will automatically be hidden. */
+   Theia 1.72 uses Lumino (lm- prefix) instead of PhosphorJS (p- prefix).
+   Menu items do NOT have aria-label attributes. The label text is in a child
+   element: .lm-MenuBar-itemLabel
 
-/* Step 1: Hide ALL menu bar items */
+   Since CSS cannot select by text content, we use a hybrid approach:
+   - CSS: Hide ALL menu items by default (both lm- and p- prefixes)
+   - JavaScript: Show only the allowed items by reading their label text
+   - CSS data attribute: JS adds data-airone-visible="true" to allowed items,
+     and CSS shows items with that attribute */
+
+/* Step 1: Hide ALL menu bar items (both Lumino and PhosphorJS) */
+.lm-MenuBar-item,
 .p-MenuBar-item {
     display: none !important;
 }
 
-/* Step 2: Show ONLY the menus we want — by aria-label attribute */
-.p-MenuBar-item[aria-label="File"],
-.p-MenuBar-item[aria-label="Edit"],
-.p-MenuBar-item[aria-label="View"],
-.p-MenuBar-item[aria-label="Libraries"],
-.p-MenuBar-item[aria-label="Tools"] {
+/* Step 2: Show only items that JavaScript has marked as visible */
+.lm-MenuBar-item[data-airone-visible="true"],
+.p-MenuBar-item[data-airone-visible="true"] {
     display: flex !important;
 }
 

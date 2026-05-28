@@ -42,9 +42,12 @@ export namespace TheiaIDECommands {
  * adds Airone-specific menu entries, and hides unwanted menus/sidebar items.
  *
  * Uses WHITELIST approach for menus: ALL menus are hidden via CSS, then only
- * the allowed ones (File, Edit, View, Libraries, Tools) are shown. This is
- * more reliable than a blacklist because any new menus Theia adds are
- * automatically hidden.
+ * the allowed ones (File, Edit, View, Libraries, Tools) are shown by adding
+ * a data-airone-visible="true" attribute that CSS matches.
+ *
+ * Theia 1.72 uses Lumino (lm- prefix) instead of PhosphorJS (p- prefix).
+ * Menu items do NOT have aria-label attributes. The label text is inside
+ * a child element: .lm-MenuBar-itemLabel
  */
 @injectable()
 export class TheiaIDEContribution implements CommandContribution, MenuContribution {
@@ -69,7 +72,7 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     /**
      * Unified observer that handles all DOM-based UI modifications:
      * - Hide activity bar and sidebar COMPLETELY
-     * - Hide unwanted menus (whitelist approach)
+     * - Hide unwanted menus (whitelist approach using data attribute)
      * - Remove navigation arrows
      * - Rename Extensions → Libraries
      * - Make logo bigger
@@ -121,63 +124,92 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     }
 
     /**
-     * WHITELIST APPROACH: Hide all menu bar items, then show only the
-     * allowed ones. This is more reliable than blacklisting because any
-     * new menus Theia adds will automatically be hidden.
+     * WHITELIST APPROACH: All menu items are hidden by CSS rule
+     * (`.lm-MenuBar-item { display: none }`). We then set
+     * `data-airone-visible="true"` on allowed items, which CSS
+     * matches with `.lm-MenuBar-item[data-airone-visible="true"] { display: flex }`.
      *
-     * We iterate ALL .p-MenuBar-item elements and check their text content
-     * or aria-label against our ALLOWED set.
+     * This is more reliable than inline style manipulation because:
+     * 1. It works with both Lumino (lm-) and PhosphorJS (p-) prefixes
+     * 2. It doesn't fight with Theia's DOM reconciliation
+     * 3. CSS !important rules take precedence
      */
     protected hideUnwantedMenus(): void {
         const allowed = TheiaIDEContribution.ALLOWED_MENU_LABELS;
 
-        // Find all menu bar items
+        // Selectors for menu bar items — both Lumino (lm-) and PhosphorJS (p-)
         const menuBarItemSelectors = [
+            '.lm-MenuBar-item',
             '.p-MenuBar-item',
             '.theia-MenuBar-item',
-            '[class*="MenuBar-item"]',
         ];
 
         for (const sel of menuBarItemSelectors) {
             try {
                 document.querySelectorAll<HTMLElement>(sel).forEach(item => {
                     const text = this.getMenuItemLabel(item);
-                    if (!allowed.has(text)) {
-                        // Hide this menu item
-                        item.style.display = 'none';
+                    if (allowed.has(text)) {
+                        // Mark as visible — CSS will show this item
+                        item.setAttribute('data-airone-visible', 'true');
                     } else {
-                        // Ensure allowed items are visible
-                        item.style.display = '';
+                        // Remove visibility marker — CSS will hide this item
+                        item.removeAttribute('data-airone-visible');
                     }
                 });
             } catch { /* invalid selector */ }
         }
 
         // Also iterate direct children of the menu bar container
-        document.querySelectorAll('.theia-menubar, .p-MenuBar, [class*="MenuBar"]').forEach(menuBar => {
-            // Skip if this is a menu ITEM, not the container
-            if (menuBar.classList.contains('p-MenuBar-item') || menuBar.classList.contains('theia-MenuBar-item')) {
-                return;
-            }
-            const children = menuBar.children;
-            for (let i = 0; i < children.length; i++) {
-                const child = children[i] as HTMLElement;
-                const text = this.getMenuItemLabel(child);
-                if (!allowed.has(text)) {
-                    child.style.display = 'none';
-                } else {
-                    child.style.display = '';
-                }
-            }
-        });
+        const menuBarSelectors = [
+            '.lm-MenuBar',
+            '.p-MenuBar',
+            '.theia-menubar',
+        ];
+        for (const sel of menuBarSelectors) {
+            try {
+                document.querySelectorAll(sel).forEach(menuBar => {
+                    // Skip if this is a menu ITEM, not the container
+                    if (menuBar.classList.contains('lm-MenuBar-item') ||
+                        menuBar.classList.contains('p-MenuBar-item') ||
+                        menuBar.classList.contains('theia-MenuBar-item')) {
+                        return;
+                    }
+                    const children = menuBar.children;
+                    for (let i = 0; i < children.length; i++) {
+                        const child = children[i] as HTMLElement;
+                        const text = this.getMenuItemLabel(child);
+                        if (allowed.has(text)) {
+                            child.setAttribute('data-airone-visible', 'true');
+                        } else {
+                            child.removeAttribute('data-airone-visible');
+                        }
+                    }
+                });
+            } catch { /* invalid selector */ }
+        }
     }
 
     /**
-     * Get the label text of a menu item. Checks aria-label first (most reliable),
-     * then direct text content, then inner span text.
+     * Get the label text of a menu item.
+     *
+     * In Theia 1.72 with Lumino, the label text is inside a child element:
+     *   <li class="lm-MenuBar-item">
+     *     <div class="lm-MenuBar-itemLabel">File</div>
+     *   </li>
+     *
+     * We check the itemLabel child first, then aria-label, then text content.
      */
     protected getMenuItemLabel(el: Element): string {
-        // Check aria-label first (most reliable in Theia 1.72+)
+        // Check for Lumino itemLabel child (most reliable in Theia 1.72+)
+        const itemLabel = el.querySelector('.lm-MenuBar-itemLabel, .p-MenuBar-itemLabel');
+        if (itemLabel) {
+            const text = itemLabel.textContent?.trim();
+            if (text) {
+                return text;
+            }
+        }
+
+        // Check aria-label (unlikely but possible)
         const ariaLabel = el.getAttribute('aria-label');
         if (ariaLabel) {
             return ariaLabel;
@@ -203,9 +235,11 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
                 text += node.textContent?.trim() || '';
             } else if (node.nodeType === Node.ELEMENT_NODE) {
                 const htmlNode = node as Element;
-                if (htmlNode.tagName === 'SPAN' || htmlNode.tagName === 'DIV' ||
-                    htmlNode.className.includes('label') || htmlNode.className.includes('Label')) {
-                    if (!htmlNode.className.includes('submenu') && !htmlNode.className.includes('arrow')) {
+                // Include label-like children but not submenu indicators
+                if (htmlNode.className.includes('label') || htmlNode.className.includes('Label') ||
+                    htmlNode.tagName === 'SPAN' || htmlNode.tagName === 'DIV') {
+                    if (!htmlNode.className.includes('submenu') && !htmlNode.className.includes('arrow') &&
+                        !htmlNode.className.includes('icon') && !htmlNode.className.includes('Icon')) {
                         text += htmlNode.textContent?.trim() || '';
                     }
                 }
@@ -222,6 +256,7 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
         const activityBarSelectors = [
             '#theia-activitybar',
             '.theia-activity-bar',
+            '.lm-TabBar.theia-activity-bar',
             '.p-TabBar.theia-activity-bar',
             '[class*="activity-bar"]',
             '[class*="activitybar"]',
@@ -344,8 +379,8 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             ['EXTENSIONS', 'LIBRARIES'],
         ];
 
-        // Activity bar tab labels
-        document.querySelectorAll('.p-TabBar-tabLabel').forEach(tab => {
+        // Activity bar tab labels (both Lumino and PhosphorJS)
+        document.querySelectorAll('.lm-TabBar-tabLabel, .p-TabBar-tabLabel').forEach(tab => {
             for (const [from, to] of renameMap) {
                 if (tab.textContent?.trim() === from) {
                     tab.textContent = to;
@@ -375,8 +410,8 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             el.setAttribute('title', 'Libraries');
         });
 
-        // Tab bar captions
-        document.querySelectorAll('.p-TabBar-tab .p-TabBar-tabCaption').forEach(caption => {
+        // Tab bar captions (both Lumino and PhosphorJS)
+        document.querySelectorAll('.lm-TabBar-tab .lm-TabBar-tabCaption, .p-TabBar-tab .p-TabBar-tabCaption').forEach(caption => {
             if (caption.textContent?.trim() === 'Extensions') {
                 caption.textContent = 'Libraries';
             }
@@ -417,6 +452,7 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             '.theia-menubar-logo',
             '[class*="MenuBar-logo"]',
             '[class*="menubar-logo"]',
+            '.lm-MenuBar-logo',
             '.p-MenuBar-logo',
         ];
 

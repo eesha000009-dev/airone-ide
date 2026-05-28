@@ -22,8 +22,6 @@ const GITHUB_OWNER = 'eesha000009-dev';
 const GITHUB_REPO = 'airone-ide';
 
 // electron-updater supports GitHub releases natively
-// We use the generic provider with the GitHub releases URL
-
 const { autoUpdater } = require('electron-updater');
 
 autoUpdater.logger = require('electron-log');
@@ -45,7 +43,9 @@ export class TheiaUpdaterImpl implements TheiaUpdater, ElectronMainApplicationCo
     private updateCheckTimer: NodeJS.Timeout | undefined;
 
     constructor() {
-        autoUpdater.autoDownload = false;
+        // AUTO-DOWNLOAD: When an update is available, download it automatically
+        // instead of asking the user. The user will only be prompted to restart.
+        autoUpdater.autoDownload = true;
 
         // Configure autoUpdater for GitHub releases
         autoUpdater.setFeedURL({
@@ -63,7 +63,9 @@ export class TheiaUpdaterImpl implements TheiaUpdater, ElectronMainApplicationCo
             }
             const updateInfo = { version: info.version };
             this.clients.forEach(c => c.updateAvailable(true, updateInfo));
+            // autoDownload = true means electron-updater will download automatically
         });
+
         autoUpdater.on('update-not-available', () => {
             if (this.initialCheck) {
                 this.initialCheck = false;
@@ -82,6 +84,10 @@ export class TheiaUpdaterImpl implements TheiaUpdater, ElectronMainApplicationCo
             }
             const errorLogPath = autoUpdater.logger.transports.file.getFile().path;
             this.clients.forEach(c => c.reportError({ message: 'An error has occurred while attempting to update.', errorLogPath }));
+        });
+
+        autoUpdater.on('download-progress', (progressInfo: { percent: number }) => {
+            autoUpdater.logger.info(`Download progress: ${progressInfo.percent}%`);
         });
     }
 

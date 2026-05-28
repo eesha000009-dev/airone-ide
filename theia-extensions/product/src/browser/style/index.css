@@ -100,32 +100,30 @@ ul.theia-aboutExtensions {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   MENU BAR — WHITELIST APPROACH: Hide ALL menu items, then show ONLY the
-   ones we want: File, Edit, View, Libraries, Tools
+   MENU BAR — WHITELIST APPROACH (Lumino + PhosphorJS)
    ═══════════════════════════════════════════════════════════════════════════════
-   This is more reliable than a blacklist because any new menus Theia adds
-   will automatically be hidden. */
+   Theia 1.72 uses Lumino (lm- prefix). Menu items do NOT have aria-label.
+   CSS hides all items; JavaScript marks allowed items with data-airone-visible. */
 
 /* Step 1: Hide ALL menu bar items */
+.lm-MenuBar-item,
 .p-MenuBar-item {
     display: none !important;
 }
 
-/* Step 2: Show ONLY the menus we want — by aria-label */
-.p-MenuBar-item[aria-label="File"],
-.p-MenuBar-item[aria-label="Edit"],
-.p-MenuBar-item[aria-label="View"],
-.p-MenuBar-item[aria-label="Libraries"],
-.p-MenuBar-item[aria-label="Tools"] {
+/* Step 2: Show only items marked by JavaScript */
+.lm-MenuBar-item[data-airone-visible="true"],
+.p-MenuBar-item[data-airone-visible="true"] {
     display: flex !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   HIDE ENTIRE SIDEBAR / ACTIVITY BAR
+   HIDE ENTIRE SIDEBAR / ACTIVITY BAR (Lumino + PhosphorJS)
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 #theia-activitybar,
 .theia-activity-bar,
+.lm-TabBar.theia-activity-bar,
 .p-TabBar.theia-activity-bar,
 .theia-left-side-panel,
 .theia-sidebar-container,
@@ -177,7 +175,8 @@ div[data-area="left"] {
     flex-shrink: 0 !important;
 }
 
-/* The menu bar CONTAINER (not items) must be visible */
+/* The menu bar CONTAINER (not items) must be visible — both Lumino and PhosphorJS */
+.lm-MenuBar.lm-Widget,
 .p-MenuBar.p-Widget,
 .theia-MenuBar.theia-Widget,
 .theia-menubar {

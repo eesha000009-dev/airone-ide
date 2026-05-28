@@ -14,13 +14,16 @@ import { MessageService } from '@theia/core/lib/common/message-service';
 
 /**
  * Toolbar contribution that creates a SEPARATE toolbar row below the menu bar
- * for Compile, Verify, Upload, Serial Monitor, and Check for Updates buttons.
+ * for Compile, Verify, Upload, and Serial Monitor buttons.
+ *
+ * Auto-update: Updates are checked and downloaded automatically. When ready,
+ * a "Restart to Update" button appears in the toolbar.
  *
  * Layout:
  *   ┌──────────────────────────────────────────────────────────────────┐
  *   │ [Logo] File  Edit  View  Libraries  Tools          [Cmd Palette]│ ← Menu bar row
  *   ├──────────────────────────────────────────────────────────────────┤
- *   │ [▶ Compile] [✓ Verify] [↑ Upload]  [⎆ Serial] [↻ Updates]     │ ← Our toolbar row
+ *   │ [▶ Compile] [✓ Verify] [↑ Upload]  [⎆ Serial] [↻ Restart]     │ ← Our toolbar row
  *   ├──────────────────────────────────────────────────────────────────┤
  *   │ Main content area                                                │
  *   └──────────────────────────────────────────────────────────────────┘
@@ -39,6 +42,7 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
     private retryCount = 0;
     private readonly MAX_RETRIES = 150;
     private retryTimer: ReturnType<typeof setTimeout> | null = null;
+    private updateReadyBtn: HTMLButtonElement | null = null;
 
     onStart(): void {
         this.scheduleInject();
@@ -80,14 +84,15 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
 
     protected findTopPanel(): HTMLElement | null {
         // Look for Theia's top panel area (the menu bar container)
+        // Theia 1.72 uses Lumino (lm- prefix) instead of PhosphorJS (p- prefix)
         const selectors = [
             '#theia-top-panel',
             '.theia-top-panel',
             '[class*="theia-top-panel"]',
             '#theia-menubar',
+            '.lm-MenuBar',
             '.p-MenuBar',
             '.theia-MenuBar',
-            '[class*="MenuBar"]',
         ];
         for (const sel of selectors) {
             try {
@@ -130,7 +135,7 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         }
 
         // Strategy 3: Find any menubar and insert after its parent
-        const menuBar = document.querySelector('.p-MenuBar, .theia-MenuBar, [class*="MenuBar"]');
+        const menuBar = document.querySelector('.lm-MenuBar, .p-MenuBar, .theia-MenuBar');
         if (menuBar && menuBar.parentElement) {
             this.insertToolbarAfter(menuBar.parentElement);
             return;
@@ -174,28 +179,24 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
     // ─── SVG Icons ────────────────────────────────────────────────────────────
 
     protected get compileIconSvg(): string {
-        // Play/clock circle icon for Compile
         return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
     }
 
     protected get verifyIconSvg(): string {
-        // Checkmark circle for Verify
         return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`;
     }
 
     protected get uploadIconSvg(): string {
-        // Upload arrow for Upload
         return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`;
     }
 
     protected get serialIconSvg(): string {
-        // Monitor/screen for Serial Monitor
         return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`;
     }
 
-    protected get updateIconSvg(): string {
-        // Refresh/sync for Check Updates
-        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`;
+    protected get restartIconSvg(): string {
+        // Restart/update icon
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>`;
     }
 
     // ─── Toolbar Creation ─────────────────────────────────────────────────────
@@ -236,7 +237,7 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             () => this.executeCommand('airo.upload')
         ));
 
-        // Right group: Serial Monitor, Check Updates
+        // Right group: Serial Monitor, Restart to Update (hidden until update is ready)
         const rightGroup = document.createElement('div');
         rightGroup.className = 'airo-toolbar-right';
 
@@ -249,19 +250,71 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             () => this.executeCommand('airo.serialMonitor')
         ));
 
-        rightGroup.appendChild(this.createButton(
-            'airo-update-btn',
-            this.updateIconSvg,
-            'Check Updates',
-            '#7b1fa2',
-            '#6a1b9a',
-            () => this.executeCommand('airo.checkUpdates')
-        ));
+        // Restart to Update button — hidden by default, shown when update is downloaded
+        this.updateReadyBtn = this.createButton(
+            'airo-restart-update-btn',
+            this.restartIconSvg,
+            'Restart to Update',
+            '#c0392b',
+            '#a93226',
+            () => this.executeCommand('electron-theia:restart-to-update')
+        );
+        this.updateReadyBtn.style.display = 'none';
+        rightGroup.appendChild(this.updateReadyBtn);
 
         toolbarRow.appendChild(leftGroup);
         toolbarRow.appendChild(rightGroup);
 
+        // Start watching for update readiness
+        this.watchForUpdates();
+
         return toolbarRow;
+    }
+
+    /**
+     * Watch for update readiness by observing the restart-to-update command availability.
+     * When an update is downloaded, the updater contribution enables the restart command.
+     * We check periodically and show the "Restart to Update" button when available.
+     */
+    protected watchForUpdates(): void {
+        const checkInterval = setInterval(() => {
+            if (!this.updateReadyBtn) {
+                clearInterval(checkInterval);
+                return;
+            }
+            // Check if the restart command is available by trying to execute a check
+            // The updater contribution sets readyToUpdate = true when download completes
+            // We use a simpler approach: listen for the command becoming visible
+            this.commandService.executeCommand('electron-theia:restart-to-update').then(() => {
+                // If the command executed, the update was ready and user chose to restart
+            }).catch(() => {
+                // Command not available yet — that's fine, keep checking
+            });
+
+            // Alternative: just check if the button should be visible
+            // We rely on the Theia updater's notification flow instead
+        }, 30000); // Check every 30 seconds
+
+        // Also listen for DOM-based signals from the updater
+        const updateObserver = new MutationObserver(() => {
+            // The updater contribution adds "Restart to Update" to the menu
+            // When we see it in the menu, show our toolbar button too
+            const restartMenuItem = document.querySelector('[data-command="electron-theia:restart-to-update"]');
+            if (restartMenuItem && this.updateReadyBtn) {
+                this.updateReadyBtn.style.display = 'inline-flex';
+            }
+        });
+
+        updateObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    /**
+     * Show the "Restart to Update" button in the toolbar.
+     */
+    showUpdateReadyButton(): void {
+        if (this.updateReadyBtn) {
+            this.updateReadyBtn.style.display = 'inline-flex';
+        }
     }
 
     protected createButton(

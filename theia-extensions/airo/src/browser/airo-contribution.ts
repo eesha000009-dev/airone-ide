@@ -103,6 +103,12 @@ export const AIRO_CHECK_UPDATES_COMMAND: Command = {
     category: 'Airone'
 };
 
+export const AIRO_RESTART_UPDATE_COMMAND: Command = {
+    id: 'airo.restartUpdate',
+    label: 'Restart to Update',
+    category: 'Airone'
+};
+
 export const AIRO_MANAGE_LIBRARIES_COMMAND: Command = {
     id: 'airo.manageLibraries',
     label: 'Manage Libraries',
@@ -535,11 +541,21 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         commands.registerCommand(AIRO_CHECK_UPDATES_COMMAND, {
             execute: async () => {
                 try {
-                    // Try the built-in electron updater command first
                     await commands.executeCommand('electron-theia:check-for-updates');
                 } catch {
-                    // If the updater command fails (e.g., no internet, dev mode), show a friendly message
                     this.messageService.info('Airone IDE — No updates available at this time. You can check again later or download from GitHub Releases.');
+                }
+            },
+            isEnabled: () => true
+        });
+
+        // Restart to Update command — delegates to the built-in updater
+        commands.registerCommand(AIRO_RESTART_UPDATE_COMMAND, {
+            execute: async () => {
+                try {
+                    await commands.executeCommand('electron-theia:restart-to-update');
+                } catch {
+                    this.messageService.info('No update is ready to install yet.');
                 }
             },
             isEnabled: () => true
@@ -649,6 +665,12 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             commandId: AIRO_CHECK_UPDATES_COMMAND.id,
             label: 'Check for Updates',
             order: 'd'
+        });
+
+        menus.registerMenuAction(AIRONE_TOOLS_UPDATE, {
+            commandId: AIRO_RESTART_UPDATE_COMMAND.id,
+            label: 'Restart to Update',
+            order: 'e'
         });
     }
 

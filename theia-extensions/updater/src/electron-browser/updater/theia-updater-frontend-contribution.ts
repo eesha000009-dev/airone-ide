@@ -130,7 +130,10 @@ export class TheiaUpdaterFrontendContribution implements CommandContribution, Me
         this.updaterClient.onUpdateAvailable(({ available, updateInfo }) => {
             if (available) {
                 this.currentUpdateInfo = updateInfo;
-                this.handleDownloadUpdate(updateInfo);
+                // AUTO-UPDATE: When update is available, automatically start downloading
+                // The backend has autoDownload=true, so it's already downloading.
+                // Just show a progress notification.
+                this.showDownloadProgress();
             } else {
                 this.handleNoUpdate();
             }
@@ -139,7 +142,7 @@ export class TheiaUpdaterFrontendContribution implements CommandContribution, Me
         this.updaterClient.onReadyToInstall(async () => {
             this.readyToUpdate = true;
             this.menuUpdater.update();
-            this.handleUpdatesAvailable();
+            this.handleUpdatesReady();
         });
 
         this.updaterClient.onError(error => this.handleError(error));
@@ -190,51 +193,46 @@ export class TheiaUpdaterFrontendContribution implements CommandContribution, Me
         });
     }
 
-    protected async handleDownloadUpdate(updateInfo?: UpdateInfo): Promise<void> {
-        const message = updateInfo
-            ? `Update to Airone IDE version ${updateInfo.version} found, do you want to update?`
-            : 'Updates found for Airone IDE, do you want to update?';
-        const actions = ['Not now', 'Yes'];
-        const checkForUpdates = this.preferenceService.get<boolean>('updates.checkForUpdates', true);
-        if (checkForUpdates) {
-            actions.push('Never');
-        }
-        const answer = await this.messageService.info(message, ...actions);
-        if (answer === 'Never') {
-            this.preferenceService.set('updates.checkForUpdates', false, PreferenceScope.User);
-            return;
-        }
-        if (answer === 'Yes') {
-            this.stopProgress();
-            this.progress = await this.messageService.showProgress({
-                text: 'Airone IDE Update',
-                options: { cancelable: true }
-            }, () => this.updater.cancel());
-            let dots = 0;
-            this.intervalId = setInterval(() => {
-                if (this.progress !== undefined) {
-                    dots = (dots + 1) % 4;
-                    this.progress.report({ message: 'Downloading' + '.'.repeat(dots) });
-                }
-            }, 1000);
-            this.updater.downloadUpdate();
-        }
+    /**
+     * Show a progress notification while the update is downloading.
+     * Since autoDownload=true in the backend, the download starts automatically.
+     */
+    protected async showDownloadProgress(): Promise<void> {
+        this.stopProgress();
+        const versionText = this.currentUpdateInfo
+            ? `v${this.currentUpdateInfo.version}`
+            : 'a new version';
+        this.progress = await this.messageService.showProgress({
+            text: `Airone IDE — Downloading update ${versionText}`,
+            options: { cancelable: true }
+        }, () => this.updater.cancel());
+        let dots = 0;
+        this.intervalId = setInterval(() => {
+            if (this.progress !== undefined) {
+                dots = (dots + 1) % 4;
+                this.progress.report({ message: 'Downloading' + '.'.repeat(dots) });
+            }
+        }, 1000);
     }
 
-    protected async handleNoUpdate(): Promise<void> {
-        this.messageService.info('Airone IDE is already using the latest version');
+    protected async handleNoUpdate(): void {
+        // Silent — don't bother the user if no update is available
     }
 
-    protected async handleUpdatesAvailable(): Promise<void> {
+    /**
+     * When the update has been downloaded and is ready to install,
+     * prompt the user to restart the application.
+     */
+    protected async handleUpdatesReady(): Promise<void> {
         if (this.progress !== undefined) {
             this.progress.report({ work: { done: 1, total: 1 } });
             this.stopProgress();
         }
         const message = this.currentUpdateInfo
-            ? `An update to Airone IDE version ${this.currentUpdateInfo.version} has been downloaded and will be automatically installed on exit. Do you want to restart now?`
-            : 'An Airone IDE update has been downloaded and will be automatically installed on exit. Do you want to restart now?';
-        const answer = await this.messageService.info(message, 'No', 'Yes');
-        if (answer === 'Yes') {
+            ? `Airone IDE ${this.currentUpdateInfo.version} has been downloaded. Restart now to apply the update?`
+            : 'An Airone IDE update has been downloaded. Restart now to apply the update?';
+        const answer = await this.messageService.info(message, 'Later', 'Restart Now');
+        if (answer === 'Restart Now') {
             this.updater.onRestartToUpdateRequested();
         }
     }
