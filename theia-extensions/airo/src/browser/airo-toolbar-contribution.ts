@@ -78,6 +78,28 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         }, 300);
     }
 
+    protected findTopPanel(): HTMLElement | null {
+        // Look for Theia's top panel area (the menu bar container)
+        const selectors = [
+            '#theia-top-panel',
+            '.theia-top-panel',
+            '[class*="theia-top-panel"]',
+            '#theia-menubar',
+            '.p-MenuBar',
+            '.theia-MenuBar',
+            '[class*="MenuBar"]',
+        ];
+        for (const sel of selectors) {
+            try {
+                const el = document.querySelector<HTMLElement>(sel);
+                if (el) {
+                    return el;
+                }
+            } catch { /* invalid selector */ }
+        }
+        return null;
+    }
+
     protected tryInject(): void {
         if (this.retryCount >= this.MAX_RETRIES) {
             return;
