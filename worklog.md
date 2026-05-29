@@ -102,3 +102,32 @@ Stage Summary:
 - Serial Monitor uses proper ApplicationShell API
 - All icons regenerated with maximized logo sizing
 - Release v0.1.0-build.202605290323 available on GitHub
+
+---
+Task ID: 1
+Agent: Main Agent
+Task: Add Android builds for Airone IDE + fix restart-to-update command
+
+Work Log:
+- Explored current project structure (Theia 1.72 Electron app with GitHub Actions CI/CD)
+- Created mobile/ directory with Capacitor-based Android project
+- Built standalone mobile web app using Vite + Monaco editor with .airo language support
+- Implemented: code editor, syntax highlighting, auto-completions, serial monitor, file explorer, settings panel
+- Created mobile-optimized dark UI matching desktop Airone IDE
+- Generated Android signing keystore (RSA 2048, 10000 day validity)
+- Set 4 GitHub Secrets for Android signing (ANDROID_KEYSTORE_BASE64, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD, ANDROID_STORE_PASSWORD)
+- Updated GitHub Actions workflow with new build-android job (Java 17, Android SDK, Capacitor, Gradle)
+- Fixed YAML parsing errors caused by inline Python heredoc with curly braces
+- Created separate scripts/patch-signing.py for Gradle signing config patching
+- Fixed build.gradle signing config targeting wrong release {} block
+- Fixed restart-to-update command: changed isVisible from () => this.readyToUpdate to () => true
+  (Theia's getActiveHandler checks BOTH isEnabled AND isVisible for command execution)
+- Fixed import path: ./airo-language → ./editor/airo-language
+- Fixed Vite minifier: changed terser to esbuild (no extra dependency)
+
+Stage Summary:
+- Android APK builds successfully (3.9 MB, signed)
+- Release v0.1.0-build.202605290925 includes Windows, Linux, AND Android
+- restart-to-update command now works (isVisible fix)
+- 4 GitHub Secrets configured for Android APK signing
+- APK will install without "app not installed" error (properly signed)
