@@ -18,7 +18,7 @@ import {
     MessageService,
     Progress
 } from '@theia/core/lib/common';
-import { PreferenceScope, PreferenceService } from '@theia/core/lib/common';
+import { PreferenceService } from '@theia/core/lib/common';
 import { TheiaUpdater, TheiaUpdaterClient, UpdaterError, UpdateInfo, UpdateAvailabilityInfo, UpdaterSettings } from '../../common/updater/theia-updater';
 import { inject, injectable, postConstruct } from '@theia/core/shared/inversify';
 import { CommonMenus, OpenerService } from '@theia/core/lib/browser';
@@ -215,7 +215,7 @@ export class TheiaUpdaterFrontendContribution implements CommandContribution, Me
         }, 1000);
     }
 
-    protected async handleNoUpdate(): void {
+    protected handleNoUpdate(): void {
         // Silent — don't bother the user if no update is available
     }
 
