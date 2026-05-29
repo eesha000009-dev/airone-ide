@@ -378,44 +378,7 @@ jobs:
         run: |
           if [ "${HAS_KEYSTORE}" = "true" ]; then
             echo "Patching build.gradle with signing config..."
-            python3 << 'PYEOF'
-          import re
-
-          gradle_file = "android/app/build.gradle"
-          with open(gradle_file, "r") as f:
-              content = f.read()
-
-          # Add signing config before buildTypes
-          signing_config = """    signingConfigs {
-          release {
-              storeFile file('keystores/release.keystore')
-              storePassword System.getenv("ANDROID_STORE_PASSWORD")
-              keyAlias System.getenv("ANDROID_KEY_ALIAS")
-              keyPassword System.getenv("ANDROID_KEY_PASSWORD")
-          }
-      }
-          """
-
-          if "signingConfigs" not in content:
-              content = content.replace("    buildTypes {", signing_config + "\n    buildTypes {")
-
-          # Add signingConfig only inside buildTypes.release {} block
-          # NOT inside signingConfigs.release {} block
-          if "signingConfig signingConfigs.release" not in content:
-              # Find buildTypes { ... release { ... } } and add signingConfig
-              # Use a more targeted replacement that only matches buildTypes > release
-              content = re.sub(
-                  r'(buildTypes\s*\{[^}]*release\s*\{)',
-                  r'\1\n            signingConfig signingConfigs.release',
-                  content,
-                  flags=re.DOTALL
-              )
-
-          with open(gradle_file, "w") as f:
-              f.write(content)
-
-          print("build.gradle patched with signing config")
-          PYEOF
+            python3 scripts/patch-signing.py
           else
             echo "Skipping signing config (no keystore secret)"
           fi
