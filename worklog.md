@@ -131,3 +131,46 @@ Stage Summary:
 - restart-to-update command now works (isVisible fix)
 - 4 GitHub Secrets configured for Android APK signing
 - APK will install without "app not installed" error (properly signed)
+
+---
+Task ID: 5
+Agent: Main Agent
+Task: Fix double splash screen on Android (Capacitor splash + Theia preload showing sequentially)
+
+Work Log:
+- User reported two splash screens appearing one after another on Android:
+  1. Capacitor Android splash (dark background, Airone icon)
+  2. Theia preload.html (white background, Theia "X" logo) — WRONG logo, WRONG background
+- Root cause: preload.html contained Theia IDE SVG logo (not Airone logo) on black background
+- Fixed preload.html:
+  - Replaced Theia SVG logo with Airone logo (embedded as base64 PNG data URI)
+  - Changed background from black to #1e1e2e (matching Capacitor splash)
+  - Added "Airone IDE" text and "Robotics Programming Environment" subtitle
+  - Added loading spinner animation
+  - Removed old Theia spinner animation
+- Updated Capacitor splash configuration:
+  - Set launchAutoHide: false (Capacitor doesn't auto-hide, seamless transition)
+  - Set splashFullScreen and splashImmersive: true
+  - Set backgroundColor: #1e1e2e
+- Regenerated all Capacitor splash images (11 sizes: port/land for mdpi-xxxhdpi):
+  - Airone logo centered on #1e1e2e dark background
+  - Logo fills 50% of width, properly sized for each density
+- Manually updated the built index.html with new Airone logo (base64 embedded)
+- Pushed fix to GitHub (commit 61ac3a3)
+- Monitored CI/CD build: ALL 4 JOBS SUCCEEDED
+  - Windows Build: SUCCESS
+  - Linux Build: SUCCESS
+  - Android Build: SUCCESS
+  - Create GitHub Release: SUCCESS
+- Release v0.1.0-build.202605291249 includes:
+  - AironeIDE-Android-v0.1.0.apk (14 MB, signed)
+  - AironeIDESetup.exe (141 MB)
+  - AironeIDE.AppImage (171 MB)
+  - AironeIDE.deb (101 MB)
+
+Stage Summary:
+- Double splash screen fixed — single seamless Airone-branded splash
+- Theia logo replaced with Airone logo in preload.html
+- Background colors unified (#1e1e2e dark theme)
+- CI/CD build fully successful on all platforms
+- Signed Android APK available in GitHub release
