@@ -39,6 +39,18 @@ import java.util.concurrent.Executors;
  * - Monitors the process and restarts it if it crashes
  * - Broadcasts when the backend is ready (listening on port 3000)
  * - Runs as a foreground service with a notification
+ *
+ * IMPORTANT: The Node.js binary for Android ARM64 needs to be compiled
+ * using the Android NDK and placed at assets/nodejs/bin/node.
+ * Until the binary is bundled, the app operates in "remote backend" mode
+ * where users can connect to a Theia backend running on their network.
+ *
+ * To compile Node.js for Android ARM64:
+ * 1. Install Android NDK (r25+)
+ * 2. Clone Node.js source: git clone https://github.com/nodejs/node
+ * 3. Configure for Android: ./configure --dest-cpu=arm64 --dest-os=android
+ * 4. Build: make -j$(nproc)
+ * 5. Copy the resulting 'node' binary to assets/nodejs/bin/node
  */
 public class NodeJsBackendService extends Service {
 
@@ -133,6 +145,7 @@ public class NodeJsBackendService extends Service {
     /**
      * Start the Node.js backend.
      * Extracts assets, makes binary executable, and starts the process.
+     * If the Node.js binary is not available, broadcasts failure immediately.
      */
     public void startBackend() {
         if (isRunning) {
@@ -142,23 +155,41 @@ public class NodeJsBackendService extends Service {
 
         executorService.execute(() -> {
             try {
-                // Step 1: Extract Node.js binary from assets
+                // Step 1: Check if Node.js binary exists in assets
+                boolean nodeBinaryInAssets = checkAssetExists(NODE_BINARY_ASSET_PATH);
+                if (!nodeBinaryInAssets) {
+                    Log.w(TAG, "Node.js binary not found in assets. " +
+                        "The binary needs to be compiled for Android ARM64 using the NDK " +
+                        "and placed at assets/" + NODE_BINARY_ASSET_PATH);
+                    broadcastFailed("Node.js binary not available. " +
+                        "The app is running in remote backend mode. " +
+                        "Connect to a Theia backend on your network.");
+                    return;
+                }
+
+                // Step 2: Extract Node.js binary from assets
                 File nodeBinary = extractNodeBinary();
                 if (nodeBinary == null) {
-                    broadcastFailed("Node.js binary not found in assets. " +
-                        "Please add assets/nodejs/bin/node (ARM64 Node.js binary for Android).");
+                    broadcastFailed("Failed to extract Node.js binary from assets.");
                     return;
                 }
 
-                // Step 2: Extract backend files from assets
+                // Step 3: Check if backend files exist in assets
+                boolean backendInAssets = checkAssetDirExists(BACKEND_DIR_ASSET_PATH);
+                if (!backendInAssets) {
+                    Log.w(TAG, "Backend files not found in assets/" + BACKEND_DIR_ASSET_PATH);
+                    broadcastFailed("Backend files not available in assets.");
+                    return;
+                }
+
+                // Step 4: Extract backend files from assets
                 File backendDir = extractBackendFiles();
                 if (backendDir == null) {
-                    broadcastFailed("Backend files not found in assets. " +
-                        "Please add backend files to assets/backend/ directory.");
+                    broadcastFailed("Failed to extract backend files from assets.");
                     return;
                 }
 
-                // Step 3: Start the Node.js process
+                // Step 5: Start the Node.js process
                 startNodeProcess(nodeBinary, backendDir);
 
             } catch (Exception e) {
@@ -207,6 +238,35 @@ public class NodeJsBackendService extends Service {
     }
 
     /**
+     * Check if an asset file exists.
+     * @param assetPath The path within the assets directory.
+     * @return true if the asset exists.
+     */
+    private boolean checkAssetExists(String assetPath) {
+        try {
+            InputStream is = getAssets().open(assetPath);
+            is.close();
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Check if an asset directory exists and has contents.
+     * @param assetDirPath The directory path within the assets directory.
+     * @return true if the directory exists and has files.
+     */
+    private boolean checkAssetDirExists(String assetDirPath) {
+        try {
+            String[] files = getAssets().list(assetDirPath);
+            return files != null && files.length > 0;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /**
      * Extract the Node.js binary from APK assets to internal storage.
      * @return File pointing to the extracted binary, or null if not found.
      */
@@ -215,13 +275,29 @@ public class NodeJsBackendService extends Service {
             File targetDir = new File(getFilesDir(), NODE_BINARY_DIR);
             File targetFile = new File(targetDir, NODE_BINARY_NAME);
 
-            // Check if already extracted and valid
+            // Check if already extracted and valid (same size as asset)
             if (targetFile.exists() && targetFile.canExecute() && targetFile.length() > 0) {
-                Log.i(TAG, "Node binary already extracted: " + targetFile.getAbsolutePath());
-                return targetFile;
+                // Verify the binary still matches the one in assets (in case of app update)
+                try {
+                    InputStream assetIs = getAssets().open(NODE_BINARY_ASSET_PATH);
+                    long assetSize = getAssetSize(assetIs);
+                    assetIs.close();
+
+                    if (targetFile.length() == assetSize) {
+                        Log.i(TAG, "Node binary already extracted and valid: " + targetFile.getAbsolutePath());
+                        return targetFile;
+                    } else {
+                        Log.i(TAG, "Node binary changed, re-extracting...");
+                        targetFile.delete();
+                    }
+                } catch (IOException e) {
+                    // Can't check size, assume it's still valid
+                    Log.i(TAG, "Node binary exists, using cached version: " + targetFile.getAbsolutePath());
+                    return targetFile;
+                }
             }
 
-            // Try to copy from assets
+            // Copy from assets
             try (InputStream is = getAssets().open(NODE_BINARY_ASSET_PATH)) {
                 targetDir.mkdirs();
                 copyStream(is, targetFile);
@@ -232,19 +308,33 @@ public class NodeJsBackendService extends Service {
                     Runtime.getRuntime().exec(new String[]{"chmod", "755", targetFile.getAbsolutePath()}).waitFor();
                 }
 
+                // Verify it's executable
+                if (!targetFile.canExecute()) {
+                    Log.e(TAG, "Node binary is not executable after chmod!");
+                    return null;
+                }
+
                 Log.i(TAG, "Node binary extracted to: " + targetFile.getAbsolutePath() +
                     " (size: " + targetFile.length() + ", executable: " + targetFile.canExecute() + ")");
                 return targetFile;
-            } catch (IOException e) {
-                // Node binary doesn't exist in assets - this is expected if not yet bundled
-                Log.w(TAG, "Node.js binary not found in assets (" + NODE_BINARY_ASSET_PATH + "). " +
-                    "This is expected if the binary hasn't been added yet.");
-                return null;
             }
         } catch (Exception e) {
             Log.e(TAG, "Error extracting Node.js binary", e);
             return null;
         }
+    }
+
+    /**
+     * Get the size of an asset stream without reading all data.
+     */
+    private long getAssetSize(InputStream is) throws IOException {
+        byte[] buffer = new byte[8192];
+        long total = 0;
+        int bytesRead;
+        while ((bytesRead = is.read(buffer)) != -1) {
+            total += bytesRead;
+        }
+        return total;
     }
 
     /**
@@ -262,24 +352,18 @@ public class NodeJsBackendService extends Service {
                 return targetDir;
             }
 
-            // Try to copy from assets
-            try {
-                String[] assetFiles = getAssets().list(BACKEND_DIR_ASSET_PATH);
-                if (assetFiles == null || assetFiles.length == 0) {
-                    Log.w(TAG, "No backend files found in assets/" + BACKEND_DIR_ASSET_PATH);
-                    return null;
-                }
-
-                // Recursively copy backend directory
-                copyAssetDir(BACKEND_DIR_ASSET_PATH, targetDir);
-
-                Log.i(TAG, "Backend files extracted to: " + targetDir.getAbsolutePath());
-                return targetDir;
-            } catch (IOException e) {
-                Log.w(TAG, "Backend directory not found in assets (" + BACKEND_DIR_ASSET_PATH + "). " +
-                    "This is expected if backend files haven't been added yet.");
+            // Copy from assets
+            String[] assetFiles = getAssets().list(BACKEND_DIR_ASSET_PATH);
+            if (assetFiles == null || assetFiles.length == 0) {
+                Log.w(TAG, "No backend files found in assets/" + BACKEND_DIR_ASSET_PATH);
                 return null;
             }
+
+            // Recursively copy backend directory
+            copyAssetDir(BACKEND_DIR_ASSET_PATH, targetDir);
+
+            Log.i(TAG, "Backend files extracted to: " + targetDir.getAbsolutePath());
+            return targetDir;
         } catch (Exception e) {
             Log.e(TAG, "Error extracting backend files", e);
             return null;
@@ -340,6 +424,10 @@ public class NodeJsBackendService extends Service {
             // Set HOME for npm/node modules resolution
             pb.environment().put("HOME", getFilesDir().getAbsolutePath());
             pb.environment().put("NODE_PATH", new File(backendDir, "node_modules").getAbsolutePath());
+
+            // Android-specific environment
+            pb.environment().put("ANDROID_ROOT", System.getenv("ANDROID_ROOT"));
+            pb.environment().put("ANDROID_DATA", System.getenv("ANDROID_DATA"));
 
             Log.i(TAG, "Starting Node.js backend: " + nodePath + " " + mainPath +
                 " --port " + BACKEND_PORT + " --hostname " + BACKEND_HOST);
@@ -483,7 +571,7 @@ public class NodeJsBackendService extends Service {
     private void broadcastFailed(String errorMessage) {
         Log.e(TAG, "Backend failed: " + errorMessage);
         isRunning = false;
-        updateNotification("Backend failed: " + errorMessage);
+        updateNotification("Backend not available");
 
         Intent intent = new Intent(ACTION_BACKEND_FAILED);
         intent.putExtra(EXTRA_ERROR_MESSAGE, errorMessage);

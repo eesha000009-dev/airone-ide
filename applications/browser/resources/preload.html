@@ -3,70 +3,275 @@
 
 <head>
     <style>
-        html, body { background-color: #1e1e2e; margin: 0; padding: 0; }
-        .theia-preload { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-image: none; display: flex; align-items: center; justify-content: center; }
+        html, body {
+            background-color: #1e1e2e;
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        /* Completely hidden - no visual splash at all.
+           This page matches the native splash background (#1e1e2e)
+           so there's no visible transition between native splash and this page.
+           It immediately checks for the Theia backend and either
+           redirects to it or shows the "Connect to Backend" UI. */
+        .theia-preload {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-image: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
         .theia-preload::after { content: none; }
-        .backend-status { display: flex; flex-direction: column; align-items: center; gap: 16px; }
-        .status-spinner { width: 24px; height: 24px; border: 2px solid #333; border-top: 2px solid #27ae60; border-radius: 50%; animation: spin 1s linear infinite; }
-        .status-text { color: #888; font-family: sans-serif; font-size: 12px; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Backend connection UI - only shown after backend check fails */
+        .connect-container {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            padding: 32px;
+            max-width: 400px;
+            width: 90%;
+        }
+        .connect-container.visible {
+            display: flex;
+        }
+        .app-logo {
+            width: 64px;
+            height: 64px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, #27ae60, #2ecc71);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: sans-serif;
+            font-size: 28px;
+            font-weight: bold;
+            color: #fff;
+        }
+        .app-title {
+            color: #e0e0e0;
+            font-family: sans-serif;
+            font-size: 22px;
+            font-weight: 600;
+        }
+        .app-subtitle {
+            color: #888;
+            font-family: sans-serif;
+            font-size: 13px;
+            text-align: center;
+            line-height: 1.5;
+        }
+        .connect-form {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            width: 100%;
+            margin-top: 8px;
+        }
+        .connect-input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid #444;
+            background: #2a2a3a;
+            color: #fff;
+            border-radius: 8px;
+            font-size: 15px;
+            font-family: monospace;
+            box-sizing: border-box;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .connect-input:focus {
+            border-color: #27ae60;
+        }
+        .connect-input::placeholder {
+            color: #666;
+        }
+        .connect-button {
+            padding: 12px 24px;
+            background: #27ae60;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            width: 100%;
+        }
+        .connect-button:hover {
+            background: #2ecc71;
+        }
+        .connect-button:active {
+            background: #219a52;
+        }
+        .divider {
+            color: #555;
+            font-family: sans-serif;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .scan-button {
+            padding: 10px 20px;
+            background: transparent;
+            color: #27ae60;
+            border: 1px solid #27ae60;
+            border-radius: 8px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            width: 100%;
+        }
+        .scan-button:hover {
+            background: rgba(39, 174, 96, 0.1);
+        }
+        .status-message {
+            color: #e74c3c;
+            font-family: sans-serif;
+            font-size: 12px;
+            display: none;
+        }
+        .status-message.visible {
+            display: block;
+        }
+        .retry-local {
+            color: #27ae60;
+            font-family: sans-serif;
+            font-size: 12px;
+            cursor: pointer;
+            text-decoration: underline;
+            margin-top: 8px;
+        }
     </style>
 </head>
 
 <body>
     <div class="theia-preload">
-        <div class="backend-status">
-            <div class="status-spinner"></div>
-            <div class="status-text">Starting backend...</div>
+        <div class="connect-container" id="connectUI">
+            <div class="app-logo">A</div>
+            <div class="app-title">Airone IDE</div>
+            <div class="app-subtitle">
+                Connect to a Theia backend running on your network<br/>
+                to use the full IDE features
+            </div>
+            <div class="connect-form">
+                <input id="backendUrl" class="connect-input" type="text"
+                       placeholder="http://192.168.1.100:3000" />
+                <button class="connect-button" onclick="connectToBackend()">Connect</button>
+            </div>
+            <div class="status-message" id="statusMsg"></div>
+            <div class="divider">or</div>
+            <button class="scan-button" onclick="retryLocal()">Try Local Backend Again</button>
+            <div class="app-subtitle" style="font-size:11px; margin-top:8px;">
+                To start a backend on your computer:<br/>
+                <code style="color:#27ae60; background:#2a2a3a; padding:2px 6px; border-radius:3px;">yarn --cwd applications/browser start</code>
+            </div>
         </div>
-        <script>
-            // Check backend availability and show config if needed
-            (function() {
-                var checkInterval;
-                var attempts = 0;
-                var maxAttempts = 60; // 60 seconds
-                
-                function checkBackend() {
-                    fetch('http://localhost:3000', { method: 'HEAD', mode: 'no-cors' })
+    </div>
+
+    <script>
+        // Immediately check for backend and redirect if available.
+        // No splash screen shown - background matches native splash (#1e1e2e).
+        (function() {
+            var BACKEND_URL = 'http://localhost:3000';
+            var CHECK_TIMEOUT = 2000;  // Quick check - 2 seconds max
+            var REDIRECT_DELAY = 300;  // Small delay for smoother transition
+
+            // Try to connect to local backend immediately
+            checkBackend(BACKEND_URL, function(available) {
+                if (available) {
+                    // Backend is running - redirect to it
+                    // The backend serves the full Theia IDE including frontend
+                    setTimeout(function() {
+                        window.location.href = BACKEND_URL;
+                    }, REDIRECT_DELAY);
+                } else {
+                    // No local backend - show the connection UI
+                    document.getElementById('connectUI').classList.add('visible');
+
+                    // Auto-fill with last used URL
+                    var lastUrl = localStorage.getItem('airone_last_backend_url');
+                    if (lastUrl) {
+                        document.getElementById('backendUrl').value = lastUrl;
+                    }
+                }
+            });
+
+            function checkBackend(url, callback) {
+                var done = false;
+                var timer = setTimeout(function() {
+                    if (!done) { done = true; callback(false); }
+                }, CHECK_TIMEOUT);
+
+                try {
+                    fetch(url, { method: 'HEAD', mode: 'no-cors' })
                         .then(function() {
-                            // Backend is ready, Theia will connect automatically
-                            clearInterval(checkInterval);
-                            document.querySelector('.status-text').textContent = 'Connecting...';
+                            if (!done) { done = true; clearTimeout(timer); callback(true); }
                         })
                         .catch(function() {
-                            attempts++;
-                            if (attempts >= maxAttempts) {
-                                clearInterval(checkInterval);
-                                showBackendConfig();
-                            }
+                            if (!done) { done = true; clearTimeout(timer); callback(false); }
                         });
+                } catch(e) {
+                    if (!done) { done = true; clearTimeout(timer); callback(false); }
                 }
-                
-                function showBackendConfig() {
-                    var statusDiv = document.querySelector('.backend-status');
-                    statusDiv.innerHTML = '<div style="color:#27ae60;font-family:sans-serif;font-size:16px;font-weight:bold;">Airone IDE</div>' +
-                        '<div style="color:#888;font-family:sans-serif;font-size:12px;margin-bottom:16px;">Local backend not available</div>' +
-                        '<div style="color:#aaa;font-family:sans-serif;font-size:11px;margin-bottom:8px;">Connect to a Theia backend on your network:</div>' +
-                        '<input id="backend-url" type="text" placeholder="http://192.168.1.100:3000" ' +
-                        'style="width:250px;padding:8px;border:1px solid #444;background:#2a2a3a;color:#fff;border-radius:4px;font-size:14px;" />' +
-                        '<button onclick="connectToBackend()" ' +
-                        'style="padding:8px 24px;background:#27ae60;color:#fff;border:none;border-radius:4px;font-size:14px;cursor:pointer;margin-top:8px;">Connect</button>';
+            }
+
+            window.connectToBackend = function() {
+                var url = document.getElementById('backendUrl').value.trim();
+                var statusEl = document.getElementById('statusMsg');
+
+                if (!url) {
+                    statusEl.textContent = 'Please enter a backend URL';
+                    statusEl.classList.add('visible');
+                    return;
                 }
-                
-                window.connectToBackend = function() {
-                    var url = document.getElementById('backend-url').value.trim();
-                    if (url) {
-                        window.location.href = url;
+
+                // Ensure URL has protocol
+                if (!/^https?:\/\//.test(url)) {
+                    url = 'http://' + url;
+                }
+
+                statusEl.textContent = 'Connecting...';
+                statusEl.style.color = '#27ae60';
+                statusEl.classList.add('visible');
+
+                // Save URL for next time
+                localStorage.setItem('airone_last_backend_url', url);
+
+                // Navigate to the backend
+                window.location.href = url;
+            };
+
+            window.retryLocal = function() {
+                // Re-check local backend
+                var statusEl = document.getElementById('statusMsg');
+                statusEl.textContent = 'Checking local backend...';
+                statusEl.style.color = '#27ae60';
+                statusEl.classList.add('visible');
+
+                checkBackend(BACKEND_URL, function(available) {
+                    if (available) {
+                        window.location.href = BACKEND_URL;
+                    } else {
+                        statusEl.textContent = 'Local backend not available';
+                        statusEl.style.color = '#e74c3c';
                     }
-                };
-                
-                // Start checking after 3 seconds (give backend time to start)
-                setTimeout(function() {
-                    checkInterval = setInterval(checkBackend, 1000);
-                }, 3000);
-            })();
-        </script>
-    </div>
+                });
+            };
+
+            // Allow Enter key to connect
+            document.getElementById('backendUrl').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    window.connectToBackend();
+                }
+            });
+        })();
+    </script>
 </body>
 
 </html>

@@ -17,6 +17,14 @@ on:
         options:
           - 'true'
           - 'false'
+      build_nodejs_android:
+        description: 'Attempt to build Node.js for Android ARM64 (takes 30-60 min)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
   pull_request:
     branches:
       - main
@@ -275,7 +283,7 @@ jobs:
           DIST_DIR="applications/electron/dist"
           if [ ! -f "${DIST_DIR}/latest-linux.yml" ]; then
             echo "latest-linux.yml not found, generating it..."
-            APPIMAGE_FILE=$(ls ${DIST_DIR}/*.AppImage 2>/dev/null | head -1)
+            APPIMAGE_FILE=$(ls ${DIST_DIR}/*.AppImage 2>/dev/null | head-1)
             if [ -n "$APPIMAGE_FILE" ]; then
               APPIMAGE_NAME=$(basename "$APPIMAGE_FILE")
               APPIMAGE_SIZE=$(stat -c%s "$APPIMAGE_FILE" 2>/dev/null || wc -c < "$APPIMAGE_FILE")
@@ -311,10 +319,104 @@ jobs:
             applications/electron/dist/latest-linux.yml
           retention-days: 30
 
+  # ==========================================================================
+  # Node.js for Android ARM64 — Build from source using Android NDK
+  # ==========================================================================
+  # This job compiles Node.js for Android ARM64 using the NDK toolchain.
+  # The resulting binary is uploaded as an artifact and used by the Android
+  # build job. This is a time-consuming process (30-60 minutes).
+  #
+  # When a pre-built Node.js binary is available (e.g., cached from a
+  # previous build or downloaded from a release), this step can be skipped.
+  #
+  # PREREQUISITES:
+  # - Android NDK r25+ with clang toolchain
+  # - Node.js source code (specific version)
+  # - Cross-compilation configure flags for Android
+  #
+  # ALTERNATIVE APPROACHES:
+  # 1. Download from Termux package repository (pre-built for Android)
+  # 2. Use nodejs-mobile pre-built binaries
+  # 3. Cache the compiled binary in GitHub Releases or Actions cache
+  # ==========================================================================
+  build-nodejs-android:
+    name: Build Node.js for Android
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    if: github.event.inputs.build_nodejs_android == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Android NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK and build tools
+        run: |
+          sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
+
+      - name: Clone Node.js source
+        run: |
+          git clone --depth 1 --branch v20.11.1 https://github.com/nodejs/node.git /tmp/nodejs-source
+          cd /tmp/nodejs-source
+
+      - name: Configure Node.js for Android ARM64
+        working-directory: /tmp/nodejs-source
+        run: |
+          export NDK_HOME=$ANDROID_NDK_HOME
+          export TOOLCHAIN=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
+          export TARGET=aarch64-linux-android
+          export API=24
+
+          export CC=$TOOLCHAIN/bin/$TARGET$API-clang
+          export CXX=$TOOLCHAIN/bin/$TARGET$API-clang++
+          export AR=$TOOLCHAIN/bin/llvm-ar
+          export NM=$TOOLCHAIN/bin/llvm-nm
+          export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
+          export STRIP=$TOOLCHAIN/bin/llvm-strip
+          export CFLAGS="-fPIC"
+          export CXXFLAGS="-fPIC"
+
+          ./configure \
+            --dest-cpu=arm64 \
+            --dest-os=android \
+            --cross-compiling \
+            --without-intl \
+            --without-inspector \
+            --without-dtrace \
+            --without-etw \
+            --without-npm \
+            --ninja \
+            --prefix=/tmp/nodejs-install
+
+      - name: Build Node.js
+        working-directory: /tmp/nodejs-source
+        run: |
+          make -j$(nproc)
+
+      - name: Strip and verify binary
+        working-directory: /tmp/nodejs-source
+        run: |
+          export STRIP=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
+          $STRIP -s out/Release/node
+          file out/Release/node
+          ls -lh out/Release/node
+
+      - name: Upload Node.js binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nodejs-android-arm64
+          path: /tmp/nodejs-source/out/Release/node
+          retention-days: 30
+
   build-android:
     name: Android Build
     runs-on: ubuntu-22.04
     timeout-minutes: 60
+    needs: [build-nodejs-android]
+    # Always run even if Node.js build was skipped
+    if: always() && !cancelled()
 
     steps:
       - name: Checkout
@@ -375,21 +477,71 @@ jobs:
         working-directory: applications/browser
         run: npx cap sync android
 
+      # ======================================================================
+      # Copy the Theia backend files to Android assets
+      # These files are extracted by NodeJsBackendService at runtime
+      # and run by the Node.js process (when available)
+      # ======================================================================
       - name: Copy backend files to assets
         run: |
-          mkdir -p applications/browser/android/app/src/main/assets/backend
+          ASSETS_BACKEND="applications/browser/android/app/src/main/assets/backend"
+          mkdir -p "${ASSETS_BACKEND}"
           if [ -d "applications/browser/lib/backend" ]; then
-            cp -r applications/browser/lib/backend/* applications/browser/android/app/src/main/assets/backend/
-            echo "Backend files copied successfully"
+            echo "Copying Theia backend files..."
+            # Copy main.js and all backend dependencies
+            rsync -a --exclude='*.map' --exclude='.git' --exclude='*.md' \
+              applications/browser/lib/backend/ "${ASSETS_BACKEND}/"
+            echo "Backend files copied:"
+            find "${ASSETS_BACKEND}" -type f | head -20
+            echo "Total size: $(du -sh "${ASSETS_BACKEND}" | cut -f1)"
           else
-            echo "Backend directory not found, creating placeholder"
-            echo "# Backend files will be added here" > applications/browser/android/app/src/main/assets/backend/.gitkeep
+            echo "WARNING: Backend directory not found (lib/backend/)"
+            echo "The app will work in remote backend mode only"
+            echo "# Backend files will be added here" > "${ASSETS_BACKEND}/.gitkeep"
           fi
 
-      - name: Create Node.js assets directory
+      # ======================================================================
+      # Download or prepare Node.js binary for Android ARM64
+      #
+      # The Node.js binary needs to be compiled for Android ARM64 using the NDK.
+      # Options:
+      # 1. Download from the build-nodejs-android job artifact (if it ran)
+      # 2. Download from a previous GitHub Release
+      # 3. Use a cached binary from Actions cache
+      #
+      # If no binary is available, the app works in "remote backend" mode
+      # where users connect to a Theia backend running on their network.
+      # ======================================================================
+      - name: Download Node.js binary for Android (from build job)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: nodejs-android-arm64
+          path: /tmp/nodejs-android
+
+      - name: Setup Node.js binary in assets
         run: |
-          mkdir -p applications/browser/android/app/src/main/assets/nodejs/bin
-          echo "# Node.js binary placeholder" > applications/browser/android/app/src/main/assets/nodejs/bin/.gitkeep
+          NODEJS_ASSETS_DIR="applications/browser/android/app/src/main/assets/nodejs/bin"
+          mkdir -p "${NODEJS_ASSETS_DIR}"
+
+          if [ -f "/tmp/nodejs-android/node" ]; then
+            echo "Node.js binary found from build job!"
+            cp /tmp/nodejs-android/node "${NODEJS_ASSETS_DIR}/node"
+            chmod +x "${NODEJS_ASSETS_DIR}/node"
+            file "${NODEJS_ASSETS_DIR}/node"
+            ls -lh "${NODEJS_ASSETS_DIR}/node"
+            echo "✓ Node.js binary for Android ARM64 is bundled"
+          else
+            echo "Node.js binary not available from build job."
+            echo "The app will work in 'remote backend' mode."
+            echo ""
+            echo "To add Node.js for Android ARM64:"
+            echo "1. Compile using NDK: see scripts/build-nodejs-android.sh"
+            echo "2. Or download from a previous release"
+            echo "3. Place at: ${NODEJS_ASSETS_DIR}/node"
+            echo ""
+            echo "# Node.js binary for Android ARM64 placeholder" > "${NODEJS_ASSETS_DIR}/.gitkeep"
+          fi
 
       - name: Decode keystore
         working-directory: applications/browser
@@ -549,10 +701,18 @@ jobs:
             4. The APK is signed and will install without "app not installed" errors
 
             ### Android Usage
-            - On first launch, the app will try to connect to a local Theia backend
-            - If no local backend is available, you'll see a "Connect to Backend" screen
+            The Android app supports two modes:
+
+            **Local Backend Mode** (when Node.js for Android is bundled):
+            - The IDE runs entirely on your device
+            - A local Node.js backend starts automatically
+            - Full IDE features available offline
+
+            **Remote Backend Mode** (current default):
+            - The app shows a "Connect to Backend" screen
             - Enter the URL of a Theia backend running on your network (e.g., `http://192.168.1.100:3000`)
             - To start a Theia backend on your computer: `yarn --cwd applications/browser start`
+            - The backend provides all IDE services (file management, compilation, terminal, etc.)
 
             ### Changes
             See commit history for changes since the last release.

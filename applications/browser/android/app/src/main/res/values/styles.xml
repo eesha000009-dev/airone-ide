@@ -17,9 +17,15 @@
         <item name="android:navigationBarColor">#1e1e2e</item>
     </style>
 
-    <!-- Splash screen theme - dark background matching app theme for smooth transition -->
+    <!-- Splash screen theme - matches app's dark background for seamless transition.
+         The native splash shows while the Node.js backend starts.
+         Once backend is ready (or fails), the splash dismisses and the
+         WebView shows either the Theia IDE or the "Connect to Backend" UI. -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">#1e1e2e</item>
+        <!-- Use the app icon as the splash screen animated icon (Android 12+) -->
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <!-- Smooth transition after splash dismisses -->
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
 </resources>
