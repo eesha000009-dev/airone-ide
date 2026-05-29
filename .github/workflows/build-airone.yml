@@ -314,7 +314,7 @@ jobs:
   build-android:
     name: Android Build
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -327,6 +327,11 @@ jobs:
         with:
           node-version: "24.x"
           registry-url: "https://registry.npmjs.org"
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbfile-dev libx11-dev libsecret-1-dev libfontconfig1
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -341,93 +346,72 @@ jobs:
         run: |
           sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Install mobile dependencies
-        working-directory: mobile
-        run: npm install --legacy-peer-deps
+      - name: Install dependencies
+        shell: bash
+        run: yarn --skip-integrity-check --network-timeout 100000
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build web app
-        working-directory: mobile
-        run: npx vite build
+      - name: Build extensions
+        shell: bash
+        run: yarn build:extensions
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
 
-      - name: Add Capacitor Android platform
-        working-directory: mobile
-        run: npx cap add android 2>/dev/null || echo "Android platform may already exist"
+      - name: Build browser application
+        shell: bash
+        run: yarn --cwd applications/browser build:prod
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download plugins
+        shell: bash
+        run: yarn download:plugins
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Sync Capacitor
-        working-directory: mobile
+        working-directory: applications/browser
         run: npx cap sync android
 
-      - name: Decode keystore and configure signing
-        working-directory: mobile
+      - name: Copy backend files to assets
+        run: |
+          mkdir -p applications/browser/android/app/src/main/assets/backend
+          if [ -d "applications/browser/lib/backend" ]; then
+            cp -r applications/browser/lib/backend/* applications/browser/android/app/src/main/assets/backend/
+            echo "Backend files copied successfully"
+          else
+            echo "Backend directory not found, creating placeholder"
+            echo "# Backend files will be added here" > applications/browser/android/app/src/main/assets/backend/.gitkeep
+          fi
+
+      - name: Create Node.js assets directory
+        run: |
+          mkdir -p applications/browser/android/app/src/main/assets/nodejs/bin
+          echo "# Node.js binary placeholder" > applications/browser/android/app/src/main/assets/nodejs/bin/.gitkeep
+
+      - name: Decode keystore
+        working-directory: applications/browser
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           if [ -n "${ANDROID_KEYSTORE_BASE64}" ]; then
-            echo "Configuring signed build..."
-            mkdir -p android/app/keystores
-            echo "${ANDROID_KEYSTORE_BASE64}" | base64 -d > android/app/keystores/release.keystore
+            echo "Decoding keystore..."
+            echo "${ANDROID_KEYSTORE_BASE64}" | base64 -d > android-signing/airone-ide-release.keystore
             echo "Keystore decoded successfully"
           else
             echo "No ANDROID_KEYSTORE_BASE64 secret - building debug APK"
           fi
 
-      - name: Patch build.gradle for signing
-        working-directory: mobile
-        env:
-          HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
-        run: |
-          if [ "${HAS_KEYSTORE}" = "true" ]; then
-            echo "Patching build.gradle with signing config..."
-            python3 scripts/patch-signing.py
-          else
-            echo "Skipping signing config (no keystore secret)"
-          fi
-
-      - name: Customize Android project
-        working-directory: mobile
-        run: |
-          # Update app name
-          STRINGS_XML="android/app/src/main/res/values/strings.xml"
-          if [ -f "${STRINGS_XML}" ]; then
-            sed -i 's/<string name="app_name">[^<]*<\/string>/<string name="app_name">Airone IDE<\/string>/' "${STRINGS_XML}"
-            sed -i 's/<string name="title_activity_main">[^<]*<\/string>/<string name="title_activity_main">Airone IDE<\/string>/' "${STRINGS_XML}"
-            echo "App name updated"
-          fi
-
-          # Add USB permissions for serial communication with ESP32
-          MANIFEST_XML="android/app/src/main/AndroidManifest.xml"
-          if [ -f "${MANIFEST_XML}" ]; then
-            if ! grep -q "android.hardware.usb.host" "${MANIFEST_XML}"; then
-              sed -i '/<application/i\    <uses-feature android:name="android.hardware.usb.host" android:required="false" />' "${MANIFEST_XML}"
-            fi
-            if ! grep -q "USB_PERMISSION" "${MANIFEST_XML}"; then
-              sed -i '/<application/i\    <uses-permission android:name="android.permission.USB_PERMISSION" />' "${MANIFEST_XML}"
-            fi
-            echo "USB permissions added to manifest"
-          fi
-
-          # Update colors for Airone branding
-          COLORS_XML="android/app/src/main/res/values/colors.xml"
-          mkdir -p android/app/src/main/res/values
-          cat > "${COLORS_XML}" << 'XMLEOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <color name="colorPrimary">#0ea5e9</color>
-              <color name="colorPrimaryDark">#0c4a6e</color>
-              <color name="colorAccent">#38bdf8</color>
-              <color name="backgroundColor">#1e1e2e</color>
-          </resources>
-          XMLEOF
-          echo "Colors updated to Airone branding"
-
       - name: Build Android APK
-        working-directory: mobile/android
+        working-directory: applications/browser/android
         env:
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -f "app/keystores/release.keystore" ]; then
+          if [ -f "../android-signing/airone-ide-release.keystore" ]; then
             echo "Building SIGNED release APK..."
             ./gradlew assembleRelease
           else
@@ -436,7 +420,7 @@ jobs:
           fi
 
       - name: Locate and prepare APK
-        working-directory: mobile
+        working-directory: applications/browser
         run: |
           echo "Looking for APK files..."
           find android -name "*.apk" -type f 2>/dev/null
@@ -458,7 +442,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AironeIDE-Android
-          path: mobile/dist/AironeIDE.apk
+          path: applications/browser/dist/AironeIDE.apk
           retention-days: 30
 
       - name: Upload Android APK (PR)
@@ -466,7 +450,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AironeIDE-Android-PR
-          path: mobile/dist/AironeIDE.apk
+          path: applications/browser/dist/AironeIDE.apk
           retention-days: 5
 
   create-release:
@@ -563,6 +547,12 @@ jobs:
             2. Enable "Install from unknown sources" in Android Settings → Security
             3. Open the APK file to install
             4. The APK is signed and will install without "app not installed" errors
+
+            ### Android Usage
+            - On first launch, the app will try to connect to a local Theia backend
+            - If no local backend is available, you'll see a "Connect to Backend" screen
+            - Enter the URL of a Theia backend running on your network (e.g., `http://192.168.1.100:3000`)
+            - To start a Theia backend on your computer: `yarn --cwd applications/browser start`
 
             ### Changes
             See commit history for changes since the last release.
