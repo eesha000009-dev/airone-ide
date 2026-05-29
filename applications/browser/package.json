@@ -1,0 +1,109 @@
+{
+  "private": true,
+  "name": "airone-ide-browser-app",
+  "description": "Airone IDE - Robotics Programming Environment (Browser)",
+  "productName": "Airone IDE",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": {
+    "name": "Airone",
+    "email": "airone@eesha000009.dev"
+  },
+  "homepage": "https://github.com/eesha000009-dev/airone-ide#readme",
+  "bugs": {
+    "url": "https://github.com/eesha000009-dev/airone-ide/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eesha000009-dev/airone-ide.git"
+  },
+  "engines": {
+    "yarn": ">=1.7.0 <2",
+    "node": ">=22"
+  },
+  "theia": {
+    "target": "browser",
+    "frontend": {
+      "config": {
+        "applicationName": "Airone IDE",
+        "reloadOnReconnect": true,
+        "preferences": {
+          "window.menuBarVisibility": "visible",
+          "toolbar.showToolbar": false,
+          "files.exclude": {
+            "**/.airone-ide": true,
+            "**/.theia": true,
+            "**/build": true,
+            "**/theia-workspace": true
+          },
+          "editor.showTabs": "single",
+          "workbench.editor.showTabs": "single",
+          "workbench.editor.highlightModifiedTabs": false,
+          "explorer.autoReveal": true,
+          "files.autoSave": "afterDelay"
+        }
+      }
+    },
+    "backend": {
+      "config": {
+        "frontendConnectionTimeout": -1,
+        "startupTimeout": -1,
+        "resolveSystemPlugins": false,
+        "configurationFolder": ".airone-ide"
+      }
+    },
+    "generator": {
+      "config": {
+        "preloadTemplate": "./resources/preload.html"
+      }
+    }
+  },
+  "dependencies": {
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/status-bar": "^6.0.0",
+    "@theia/core": "1.72.0-next.42",
+    "@theia/editor": "1.72.0-next.42",
+    "@theia/file-search": "1.72.0-next.42",
+    "@theia/filesystem": "1.72.0-next.42",
+    "@theia/getting-started": "1.72.0-next.42",
+    "@theia/markers": "1.72.0-next.42",
+    "@theia/messages": "1.72.0-next.42",
+    "@theia/monaco": "1.72.0-next.42",
+    "@theia/navigator": "1.72.0-next.42",
+    "@theia/output": "1.72.0-next.42",
+    "@theia/plugin-ext": "1.72.0-next.42",
+    "@theia/plugin-ext-vscode": "1.72.0-next.42",
+    "@theia/preferences": "1.72.0-next.42",
+    "@theia/process": "1.72.0-next.42",
+    "@theia/scm": "1.72.0-next.42",
+    "@theia/terminal": "1.72.0-next.42",
+    "@theia/userstorage": "1.72.0-next.42",
+    "@theia/variable-resolver": "1.72.0-next.42",
+    "@theia/vsx-registry": "1.72.0-next.42",
+    "@theia/workspace": "1.72.0-next.42",
+    "fs-extra": "^9.1.0",
+    "airone-ide-product-ext": "0.1.0",
+    "airone-ide-airo-ext": "0.1.0"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/cli": "^6.2.0",
+    "@theia/cli": "1.72.0-next.42",
+    "@theia/bundle-plugin": "1.72.0-next.42"
+  },
+  "scripts": {
+    "clean": "theia clean && rimraf node_modules",
+    "clean:dist": "rimraf dist",
+    "build": "theia build --app-target=\"browser\" --mode development",
+    "build:prod": "theia build --app-target=\"browser\"",
+    "start": "theia start --plugins=local-dir:../../plugins",
+    "start:debug": "yarn start --log-level=debug",
+    "watch": "theia build --watch --mode development",
+    "cap:init": "npx cap init AironeIDE com.airone.ide --web-dir lib/frontend",
+    "cap:add:android": "npx cap add android",
+    "cap:sync": "npx cap sync android",
+    "cap:open": "npx cap open android",
+    "android:build": "yarn build && yarn cap:sync && cd android && ./gradlew assembleRelease",
+    "android:debug": "yarn build && yarn cap:sync && cd android && ./gradlew assembleDebug"
+  }
+}

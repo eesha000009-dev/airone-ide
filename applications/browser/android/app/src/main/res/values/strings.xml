@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Airone IDE</string>
+    <string name="title_activity_main">Airone IDE</string>
+    <string name="package_name">com.airone.ide</string>
+    <string name="custom_url_scheme">com.airone.ide</string>
+</resources>

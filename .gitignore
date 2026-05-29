@@ -13,3 +13,12 @@ license-check-summary.txt*
 .theia-ide/chatSessions
 .prompts
 **/test-screenshots
+
+# Android build outputs
+applications/browser/android/app/build/
+applications/browser/android/.gradle/
+applications/browser/lib/
+
+# Keystore (should be stored as GitHub secret, not in repo)
+# Uncomment the line below for production:
+# applications/browser/android-signing/
