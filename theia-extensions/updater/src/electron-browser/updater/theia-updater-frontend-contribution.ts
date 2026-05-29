@@ -48,6 +48,27 @@ export namespace TheiaUpdaterMenu {
     export const MENU_PATH: MenuPath = [...CommonMenus.FILE_SETTINGS_SUBMENU, '3_settings_submenu_update'];
 }
 
+/**
+ * Global event bus for update status — allows other contributions (toolbar)
+ * to react to update readiness without polling or executing commands.
+ */
+@injectable()
+export class UpdateStatusNotifier {
+    protected readonly onUpdateReadyEmitter = new Emitter<UpdateInfo | undefined>();
+    readonly onUpdateReady = this.onUpdateReadyEmitter.event;
+
+    protected readonly onCheckingUpdateEmitter = new Emitter<void>();
+    readonly onCheckingUpdate = this.onCheckingUpdateEmitter.event;
+
+    notifyUpdateReady(updateInfo?: UpdateInfo): void {
+        this.onUpdateReadyEmitter.fire(updateInfo);
+    }
+
+    notifyCheckingUpdate(): void {
+        this.onCheckingUpdateEmitter.fire();
+    }
+}
+
 @injectable()
 export class TheiaUpdaterClientImpl implements TheiaUpdaterClient {
 
@@ -119,6 +140,9 @@ export class TheiaUpdaterFrontendContribution implements CommandContribution, Me
     @inject(OpenerService)
     protected readonly openerService: OpenerService;
 
+    @inject(UpdateStatusNotifier)
+    protected readonly updateNotifier: UpdateStatusNotifier;
+
     protected readyToUpdate = false;
 
     private progress: Progress | undefined;
@@ -142,6 +166,13 @@ export class TheiaUpdaterFrontendContribution implements CommandContribution, Me
         this.updaterClient.onReadyToInstall(async () => {
             this.readyToUpdate = true;
             this.menuUpdater.update();
+            // Notify the toolbar and other components that an update is ready
+            this.updateNotifier.notifyUpdateReady(this.currentUpdateInfo);
+            // Set a DOM signal so the toolbar (in a different extension) can detect it
+            document.body.setAttribute('data-airone-update-ready', 'true');
+            if (this.currentUpdateInfo?.version) {
+                document.body.setAttribute('data-airone-update-version', this.currentUpdateInfo.version);
+            }
             this.handleUpdatesReady();
         });
 
@@ -172,14 +203,21 @@ export class TheiaUpdaterFrontendContribution implements CommandContribution, Me
     registerCommands(registry: CommandRegistry): void {
         registry.registerCommand(TheiaUpdaterCommands.CHECK_FOR_UPDATES, {
             execute: async () => {
+                this.updateNotifier.notifyCheckingUpdate();
                 this.updater.checkForUpdates();
             },
             isEnabled: () => !this.readyToUpdate,
             isVisible: () => !this.readyToUpdate
         });
         registry.registerCommand(TheiaUpdaterCommands.RESTART_TO_UPDATE, {
-            execute: () => this.updater.onRestartToUpdateRequested(),
-            isEnabled: () => this.readyToUpdate,
+            execute: () => {
+                if (this.readyToUpdate) {
+                    this.updater.onRestartToUpdateRequested();
+                } else {
+                    this.messageService.info('No update is ready to install. The app will check for updates automatically.');
+                }
+            },
+            isEnabled: () => true,
             isVisible: () => this.readyToUpdate
         });
     }

@@ -8,7 +8,7 @@
  ********************************************************************************/
 
 import { CommandContribution, MenuContribution } from '@theia/core/lib/common';
-import { ElectronMenuUpdater, TheiaUpdaterClientImpl, TheiaUpdaterFrontendContribution } from './updater/theia-updater-frontend-contribution';
+import { ElectronMenuUpdater, TheiaUpdaterClientImpl, TheiaUpdaterFrontendContribution, UpdateStatusNotifier } from './updater/theia-updater-frontend-contribution';
 import { TheiaUpdater, TheiaUpdaterClient, TheiaUpdaterPath } from '../common/updater/theia-updater';
 import { ContainerModule } from '@theia/core/shared/inversify';
 import { ElectronIpcConnectionProvider } from '@theia/core/lib/electron-browser/messaging/electron-ipc-connection-source';
@@ -23,6 +23,7 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
         const client = context.container.get(TheiaUpdaterClientImpl);
         return ElectronIpcConnectionProvider.createProxy(context.container, TheiaUpdaterPath, client);
     }).inSingletonScope();
+    bind(UpdateStatusNotifier).toSelf().inSingletonScope();
     bind(TheiaUpdaterFrontendContribution).toSelf().inSingletonScope();
     bind(MenuContribution).toService(TheiaUpdaterFrontendContribution);
     bind(CommandContribution).toService(TheiaUpdaterFrontendContribution);

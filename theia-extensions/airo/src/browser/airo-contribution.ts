@@ -13,6 +13,7 @@ import {
     MenuContribution, MenuModelRegistry, MenuPath
 } from '@theia/core/lib/common';
 import { KeybindingContribution, KeybindingRegistry } from '@theia/core/lib/browser/keybinding';
+import { ApplicationShell } from '@theia/core/lib/browser/shell';
 import { EditorManager } from '@theia/editor/lib/browser';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { OpenerService } from '@theia/core/lib/browser/opener-service';
@@ -451,17 +452,18 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         }
     }
 
+    @inject(ApplicationShell) protected readonly shell!: ApplicationShell;
+
     protected async toggleSerialMonitor(): Promise<void> {
         try {
             const widget = await this.widgetManager.getOrCreateWidget(AiroSerialWidget.ID);
             if (widget.isAttached && widget.isVisible) {
                 widget.hide();
             } else {
-                const shell = (this.widgetManager as any).shell;
-                if (shell) {
-                    shell.addWidget(widget, { area: 'bottom' });
+                if (!widget.isAttached) {
+                    this.shell.addWidget(widget, { area: 'bottom' });
                 }
-                widget.show();
+                this.shell.revealWidget(widget.id);
             }
         } catch (err: any) {
             this.messageService.error('Failed to open Serial Monitor: ' + err.message);
@@ -553,9 +555,11 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         commands.registerCommand(AIRO_RESTART_UPDATE_COMMAND, {
             execute: async () => {
                 try {
+                    // The updater's restart command is always enabled now,
+                    // but checks internally if an update is actually ready
                     await commands.executeCommand('electron-theia:restart-to-update');
                 } catch {
-                    this.messageService.info('No update is ready to install yet.');
+                    this.messageService.info('No update is ready to install yet. The app checks for updates automatically.');
                 }
             },
             isEnabled: () => true

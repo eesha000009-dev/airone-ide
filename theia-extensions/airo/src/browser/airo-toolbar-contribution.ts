@@ -19,14 +19,8 @@ import { MessageService } from '@theia/core/lib/common/message-service';
  * Auto-update: Updates are checked and downloaded automatically. When ready,
  * a "Restart to Update" button appears in the toolbar.
  *
- * Layout:
- *   ┌──────────────────────────────────────────────────────────────────┐
- *   │ [Logo] File  Edit  View  Libraries  Tools          [Cmd Palette]│ ← Menu bar row
- *   ├──────────────────────────────────────────────────────────────────┤
- *   │ [▶ Compile] [✓ Verify] [↑ Upload]  [⎆ Serial] [↻ Restart]     │ ← Our toolbar row
- *   ├──────────────────────────────────────────────────────────────────┤
- *   │ Main content area                                                │
- *   └──────────────────────────────────────────────────────────────────┘
+ * The toolbar watches for the update-ready signal via a DOM-based approach:
+ * the updater extension adds a hidden DOM element when an update is ready.
  */
 @injectable()
 export class AiroToolbarContribution implements FrontendApplicationContribution {
@@ -83,8 +77,6 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
     }
 
     protected findTopPanel(): HTMLElement | null {
-        // Look for Theia's top panel area (the menu bar container)
-        // Theia 1.72 uses Lumino (lm- prefix) instead of PhosphorJS (p- prefix)
         const selectors = [
             '#theia-top-panel',
             '.theia-top-panel',
@@ -117,14 +109,12 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             return;
         }
 
-        // Strategy 1: Find the top panel container
         const topPanel = this.findTopPanel();
         if (topPanel) {
             this.insertToolbarAfter(topPanel);
             return;
         }
 
-        // Strategy 2: Find the shell and look for its first child
         const shell = document.getElementById('theia-shell') ||
             document.querySelector('.theia-shell') ||
             document.querySelector('[class*="theia-shell"]');
@@ -134,14 +124,12 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             return;
         }
 
-        // Strategy 3: Find any menubar and insert after its parent
         const menuBar = document.querySelector('.lm-MenuBar, .p-MenuBar, .theia-MenuBar');
         if (menuBar && menuBar.parentElement) {
             this.insertToolbarAfter(menuBar.parentElement);
             return;
         }
 
-        // Strategy 4: Find the main content panel and insert before it
         const mainPanel = document.getElementById('theia-main-content-panel') ||
             document.querySelector('.theia-main-content-panel') ||
             document.querySelector('[class*="main-content-panel"]');
@@ -195,7 +183,6 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
     }
 
     protected get restartIconSvg(): string {
-        // Restart/update icon
         return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>`;
     }
 
@@ -257,7 +244,7 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             'Restart to Update',
             '#c0392b',
             '#a93226',
-            () => this.executeCommand('electron-theia:restart-to-update')
+            () => this.executeCommand('airo.restartUpdate')
         );
         this.updateReadyBtn.style.display = 'none';
         rightGroup.appendChild(this.updateReadyBtn);
@@ -265,47 +252,60 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         toolbarRow.appendChild(leftGroup);
         toolbarRow.appendChild(rightGroup);
 
-        // Start watching for update readiness
-        this.watchForUpdates();
+        // Watch for update readiness via DOM signals
+        // The updater extension will add a hidden signal element when update is ready
+        this.watchForUpdateSignal();
 
         return toolbarRow;
     }
 
     /**
-     * Watch for update readiness by observing the restart-to-update command availability.
-     * When an update is downloaded, the updater contribution enables the restart command.
-     * We check periodically and show the "Restart to Update" button when available.
+     * Watch for update readiness by observing the DOM.
+     * The updater contribution adds a data-airone-update-ready attribute
+     * to the body element when an update is downloaded and ready.
+     * Also watches for the restart-to-update command becoming visible in menus.
      */
-    protected watchForUpdates(): void {
+    protected watchForUpdateSignal(): void {
+        // Check for the updater's signal element periodically
         const checkInterval = setInterval(() => {
             if (!this.updateReadyBtn) {
                 clearInterval(checkInterval);
                 return;
             }
-            // Check if the restart command is available by trying to execute a check
-            // The updater contribution sets readyToUpdate = true when download completes
-            // We use a simpler approach: listen for the command becoming visible
-            this.commandService.executeCommand('electron-theia:restart-to-update').then(() => {
-                // If the command executed, the update was ready and user chose to restart
-            }).catch(() => {
-                // Command not available yet — that's fine, keep checking
-            });
 
-            // Alternative: just check if the button should be visible
-            // We rely on the Theia updater's notification flow instead
-        }, 30000); // Check every 30 seconds
+            // Method 1: Check for data attribute on body set by the updater
+            if (document.body.hasAttribute('data-airone-update-ready')) {
+                this.showUpdateReadyButton();
+                clearInterval(checkInterval);
+                return;
+            }
 
-        // Also listen for DOM-based signals from the updater
-        const updateObserver = new MutationObserver(() => {
-            // The updater contribution adds "Restart to Update" to the menu
-            // When we see it in the menu, show our toolbar button too
+            // Method 2: Check if the restart-to-update menu item is visible
             const restartMenuItem = document.querySelector('[data-command="electron-theia:restart-to-update"]');
-            if (restartMenuItem && this.updateReadyBtn) {
-                this.updateReadyBtn.style.display = 'inline-flex';
+            if (restartMenuItem) {
+                const parentLi = restartMenuItem.closest('li');
+                if (parentLi && parentLi.offsetParent !== null) {
+                    this.showUpdateReadyButton();
+                    clearInterval(checkInterval);
+                    return;
+                }
+            }
+        }, 5000); // Check every 5 seconds (non-invasive)
+
+        // Also observe DOM mutations for the signal element
+        const signalObserver = new MutationObserver(mutations => {
+            for (const mutation of mutations) {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'data-airone-update-ready') {
+                    if (document.body.hasAttribute('data-airone-update-ready')) {
+                        this.showUpdateReadyButton();
+                        signalObserver.disconnect();
+                        return;
+                    }
+                }
             }
         });
 
-        updateObserver.observe(document.body, { childList: true, subtree: true });
+        signalObserver.observe(document.body, { attributes: true, attributeFilter: ['data-airone-update-ready'] });
     }
 
     /**
@@ -330,7 +330,6 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         btn.title = label;
         btn.className = 'airo-toolbar-btn';
 
-        // Create icon span
         const iconSpan = document.createElement('span');
         iconSpan.className = 'airo-toolbar-icon';
         iconSpan.innerHTML = iconSvg;
@@ -341,7 +340,6 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             line-height: 1;
         `;
 
-        // Create label span
         const labelSpan = document.createElement('span');
         labelSpan.className = 'airo-toolbar-label';
         labelSpan.textContent = label;
