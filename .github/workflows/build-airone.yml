@@ -70,7 +70,6 @@ jobs:
           else
             echo "Electron binary not found, downloading directly..."
             mkdir -p node_modules/electron/dist
-            ELECTRON_VERSION="v39.8.7"
           cat > /tmp/download_electron.sh << 'SCRIPT'
           #!/bin/bash
           set -e
@@ -367,22 +366,17 @@ jobs:
             echo "Configuring signed build..."
             mkdir -p android/app/keystores
             echo "${ANDROID_KEYSTORE_BASE64}" | base64 -d > android/app/keystores/release.keystore
-            echo "✓ Keystore decoded"
+            echo "Keystore decoded successfully"
           else
-            echo "⚠️ No ANDROID_KEYSTORE_BASE64 secret — building debug APK"
-            echo "To enable signed builds, add these GitHub Secrets:"
-            echo "  ANDROID_KEYSTORE_BASE64 - base64 encoded keystore file"
-            echo "  ANDROID_KEY_ALIAS - key alias (e.g. 'airone')"
-            echo "  ANDROID_KEY_PASSWORD - key password"
-            echo "  ANDROID_STORE_PASSWORD - store password"
+            echo "No ANDROID_KEYSTORE_BASE64 secret - building debug APK"
           fi
 
       - name: Patch build.gradle for signing
         working-directory: mobile
+        env:
+          HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         run: |
-          APP_BUILD_GRADLE="android/app/build.gradle"
-
-          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+          if [ "${HAS_KEYSTORE}" = "true" ]; then
             echo "Patching build.gradle with signing config..."
             python3 << 'PYEOF'
           import sys
@@ -416,7 +410,7 @@ jobs:
           with open(gradle_file, "w") as f:
               f.write(content)
 
-          print("✓ build.gradle patched with signing config")
+          print("build.gradle patched with signing config")
           PYEOF
           else
             echo "Skipping signing config (no keystore secret)"
@@ -430,7 +424,7 @@ jobs:
           if [ -f "${STRINGS_XML}" ]; then
             sed -i 's/<string name="app_name">[^<]*<\/string>/<string name="app_name">Airone IDE<\/string>/' "${STRINGS_XML}"
             sed -i 's/<string name="title_activity_main">[^<]*<\/string>/<string name="title_activity_main">Airone IDE<\/string>/' "${STRINGS_XML}"
-            echo "✓ App name updated"
+            echo "App name updated"
           fi
 
           # Add USB permissions for serial communication with ESP32
@@ -442,13 +436,13 @@ jobs:
             if ! grep -q "USB_PERMISSION" "${MANIFEST_XML}"; then
               sed -i '/<application/i\    <uses-permission android:name="android.permission.USB_PERMISSION" />' "${MANIFEST_XML}"
             fi
-            echo "✓ USB permissions added to manifest"
+            echo "USB permissions added to manifest"
           fi
 
           # Update colors for Airone branding
           COLORS_XML="android/app/src/main/res/values/colors.xml"
           mkdir -p android/app/src/main/res/values
-          cat > "${COLORS_XML}" << 'EOF'
+          cat > "${COLORS_XML}" << 'XMLEOF'
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <color name="colorPrimary">#0ea5e9</color>
@@ -456,48 +450,39 @@ jobs:
               <color name="colorAccent">#38bdf8</color>
               <color name="backgroundColor">#1e1e2e</color>
           </resources>
-          EOF
-          echo "✓ Colors updated to Airone branding"
+          XMLEOF
+          echo "Colors updated to Airone branding"
 
-      - name: Build Android APK (signed release)
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      - name: Build Android APK
         working-directory: mobile/android
         env:
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          echo "Building SIGNED release APK..."
-          ./gradlew assembleRelease
-
-      - name: Build Android APK (debug)
-        if: ${{ !secrets.ANDROID_KEYSTORE_BASE64 }}
-        working-directory: mobile/android
-        run: |
-          echo "Building DEBUG APK (unsigned)..."
-          ./gradlew assembleDebug
+          if [ -f "app/keystores/release.keystore" ]; then
+            echo "Building SIGNED release APK..."
+            ./gradlew assembleRelease
+          else
+            echo "Building DEBUG APK (no keystore)..."
+            ./gradlew assembleDebug
+          fi
 
       - name: Locate and prepare APK
         working-directory: mobile
         run: |
-          echo "=== Looking for APK files ==="
+          echo "Looking for APK files..."
           find android -name "*.apk" -type f 2>/dev/null
 
           APK_FILE=$(find android -name "*.apk" -type f | head -1)
           if [ -n "${APK_FILE}" ]; then
             mkdir -p dist
             cp "${APK_FILE}" "dist/AironeIDE.apk"
-            echo "✓ APK ready: dist/AironeIDE.apk"
+            echo "APK ready: dist/AironeIDE.apk"
             ls -lh dist/AironeIDE.apk
-
-            # Check if APK is signed
-            if command -v apksigner &> /dev/null; then
-              echo "=== APK Signing Info ==="
-              apksigner verify --print-certs "dist/AironeIDE.apk" 2>/dev/null || echo "APK verification info not available"
-            fi
           else
             echo "ERROR: No APK found!"
-            find android -name "*.apk" -type f 2>/dev/null || echo "No APK files found anywhere"
+            find android -name "*.apk" -type f 2>/dev/null || echo "No APK files found"
             exit 1
           fi
 
@@ -563,27 +548,25 @@ jobs:
         run: |
           echo "Checking for latest.yml (Windows auto-update)..."
           if [ -f "./release-artifacts/windows/latest.yml" ]; then
-            echo "✓ latest.yml found:"
+            echo "latest.yml found:"
             cat ./release-artifacts/windows/latest.yml
           else
-            echo "✗ latest.yml NOT found - auto-update will NOT work on Windows!"
+            echo "latest.yml NOT found - auto-update will NOT work on Windows!"
           fi
 
           echo ""
           echo "Checking for latest-linux.yml (Linux auto-update)..."
           if [ -f "./release-artifacts/linux/latest-linux.yml" ]; then
-            echo "✓ latest-linux.yml found:"
+            echo "latest-linux.yml found:"
             cat ./release-artifacts/linux/latest-linux.yml
           else
-            echo "✗ latest-linux.yml NOT found - auto-update will NOT work on Linux!"
+            echo "latest-linux.yml NOT found - auto-update will NOT work on Linux!"
           fi
 
       - name: Generate version tag
         id: version
         run: |
-          # Read version from package.json
           VERSION=$(node -p "require('./applications/electron/package.json').version")
-          # Create a timestamp-based build number for uniqueness
           BUILD_NUM=$(date +'%Y%m%d%H%M')
           TAG="v${VERSION}-build.${BUILD_NUM}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
