@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1e1e2e" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Airone IDE</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Toolbar -->
+    <header id="toolbar">
+      <div class="toolbar-left">
+        <div class="app-logo">
+          <svg width="28" height="28" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="50" cy="50" r="45" fill="#0ea5e9" opacity="0.9"/>
+            <path d="M35 35 L65 50 L35 65Z" fill="white"/>
+          </svg>
+          <span class="app-title">Airone IDE</span>
+        </div>
+      </div>
+      <div class="toolbar-center">
+        <button id="btn-verify" class="toolbar-btn" title="Verify / Compile">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>
+          <span>Verify</span>
+        </button>
+        <button id="btn-upload" class="toolbar-btn" title="Upload to Board">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span>Upload</span>
+        </button>
+        <button id="btn-serial" class="toolbar-btn" title="Serial Monitor">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span>Serial</span>
+        </button>
+      </div>
+      <div class="toolbar-right">
+        <button id="btn-files" class="toolbar-btn icon-only" title="Files">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+        </button>
+        <button id="btn-settings" class="toolbar-btn icon-only" title="Settings">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main id="main-content">
+      <!-- File Explorer Sidebar -->
+      <aside id="file-explorer" class="hidden">
+        <div class="explorer-header">
+          <span>Files</span>
+          <button id="btn-new-file" class="icon-btn" title="New File">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+          <button id="btn-close-explorer" class="icon-btn" title="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div id="file-list" class="file-list"></div>
+      </aside>
+
+      <!-- Editor Area -->
+      <div id="editor-container"></div>
+
+      <!-- Serial Monitor Panel -->
+      <div id="serial-panel" class="hidden">
+        <div class="serial-header">
+          <span>Serial Monitor</span>
+          <div class="serial-controls">
+            <select id="serial-baud" title="Baud Rate">
+              <option value="9600">9600</option>
+              <option value="115200" selected>115200</option>
+              <option value="57600">57600</option>
+              <option value="38400">38400</option>
+              <option value="19200">192200</option>
+            </select>
+            <button id="btn-serial-connect" class="serial-btn" title="Connect">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+              Connect
+            </button>
+            <button id="btn-serial-clear" class="serial-btn" title="Clear">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/></svg>
+              Clear
+            </button>
+            <button id="btn-close-serial" class="icon-btn" title="Close">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+        <div id="serial-output" class="serial-output"></div>
+        <div class="serial-input-row">
+          <input type="text" id="serial-input" placeholder="Send to serial..." />
+          <button id="btn-serial-send" class="serial-btn">Send</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- Status Bar -->
+    <footer id="status-bar">
+      <span id="status-board" class="status-item">No Board</span>
+      <span id="status-file" class="status-item">sketch.airo</span>
+      <span id="status-line" class="status-item">Ln 1, Col 1</span>
+      <span id="status-lang" class="status-item">Airo</span>
+    </footer>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Settings</h2>
+          <button id="btn-close-settings" class="icon-btn">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="setting-group">
+            <label for="setting-board">Board</label>
+            <select id="setting-board">
+              <option value="esp32">ESP32</option>
+              <option value="esp8266">ESP8266</option>
+              <option value="esp32-s2">ESP32-S2</option>
+              <option value="esp32-s3">ESP32-S3</option>
+              <option value="esp32-c3">ESP32-C3</option>
+            </select>
+          </div>
+          <div class="setting-group">
+            <label for="setting-font-size">Font Size</label>
+            <input type="number" id="setting-font-size" value="14" min="10" max="32" />
+          </div>
+          <div class="setting-group">
+            <label for="setting-theme">Theme</label>
+            <select id="setting-theme">
+              <option value="vs-dark" selected>Dark</option>
+              <option value="vs">Light</option>
+              <option value="hc-black">High Contrast</option>
+            </select>
+          </div>
+          <div class="setting-group">
+            <label for="setting-autosave">Auto Save</label>
+            <select id="setting-autosave">
+              <option value="afterDelay" selected>After Delay</option>
+              <option value="onFocusChange">On Focus Change</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- New File Modal -->
+    <div id="newfile-modal" class="modal hidden">
+      <div class="modal-content small">
+        <div class="modal-header">
+          <h2>New Sketch</h2>
+          <button id="btn-close-newfile" class="icon-btn">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="setting-group">
+            <label for="newfile-name">Sketch Name</label>
+            <input type="text" id="newfile-name" placeholder="my_sketch" />
+          </div>
+          <button id="btn-create-file" class="primary-btn">Create</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

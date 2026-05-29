@@ -218,7 +218,10 @@ export class TheiaUpdaterFrontendContribution implements CommandContribution, Me
                 }
             },
             isEnabled: () => true,
-            isVisible: () => this.readyToUpdate
+            // Both isEnabled and isVisible must return true for Theia's CommandRegistry
+            // to consider the handler "active" and allow execution via executeCommand().
+            // The execute() method handles the no-update-ready case gracefully.
+            isVisible: () => true
         });
     }
 
