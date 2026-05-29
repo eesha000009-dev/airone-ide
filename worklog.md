@@ -27,3 +27,28 @@ Stage Summary:
 - All changes pushed to master branch
 - CI/CD build #3 triggered and running (Build Airone IDE)
 - Key fixes: menu bar restored, toolbar on separate row, SVG icons, larger logos
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Fix TypeScript build errors causing CI/CD failure
+
+Work Log:
+- Checked GitHub Actions build status: run 26600914569 failed
+- Identified two TypeScript errors in theia-updater-frontend-contribution.ts:
+  1. TS6133: `PreferenceScope` imported but never used (line 21)
+  2. TS1064: `async handleNoUpdate(): void` — async method must return Promise<void> (line 218)
+- Fixed error 1: Removed `PreferenceScope` from import statement
+- Fixed error 2: Removed `async` keyword from `handleNoUpdate()` since body has no await
+- Reset local repo to match GitHub master (git reset --hard origin/master)
+- Committed fix and pushed to master
+- Monitored CI/CD build run 26613756882:
+  - Linux Build: SUCCESS
+  - Windows Build: SUCCESS
+  - Create GitHub Release: SUCCESS
+- New release created: v0.1.0-build.202605290218 with all artifacts
+
+Stage Summary:
+- Build failure fixed — both TS6133 and TS1064 errors resolved
+- CI/CD pipeline now builds successfully on both Linux and Windows
+- Release v0.1.0-build.202605290218 created with 6 assets (AppImage, deb, exe, blockmap, latest.yml, latest-linux.yml)
