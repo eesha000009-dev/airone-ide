@@ -52,3 +52,53 @@ Stage Summary:
 - Build failure fixed — both TS6133 and TS1064 errors resolved
 - CI/CD pipeline now builds successfully on both Linux and Windows
 - Release v0.1.0-build.202605290218 created with 6 assets (AppImage, deb, exe, blockmap, latest.yml, latest-linux.yml)
+
+---
+Task ID: 3
+Agent: Main Agent
+Task: Fix updater command error, serial monitor, and icon/logo sizing
+
+Work Log:
+- Analyzed user-uploaded screenshots showing issues:
+  1. "Restart to Update" command error: no active handlers
+  2. Serial Monitor not functional
+  3. App icon too small (logo fills only 34% of square icon height)
+  4. NSIS wizard logos too small (sidebar: 11% height, header: 39% height)
+- Fixed "Restart to Update" command error:
+  - Root cause: RESTART_TO_UPDATE had isEnabled: () => this.readyToUpdate
+    which was false when no update downloaded, causing "no active handlers"
+  - Changed isEnabled to always return true, with internal check
+  - Removed dangerous watchForUpdates() that tried to EXECUTE restart
+    command every 30 seconds (would have restarted the app!)
+  - Toolbar now uses DOM signal (data-airone-update-ready attribute)
+    instead of broken cross-extension import
+  - Added UpdateStatusNotifier for same-extension event communication
+  - Updater sets document.body attribute when update is ready
+- Fixed Serial Monitor:
+  - Used ApplicationShell.revealWidget() instead of manual shell access
+  - Check isAttached before adding widget to bottom panel
+  - Backend serial service now checks serialport availability at startup
+  - Added autoOpen: false with explicit open() and 5s timeout
+  - Better error logging and graceful degradation
+- Regenerated all icon files with maximized logo sizing:
+  - Square PNGs (16-512px): logo fills 97% of width
+  - ICO file: all 7 sizes (16,24,32,48,64,128,256) with white backgrounds
+  - NSIS sidebar BMP (164x314): logo fills 95% of width, centered vertically
+  - NSIS header BMP (150x57): logo fills 90% of width, centered vertically
+  - All BMP files are 24-bit RGB, all PNGs have white backgrounds
+- Fixed ICO file generation:
+  - First attempt produced 255-byte ICO with only 16x16 image
+  - electron-builder failed with "must be at least 256x256"
+  - Regenerated properly using manual ICO format with PNG-compressed entries
+  - Final ICO: 12,981 bytes with all 7 sizes including 256x256
+- Build results:
+  - Run 26615311949: Linux SUCCESS, Windows FAILED (ICO too small)
+  - Run 26615671026: Linux SUCCESS, Windows SUCCESS, Release SUCCESS
+  - Release v0.1.0-build.202605290323 created with all 6 assets
+
+Stage Summary:
+- All reported issues fixed and build passing
+- "Restart to Update" now works without "no active handlers" error
+- Serial Monitor uses proper ApplicationShell API
+- All icons regenerated with maximized logo sizing
+- Release v0.1.0-build.202605290323 available on GitHub
