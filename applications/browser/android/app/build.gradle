@@ -7,8 +7,8 @@ android {
         applicationId "com.airone.ide"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
-        versionName "0.2.0"
+        versionCode 3
+        versionName "0.3.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -19,7 +19,6 @@ android {
     signingConfigs {
         release {
             // Signing config reads from environment variables (set by CI) or local keystore
-            // CI sets: ANDROID_STORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
             storeFile file('../../android-signing/airone-ide-release.keystore')
             storePassword System.getenv("ANDROID_STORE_PASSWORD") ?: 'airone2024'
             keyAlias System.getenv("ANDROID_KEY_ALIAS") ?: 'airone-ide'
@@ -33,7 +32,6 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
         debug {
-            // Debug builds don't need signing config
             debuggable true
         }
     }
@@ -71,8 +69,7 @@ try {
 // ========================================
 // Task: Copy backend files to assets
 // Copies the Theia backend from ../../lib/backend/ to src/main/assets/backend/
-// These files are extracted by NodeJsBackendService at runtime and
-// run by the Node.js process when the ARM64 binary is available.
+// These files are extracted by NodeJsBackendService at runtime.
 // ========================================
 task copyBackendToAssets(type: Copy) {
     description = 'Copy Theia backend files to Android assets directory'
@@ -81,46 +78,39 @@ task copyBackendToAssets(type: Copy) {
     def backendSource = file('../../lib/backend')
     def backendDest = file('src/main/assets/backend')
 
-    // Only copy if the source directory exists
     if (backendSource.exists()) {
         from backendSource
         into backendDest
         exclude ['*.map', '.git', '*.md']
     } else {
         logger.warn("Backend source directory not found: ${backendSource.absolutePath}")
-        // Create a placeholder file so the assets directory structure exists
         doLast {
             backendDest.mkdirs()
             def placeholder = new File(backendDest, '.gitkeep')
             if (!placeholder.exists()) {
                 placeholder.text = '# Placeholder - backend files will be copied here during build\n'
-                logger.info("Created placeholder in ${backendDest.absolutePath}")
             }
         }
     }
 }
 
 // ========================================
-// Task: Prepare Node.js binary for Android ARM64
+// Task: Check Node.js binary for Android
 //
-// The Node.js binary needs to be compiled for Android ARM64 using the NDK.
-// See: scripts/build-nodejs-android.sh
+// The Node.js binary can be either:
+// 1. A standalone binary compiled from source with NDK (assets/nodejs/bin/node)
+// 2. A Termux binary with shared libraries (assets/nodejs/bin/node + assets/nodejs/lib/*.so)
 //
-// This task checks for the binary in the assets directory. If found,
-// it will be bundled in the APK and the NodeJsBackendService will
-// use it to run the Theia backend locally.
-//
-// If the binary is not found, the app works in "remote backend" mode
-// where users connect to a Theia backend on their network.
+// The download-termux-nodejs.sh script handles downloading from Termux.
+// The NodeJsBackendService handles setting LD_LIBRARY_PATH at runtime.
 // ========================================
-task prepareNodeJsBinary {
-    description = 'Check for and prepare Node.js binary for Android ARM64'
+task checkNodeJsBinary {
+    description = 'Check if Node.js binary for Android is available in assets'
     group = 'airone'
 
     def nodeDestDir = file('src/main/assets/nodejs/bin')
     def nodeBinary = new File(nodeDestDir, 'node')
-
-    outputs.file nodeBinary
+    def libDir = file('src/main/assets/nodejs/lib')
 
     doLast {
         nodeDestDir.mkdirs()
@@ -128,19 +118,28 @@ task prepareNodeJsBinary {
         if (nodeBinary.exists() && nodeBinary.length() > 0) {
             logger.lifecycle("✓ Node.js binary found: ${nodeBinary.absolutePath}")
             logger.lifecycle("  Size: ${nodeBinary.length()} bytes")
-            logger.lifecycle("  The Theia backend will run locally on the device")
+
+            // Check for shared libraries (Termux binary)
+            if (libDir.exists()) {
+                def soFiles = libDir.listFiles({ dir, name -> name.endsWith('.so') } as FilenameFilter)
+                if (soFiles != null && soFiles.length > 0) {
+                    logger.lifecycle("  ✓ Shared libraries found: ${soFiles.length} files")
+                    logger.lifecycle("    The Theia backend will run locally on the device (Termux binary)")
+                } else {
+                    logger.lifecycle("  No shared libraries - standalone binary (NDK compiled)")
+                }
+            } else {
+                logger.lifecycle("  No shared libraries - standalone binary (NDK compiled)")
+            }
         } else {
             logger.warn("============================================")
             logger.warn("Node.js binary for Android ARM64 not found.")
             logger.warn("The app will work in 'remote backend' mode.")
             logger.warn("")
-            logger.warn("To enable local backend mode:")
-            logger.warn("  1. Build Node.js: ./scripts/build-nodejs-android.sh")
-            logger.warn("  2. Place binary at: ${nodeBinary.absolutePath}")
-            logger.warn("  3. Rebuild the APK")
+            logger.warn("To enable local backend mode, run:")
+            logger.warn("  ./scripts/download-termux-nodejs.sh")
             logger.warn("============================================")
 
-            // Create a marker file so the directory structure exists
             def marker = new File(nodeDestDir, '.gitkeep')
             if (!marker.exists()) {
                 marker.text = '# Node.js binary for Android ARM64 should be placed here as "node"\n'
@@ -149,9 +148,7 @@ task prepareNodeJsBinary {
     }
 }
 
-// Run backend copy and node binary check before preBuild
+// Run tasks before preBuild
 preBuild.dependsOn copyBackendToAssets
-preBuild.dependsOn prepareNodeJsBinary
-
-// Ensure the copy task runs before the node check
-prepareNodeJsBinary.mustRunAfter copyBackendToAssets
+preBuild.dependsOn checkNodeJsBinary
+checkNodeJsBinary.mustRunAfter copyBackendToAssets

@@ -32,25 +32,24 @@ import java.util.concurrent.Executors;
 /**
  * Android Service that runs the Theia IDE Node.js backend.
  *
- * This service:
- * - Extracts the Node.js binary from APK assets to internal storage
+ * This service supports two types of Node.js binaries:
+ *
+ * 1. **Standalone binary** - Compiled from source with NDK, statically linked.
+ *    Placed at: assets/nodejs/bin/node
+ *    No shared library dependencies needed.
+ *
+ * 2. **Termux binary** - Downloaded from Termux package repository, dynamically linked.
+ *    Placed at: assets/nodejs/bin/node
+ *    Shared libraries at: assets/nodejs/lib/*.so
+ *    Requires LD_LIBRARY_PATH to find shared libraries.
+ *
+ * The service:
+ * - Extracts the Node.js binary and shared libraries from APK assets
  * - Makes the binary executable
  * - Starts the Node.js process running the Theia backend
  * - Monitors the process and restarts it if it crashes
  * - Broadcasts when the backend is ready (listening on port 3000)
  * - Runs as a foreground service with a notification
- *
- * IMPORTANT: The Node.js binary for Android ARM64 needs to be compiled
- * using the Android NDK and placed at assets/nodejs/bin/node.
- * Until the binary is bundled, the app operates in "remote backend" mode
- * where users can connect to a Theia backend running on their network.
- *
- * To compile Node.js for Android ARM64:
- * 1. Install Android NDK (r25+)
- * 2. Clone Node.js source: git clone https://github.com/nodejs/node
- * 3. Configure for Android: ./configure --dest-cpu=arm64 --dest-os=android
- * 4. Build: make -j$(nproc)
- * 5. Copy the resulting 'node' binary to assets/nodejs/bin/node
  */
 public class NodeJsBackendService extends Service {
 
@@ -72,13 +71,25 @@ public class NodeJsBackendService extends Service {
     // Configuration
     private static final int BACKEND_PORT = 3000;
     private static final String BACKEND_HOST = "0.0.0.0";
+
+    // Asset paths
     private static final String NODE_BINARY_ASSET_PATH = "nodejs/bin/node";
+    private static final String NODE_LIB_ASSET_PATH = "nodejs/lib";
     private static final String BACKEND_DIR_ASSET_PATH = "backend";
+
+    // Internal storage directory names
     private static final String NODE_BINARY_DIR = "nodejs";
     private static final String NODE_BINARY_NAME = "node";
+    private static final String NODE_LIB_DIR_NAME = "nodejs-lib";
     private static final String BACKEND_DIR_NAME = "backend";
+
+    // SharedPreferences
     private static final String PREFS_NAME = "airone_backend_prefs";
     private static final String PREF_KEY_PORT = "backend_port";
+    private static final String PREF_KEY_EXTRACT_VERSION = "extract_version";
+
+    // Current extraction version - increment if asset structure changes
+    private static final int CURRENT_EXTRACT_VERSION = 2;
 
     // Notification
     private static final int NOTIFICATION_ID = 1001;
@@ -156,41 +167,43 @@ public class NodeJsBackendService extends Service {
         executorService.execute(() -> {
             try {
                 // Step 1: Check if Node.js binary exists in assets
-                boolean nodeBinaryInAssets = checkAssetExists(NODE_BINARY_ASSET_PATH);
-                if (!nodeBinaryInAssets) {
-                    Log.w(TAG, "Node.js binary not found in assets. " +
-                        "The binary needs to be compiled for Android ARM64 using the NDK " +
-                        "and placed at assets/" + NODE_BINARY_ASSET_PATH);
+                if (!checkAssetExists(NODE_BINARY_ASSET_PATH)) {
+                    Log.w(TAG, "Node.js binary not found in assets/" + NODE_BINARY_ASSET_PATH);
                     broadcastFailed("Node.js binary not available. " +
-                        "The app is running in remote backend mode. " +
-                        "Connect to a Theia backend on your network.");
+                        "Run scripts/download-termux-nodejs.sh to download it.");
                     return;
                 }
 
-                // Step 2: Extract Node.js binary from assets
+                // Step 2: Check if backend files exist
+                if (!checkAssetDirExists(BACKEND_DIR_ASSET_PATH)) {
+                    Log.w(TAG, "Backend files not found in assets/" + BACKEND_DIR_ASSET_PATH);
+                    broadcastFailed("Backend files not available in assets.");
+                    return;
+                }
+
+                // Step 3: Extract Node.js binary
                 File nodeBinary = extractNodeBinary();
                 if (nodeBinary == null) {
                     broadcastFailed("Failed to extract Node.js binary from assets.");
                     return;
                 }
 
-                // Step 3: Check if backend files exist in assets
-                boolean backendInAssets = checkAssetDirExists(BACKEND_DIR_ASSET_PATH);
-                if (!backendInAssets) {
-                    Log.w(TAG, "Backend files not found in assets/" + BACKEND_DIR_ASSET_PATH);
-                    broadcastFailed("Backend files not available in assets.");
-                    return;
-                }
+                // Step 4: Extract shared libraries (for Termux binary)
+                File libDir = extractSharedLibraries();
 
-                // Step 4: Extract backend files from assets
+                // Step 5: Extract backend files
                 File backendDir = extractBackendFiles();
                 if (backendDir == null) {
                     broadcastFailed("Failed to extract backend files from assets.");
                     return;
                 }
 
-                // Step 5: Start the Node.js process
-                startNodeProcess(nodeBinary, backendDir);
+                // Step 6: Create temp directory
+                File tmpDir = new File(getCacheDir(), "nodejs-tmp");
+                tmpDir.mkdirs();
+
+                // Step 7: Start the Node.js process
+                startNodeProcess(nodeBinary, backendDir, libDir, tmpDir);
 
             } catch (Exception e) {
                 Log.e(TAG, "Failed to start backend", e);
@@ -218,7 +231,6 @@ public class NodeJsBackendService extends Service {
             nodeProcess = null;
         }
 
-        // Save port as 0 to indicate stopped
         saveBackendPort(0);
 
         Intent stoppedIntent = new Intent(ACTION_BACKEND_STOPPED);
@@ -237,10 +249,12 @@ public class NodeJsBackendService extends Service {
         return isRunning && nodeProcess != null && nodeProcess.isAlive();
     }
 
+    // =========================================================================
+    // Asset extraction
+    // =========================================================================
+
     /**
      * Check if an asset file exists.
-     * @param assetPath The path within the assets directory.
-     * @return true if the asset exists.
      */
     private boolean checkAssetExists(String assetPath) {
         try {
@@ -254,8 +268,6 @@ public class NodeJsBackendService extends Service {
 
     /**
      * Check if an asset directory exists and has contents.
-     * @param assetDirPath The directory path within the assets directory.
-     * @return true if the directory exists and has files.
      */
     private boolean checkAssetDirExists(String assetDirPath) {
         try {
@@ -267,34 +279,35 @@ public class NodeJsBackendService extends Service {
     }
 
     /**
+     * Check if we need to re-extract assets (e.g., after app update).
+     */
+    private boolean needsReExtraction() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        int extractedVersion = prefs.getInt(PREF_KEY_EXTRACT_VERSION, 0);
+        return extractedVersion < CURRENT_EXTRACT_VERSION;
+    }
+
+    /**
+     * Mark extraction as complete.
+     */
+    private void markExtractionComplete() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putInt(PREF_KEY_EXTRACT_VERSION, CURRENT_EXTRACT_VERSION).apply();
+    }
+
+    /**
      * Extract the Node.js binary from APK assets to internal storage.
-     * @return File pointing to the extracted binary, or null if not found.
+     * Works with both standalone (NDK-compiled) and Termux binaries.
      */
     private File extractNodeBinary() {
         try {
             File targetDir = new File(getFilesDir(), NODE_BINARY_DIR);
             File targetFile = new File(targetDir, NODE_BINARY_NAME);
 
-            // Check if already extracted and valid (same size as asset)
-            if (targetFile.exists() && targetFile.canExecute() && targetFile.length() > 0) {
-                // Verify the binary still matches the one in assets (in case of app update)
-                try {
-                    InputStream assetIs = getAssets().open(NODE_BINARY_ASSET_PATH);
-                    long assetSize = getAssetSize(assetIs);
-                    assetIs.close();
-
-                    if (targetFile.length() == assetSize) {
-                        Log.i(TAG, "Node binary already extracted and valid: " + targetFile.getAbsolutePath());
-                        return targetFile;
-                    } else {
-                        Log.i(TAG, "Node binary changed, re-extracting...");
-                        targetFile.delete();
-                    }
-                } catch (IOException e) {
-                    // Can't check size, assume it's still valid
-                    Log.i(TAG, "Node binary exists, using cached version: " + targetFile.getAbsolutePath());
-                    return targetFile;
-                }
+            // Check if already extracted and valid
+            if (targetFile.exists() && targetFile.canExecute() && targetFile.length() > 0 && !needsReExtraction()) {
+                Log.i(TAG, "Node binary already extracted: " + targetFile.getAbsolutePath());
+                return targetFile;
             }
 
             // Copy from assets
@@ -304,18 +317,16 @@ public class NodeJsBackendService extends Service {
 
                 // Make executable
                 if (!targetFile.setExecutable(true, false)) {
-                    Log.w(TAG, "Failed to set executable permission via File API, trying chmod");
                     Runtime.getRuntime().exec(new String[]{"chmod", "755", targetFile.getAbsolutePath()}).waitFor();
                 }
 
-                // Verify it's executable
                 if (!targetFile.canExecute()) {
                     Log.e(TAG, "Node binary is not executable after chmod!");
                     return null;
                 }
 
-                Log.i(TAG, "Node binary extracted to: " + targetFile.getAbsolutePath() +
-                    " (size: " + targetFile.length() + ", executable: " + targetFile.canExecute() + ")");
+                Log.i(TAG, "Node binary extracted: " + targetFile.getAbsolutePath() +
+                    " (size: " + targetFile.length() + ")");
                 return targetFile;
             }
         } catch (Exception e) {
@@ -325,43 +336,83 @@ public class NodeJsBackendService extends Service {
     }
 
     /**
-     * Get the size of an asset stream without reading all data.
+     * Extract shared libraries from APK assets to internal storage.
+     * Required for Termux Node.js binary which depends on dynamic libraries.
+     * Returns null if no shared libraries are found (standalone binary).
      */
-    private long getAssetSize(InputStream is) throws IOException {
-        byte[] buffer = new byte[8192];
-        long total = 0;
-        int bytesRead;
-        while ((bytesRead = is.read(buffer)) != -1) {
-            total += bytesRead;
+    private File extractSharedLibraries() {
+        try {
+            File targetDir = new File(getFilesDir(), NODE_LIB_DIR_NAME);
+
+            // Check if already extracted
+            if (targetDir.exists() && !needsReExtraction()) {
+                File[] libs = targetDir.listFiles((dir, name) -> name.endsWith(".so"));
+                if (libs != null && libs.length > 0) {
+                    Log.i(TAG, "Shared libraries already extracted: " + targetDir.getAbsolutePath() +
+                        " (" + libs.length + " files)");
+                    return targetDir;
+                }
+            }
+
+            // Check if shared libraries exist in assets
+            String[] assetLibs = getAssets().list(NODE_LIB_ASSET_PATH);
+            if (assetLibs == null || assetLibs.length == 0) {
+                Log.i(TAG, "No shared libraries in assets (standalone Node.js binary)");
+                return null;
+            }
+
+            // Extract all shared libraries
+            targetDir.mkdirs();
+            int extractedCount = 0;
+
+            for (String libName : assetLibs) {
+                String assetPath = NODE_LIB_ASSET_PATH + "/" + libName;
+                File targetFile = new File(targetDir, libName);
+
+                try (InputStream is = getAssets().open(assetPath)) {
+                    copyStream(is, targetFile);
+                    extractedCount++;
+                    Log.d(TAG, "Extracted: " + libName);
+                } catch (IOException e) {
+                    Log.w(TAG, "Failed to extract: " + libName, e);
+                }
+            }
+
+            if (extractedCount > 0) {
+                Log.i(TAG, "Extracted " + extractedCount + " shared libraries to: " + targetDir.getAbsolutePath());
+                return targetDir;
+            } else {
+                Log.w(TAG, "No shared libraries were extracted");
+                return null;
+            }
+        } catch (IOException e) {
+            Log.w(TAG, "No shared libraries found in assets (standalone binary)", e);
+            return null;
         }
-        return total;
     }
 
     /**
      * Extract backend files from APK assets to internal storage.
-     * @return File pointing to the backend directory, or null if not found.
      */
     private File extractBackendFiles() {
         try {
             File targetDir = new File(getFilesDir(), BACKEND_DIR_NAME);
 
-            // Check if already extracted (look for main.js)
+            // Check if already extracted
             File mainJs = new File(targetDir, "main.js");
-            if (mainJs.exists() && mainJs.length() > 0) {
-                Log.i(TAG, "Backend files already extracted to: " + targetDir.getAbsolutePath());
+            if (mainJs.exists() && mainJs.length() > 0 && !needsReExtraction()) {
+                Log.i(TAG, "Backend files already extracted: " + targetDir.getAbsolutePath());
                 return targetDir;
             }
 
             // Copy from assets
             String[] assetFiles = getAssets().list(BACKEND_DIR_ASSET_PATH);
             if (assetFiles == null || assetFiles.length == 0) {
-                Log.w(TAG, "No backend files found in assets/" + BACKEND_DIR_ASSET_PATH);
+                Log.w(TAG, "No backend files in assets/" + BACKEND_DIR_ASSET_PATH);
                 return null;
             }
 
-            // Recursively copy backend directory
             copyAssetDir(BACKEND_DIR_ASSET_PATH, targetDir);
-
             Log.i(TAG, "Backend files extracted to: " + targetDir.getAbsolutePath());
             return targetDir;
         } catch (Exception e) {
@@ -382,7 +433,6 @@ public class NodeJsBackendService extends Service {
             String assetFilePath = assetPath + "/" + file;
             File targetFile = new File(targetDir, file);
 
-            // Check if it's a directory
             String[] subFiles = getAssets().list(assetFilePath);
             if (subFiles != null && subFiles.length > 0) {
                 copyAssetDir(assetFilePath, targetFile);
@@ -394,10 +444,19 @@ public class NodeJsBackendService extends Service {
         }
     }
 
+    // =========================================================================
+    // Node.js process management
+    // =========================================================================
+
     /**
      * Start the Node.js process with the Theia backend.
+     *
+     * @param nodeBinary The extracted Node.js binary
+     * @param backendDir The extracted backend directory
+     * @param libDir The shared libraries directory (null for standalone binary)
+     * @param tmpDir The temp directory for Node.js
      */
-    private void startNodeProcess(File nodeBinary, File backendDir) {
+    private void startNodeProcess(File nodeBinary, File backendDir, File libDir, File tmpDir) {
         try {
             File mainJs = new File(backendDir, "main.js");
             if (!mainJs.exists()) {
@@ -417,17 +476,48 @@ public class NodeJsBackendService extends Service {
 
             pb.directory(backendDir);
             pb.redirectErrorStream(true);
+
+            // === Environment variables ===
+
+            // Production mode
             pb.environment().put("NODE_ENV", "production");
+
+            // Theia configuration
             pb.environment().put("THEIA_HOST", BACKEND_HOST);
             pb.environment().put("THEIA_PORT", String.valueOf(BACKEND_PORT));
 
-            // Set HOME for npm/node modules resolution
+            // Home directory (overrides Termux hardcoded path)
             pb.environment().put("HOME", getFilesDir().getAbsolutePath());
+
+            // Temp directory (overrides Termux hardcoded path)
+            pb.environment().put("TMPDIR", tmpDir.getAbsolutePath());
+            pb.environment().put("TEMP", tmpDir.getAbsolutePath());
+            pb.environment().put("TMP", tmpDir.getAbsolutePath());
+
+            // Node.js module resolution
             pb.environment().put("NODE_PATH", new File(backendDir, "node_modules").getAbsolutePath());
+
+            // === CRITICAL: LD_LIBRARY_PATH for Termux binary ===
+            // The Termux Node.js binary is dynamically linked against shared
+            // libraries (.so files) that we bundle in the APK. Without this,
+            // the binary won't find its dependencies and will fail to start.
+            if (libDir != null && libDir.exists()) {
+                String ldPath = libDir.getAbsolutePath();
+                // Preserve existing LD_LIBRARY_PATH if set
+                String existingLdPath = pb.environment().get("LD_LIBRARY_PATH");
+                if (existingLdPath != null && !existingLdPath.isEmpty()) {
+                    ldPath = ldPath + ":" + existingLdPath;
+                }
+                pb.environment().put("LD_LIBRARY_PATH", ldPath);
+                Log.i(TAG, "LD_LIBRARY_PATH set to: " + ldPath);
+            }
 
             // Android-specific environment
             pb.environment().put("ANDROID_ROOT", System.getenv("ANDROID_ROOT"));
             pb.environment().put("ANDROID_DATA", System.getenv("ANDROID_DATA"));
+
+            // Disable Node.js warnings that clutter the log
+            pb.environment().put("NODE_NO_WARNINGS", "1");
 
             Log.i(TAG, "Starting Node.js backend: " + nodePath + " " + mainPath +
                 " --port " + BACKEND_PORT + " --hostname " + BACKEND_HOST);
@@ -436,10 +526,13 @@ public class NodeJsBackendService extends Service {
             isRunning = true;
             restartAttempts = 0;
 
-            // Monitor process output in a separate thread
+            // Mark extraction as complete after successful start
+            markExtractionComplete();
+
+            // Monitor process output
             monitorProcessOutput();
 
-            // Start health check to detect when backend is ready
+            // Start health check
             startHealthCheck();
 
             updateNotification("Backend starting...");
@@ -474,7 +567,6 @@ public class NodeJsBackendService extends Service {
             }
 
             if (isRunning) {
-                // Process crashed unexpectedly - try to restart
                 isRunning = false;
                 isBackendReady = false;
                 stopHealthCheck();
@@ -490,9 +582,10 @@ public class NodeJsBackendService extends Service {
         });
     }
 
-    /**
-     * Start periodic health checks to detect when the backend is ready.
-     */
+    // =========================================================================
+    // Health check
+    // =========================================================================
+
     private void startHealthCheck() {
         healthCheckElapsed = 0;
 
@@ -522,13 +615,9 @@ public class NodeJsBackendService extends Service {
             }
         };
 
-        // First check after a short delay
         mainHandler.postDelayed(healthCheckRunnable, 2000);
     }
 
-    /**
-     * Stop the health check.
-     */
     private void stopHealthCheck() {
         if (healthCheckRunnable != null) {
             mainHandler.removeCallbacks(healthCheckRunnable);
@@ -536,10 +625,6 @@ public class NodeJsBackendService extends Service {
         }
     }
 
-    /**
-     * Check if the backend is responding on the configured port.
-     * @return true if backend is responding.
-     */
     private boolean checkBackendHealth() {
         try {
             URL url = new URL("http://localhost:" + BACKEND_PORT);
@@ -555,9 +640,10 @@ public class NodeJsBackendService extends Service {
         }
     }
 
-    /**
-     * Broadcast that the backend is ready.
-     */
+    // =========================================================================
+    // Broadcasts
+    // =========================================================================
+
     private void broadcastReady() {
         Log.i(TAG, "Backend is ready on port " + BACKEND_PORT);
         Intent intent = new Intent(ACTION_BACKEND_READY);
@@ -565,9 +651,6 @@ public class NodeJsBackendService extends Service {
         sendBroadcast(intent);
     }
 
-    /**
-     * Broadcast that the backend has failed.
-     */
     private void broadcastFailed(String errorMessage) {
         Log.e(TAG, "Backend failed: " + errorMessage);
         isRunning = false;
@@ -578,26 +661,24 @@ public class NodeJsBackendService extends Service {
         sendBroadcast(intent);
     }
 
-    /**
-     * Save the backend port to SharedPreferences.
-     */
+    // =========================================================================
+    // SharedPreferences
+    // =========================================================================
+
     private void saveBackendPort(int port) {
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         prefs.edit().putInt(PREF_KEY_PORT, port).apply();
     }
 
-    /**
-     * Get the saved backend port from SharedPreferences.
-     * @return The port number, or 0 if not saved.
-     */
     public static int getSavedBackendPort(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         return prefs.getInt(PREF_KEY_PORT, 0);
     }
 
-    /**
-     * Create the notification channel for the foreground service.
-     */
+    // =========================================================================
+    // Notification
+    // =========================================================================
+
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
@@ -615,9 +696,6 @@ public class NodeJsBackendService extends Service {
         }
     }
 
-    /**
-     * Create a notification for the foreground service.
-     */
     private Notification createNotification(String message) {
         Intent notificationIntent = new Intent(this, MainActivity.class);
         PendingIntent pendingIntent = PendingIntent.getActivity(
@@ -635,9 +713,6 @@ public class NodeJsBackendService extends Service {
             .build();
     }
 
-    /**
-     * Update the foreground service notification.
-     */
     private void updateNotification(String message) {
         try {
             NotificationManager nm = getSystemService(NotificationManager.class);
@@ -649,9 +724,10 @@ public class NodeJsBackendService extends Service {
         }
     }
 
-    /**
-     * Copy an InputStream to a File.
-     */
+    // =========================================================================
+    // Utility
+    // =========================================================================
+
     private static void copyStream(InputStream is, File target) throws IOException {
         try (OutputStream os = new FileOutputStream(target)) {
             byte[] buffer = new byte[8192];
