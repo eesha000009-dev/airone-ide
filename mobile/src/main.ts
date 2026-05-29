@@ -1,7 +1,7 @@
 /* ─── Airone IDE Mobile — Main Entry Point ─────────────────────────────── */
 
 import * as monaco from 'monaco-editor';
-import { registerAiroLanguage, DEFAULT_SKETCH } from './airo-language';
+import { registerAiroLanguage, DEFAULT_SKETCH } from './editor/airo-language';
 
 // ─── Global State ──────────────────────────────────────────────────────────
 
