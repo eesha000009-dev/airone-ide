@@ -3,108 +3,70 @@
 
 <head>
     <style>
-        html,
-        body {
-            background-color: #1e1e2e;
-            margin: 0;
-            padding: 0;
-        }
-
-        .theia-preload {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-image: none;
-        }
-
-        .theia-preload::after {
-            /* remove default Theia loading animation */
-            content: none;
-        }
-
-        .splash-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            width: 100vw;
-            background-color: #1e1e2e;
-        }
-
-        .splash-logo {
-            width: 50vw;
-            max-width: 300px;
-            height: auto;
-            animation: splash-pulse 2s ease-in-out infinite;
-        }
-
-        .splash-text {
-            margin-top: 24px;
-            color: #27ae60;
-            font-size: 20px;
-            font-family: sans-serif;
-            font-weight: bold;
-            letter-spacing: 1px;
-        }
-
-        .splash-subtext {
-            margin-top: 8px;
-            color: #888888;
-            font-size: 12px;
-            font-family: sans-serif;
-        }
-
-        .splash-loading {
-            margin-top: 32px;
-            width: 40px;
-            height: 40px;
-            border: 3px solid #333;
-            border-top: 3px solid #27ae60;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes splash-pulse {
-            0% { opacity: 0.9; transform: scale(1.0); }
-            50% { opacity: 1.0; transform: scale(1.02); }
-            100% { opacity: 0.9; transform: scale(1.0); }
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
+        html, body { background-color: #1e1e2e; margin: 0; padding: 0; }
+        .theia-preload { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-image: none; display: flex; align-items: center; justify-content: center; }
+        .theia-preload::after { content: none; }
+        .backend-status { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+        .status-spinner { width: 24px; height: 24px; border: 2px solid #333; border-top: 2px solid #27ae60; border-radius: 50%; animation: spin 1s linear infinite; }
+        .status-text { color: #888; font-family: sans-serif; font-size: 12px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 
 <body>
     <div class="theia-preload">
-        <div class="splash-container">
-            <svg class="splash-logo" viewBox="0 0 677 369" xmlns="http://www.w3.org/2000/svg">
-                <g fill="#FFFFFF">
-                    <path d="M880.199,2.8 C1028.1,2.8 1147.9,122.6 1147.9,270.5 C1147.9,418.3 1028.1,538.2 880.2,538.2 L290.1,538.2 C269,538.2 251.9,521.1 251.9,500 C251.9,478.9 269,461.8 290.1,461.8 L427.6,461.8 C448.6,461.8 465.7,444.7 465.7,423.6 C465.7,402.5 448.6,385.4 427.6,385.4 L396.999,385.4 C375.9,385.4 358.8,368.3 358.8,347.2 C358.8,326.1 375.9,309 397,309 L488.703,309 C509.918,308.941 526.373,291.65 526.9,270.8 C526.9,249.7 509.8,232.6 488.7,232.6 L167.8,232.6 C146.7,232.6 129.6,215.5 129.6,194.4 C129.6,173.3 146.7,156.2 167.8,156.2 L404.604,156.2 C425.818,156.141 442.273,138.85 442.8,118 C442.8,96.9 425.7,79.8 404.6,79.8 L351.2,79.8 C330.1,79.8 313,62.7 313,41.6 C313,20.5 330.1,2.4 351.2,2.4 L880.199,2.8 z M837.4,92 L837.4,92 C755.2,92 688.7,158.6 688.7,240.7 L688.7,300.2 C688.7,382.4 755.2,448.9 837.4,448.9 C919.5,448.9 986.1,382.4 986.1,300.2 L986.1,240.7 C986.1,158.6 919.5,92 837.4,92 L837.4,92 z M888.2,232.6 C908,232.6 924.1,248.7 924.1,268.5 L924.1,273.1 C924.1,292.9 908,309 888.2,309 L776.6,309 C756.8,309 740.7,292.9 740.7,273.1 L740.7,268.5 C740.7,248.7 756.8,232.6 776.6,232.6 L888.2,232.6 z" transform="scale(0.5) translate(0, 0)"/>
-                    <path d="M170.1,461.8 C190,461.8 206,477.8 206,497.7 L206,502.3 C206,522.1 190,538.2 170.1,538.2 L38,538.2 C18.2,538.2 2.1,522.1 2.1,502.3 L2.1,497.7 C2.1,477.8 18.2,461.8 38,461.8 L170.1,461.8 z" transform="scale(0.5) translate(0, 0)"/>
-                    <path d="M231.3,3.4 C251.1,3.4 267.1,19.5 267.1,39.3 L267.1,44 C267.1,63.8 251.1,79.8 231.3,79.8 L83.8,79.8 C64,79.8 47.9,63.8 47.9,44 L47.9,39.3 C47.9,19.5 64,3.4 83.8,3.4 L231.3,3.4 z" transform="scale(0.5) translate(0, 0)"/>
-                    <path d="M277.1,309 C296.9,309 313,325.1 313,344.9 L313,349.5 C313,369.3 296.9,385.4 277.1,385.4 L196.1,385.4 C176.3,385.4 160.2,369.3 160.2,349.5 L160.2,344.9 C160.2,325.1 176.3,309 196.1,309 L277.1,309 z" transform="scale(0.5) translate(0, 0)"/>
-                </g>
-            </svg>
-            <div class="splash-text">Airone IDE</div>
-            <div class="splash-subtext">Robotics Programming Environment</div>
-            <div class="splash-loading"></div>
+        <div class="backend-status">
+            <div class="status-spinner"></div>
+            <div class="status-text">Starting backend...</div>
         </div>
+        <script>
+            // Check backend availability and show config if needed
+            (function() {
+                var checkInterval;
+                var attempts = 0;
+                var maxAttempts = 60; // 60 seconds
+                
+                function checkBackend() {
+                    fetch('http://localhost:3000', { method: 'HEAD', mode: 'no-cors' })
+                        .then(function() {
+                            // Backend is ready, Theia will connect automatically
+                            clearInterval(checkInterval);
+                            document.querySelector('.status-text').textContent = 'Connecting...';
+                        })
+                        .catch(function() {
+                            attempts++;
+                            if (attempts >= maxAttempts) {
+                                clearInterval(checkInterval);
+                                showBackendConfig();
+                            }
+                        });
+                }
+                
+                function showBackendConfig() {
+                    var statusDiv = document.querySelector('.backend-status');
+                    statusDiv.innerHTML = '<div style="color:#27ae60;font-family:sans-serif;font-size:16px;font-weight:bold;">Airone IDE</div>' +
+                        '<div style="color:#888;font-family:sans-serif;font-size:12px;margin-bottom:16px;">Local backend not available</div>' +
+                        '<div style="color:#aaa;font-family:sans-serif;font-size:11px;margin-bottom:8px;">Connect to a Theia backend on your network:</div>' +
+                        '<input id="backend-url" type="text" placeholder="http://192.168.1.100:3000" ' +
+                        'style="width:250px;padding:8px;border:1px solid #444;background:#2a2a3a;color:#fff;border-radius:4px;font-size:14px;" />' +
+                        '<button onclick="connectToBackend()" ' +
+                        'style="padding:8px 24px;background:#27ae60;color:#fff;border:none;border-radius:4px;font-size:14px;cursor:pointer;margin-top:8px;">Connect</button>';
+                }
+                
+                window.connectToBackend = function() {
+                    var url = document.getElementById('backend-url').value.trim();
+                    if (url) {
+                        window.location.href = url;
+                    }
+                };
+                
+                // Start checking after 3 seconds (give backend time to start)
+                setTimeout(function() {
+                    checkInterval = setInterval(checkBackend, 1000);
+                }, 3000);
+            })();
+        </script>
     </div>
-
-    <script>
-        if (document.head) {
-            let link = document.createElement('link');
-            link.rel = 'icon';
-            link.href = '/favicon.ico';
-            document.head.appendChild(link);
-        }
-    </script>
 </body>
 
 </html>

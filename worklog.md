@@ -174,3 +174,71 @@ Stage Summary:
 - Background colors unified (#1e1e2e dark theme)
 - CI/CD build fully successful on all platforms
 - Signed Android APK available in GitHub release
+
+---
+Task ID: 1
+Agent: Android Backend Agent
+Task: Implement Android Node.js backend infrastructure for Theia IDE app
+
+Work Log:
+- Analyzed the problem: Theia is a client-server IDE, but the Android Capacitor app only has the frontend (WebView). No backend is running, so the frontend hangs on the preload screen forever.
+- Read existing project structure and worklog to understand the codebase context.
+- Created NodeJsBackendService.java - Android foreground service that:
+  - Extracts Node.js binary from APK assets (assets/nodejs/bin/node) to internal storage
+  - Makes binary executable (chmod 755)
+  - Starts Node.js process running Theia backend (node main.js --port 3000 --hostname 0.0.0.0)
+  - Extracts backend files from assets/backend/ to internal storage recursively
+  - Monitors the process and restarts it if it crashes (up to 3 attempts)
+  - Performs HTTP health checks to detect when backend is ready on port 3000
+  - Broadcasts BACKEND_READY/BACKEND_FAILED/BACKEND_STOPPED intents
+  - Uses SharedPreferences to store backend port
+  - Runs as foreground service with notification
+  - Handles missing Node.js binary gracefully (logs warning, doesn't crash)
+- Modified MainActivity.java to:
+  - Install SplashScreen before super.onCreate() using SplashScreen API
+  - Keep native splash visible while waiting for backend (setKeepOnScreenCondition)
+  - Register BroadcastReceiver for backend status (BACKEND_READY, BACKEND_FAILED, BACKEND_STOPPED)
+  - Start NodeJsBackendService as foreground service in onCreate()
+  - Wait for backend to be ready (up to 30 seconds) with timeout
+  - Dismiss native splash when WebView starts loading (webViewLoaded flag)
+  - Load WebView even without local backend (fallback to remote backend)
+- Modified AndroidManifest.xml to:
+  - Add FOREGROUND_SERVICE permission
+  - Add ACCESS_NETWORK_STATE permission
+  - Add ACCESS_WIFI_STATE permission
+  - Declare NodeJsBackendService with foregroundServiceType="dataSync"
+- Modified capacitor.config.ts to:
+  - Change androidScheme from 'https' to 'http' (WebSocket uses ws:// not wss://)
+  - Remove launchAutoHide: false from SplashScreen config
+  - Set launchShowDuration: 3000 (show native splash for 3 seconds while backend starts)
+  - Set launchAutoHide: true
+  - Add allowNavigation: ['*'] to server config
+- Replaced preload.html content with minimal loading indicator:
+  - Dark background (#1e1e2e) with small spinner and "Starting backend..." text
+  - JavaScript that polls localhost:3000 every second after 3-second delay
+  - If backend responds: shows "Connecting..." text
+  - If backend doesn't respond after 60 seconds: shows "Connect to Backend" form
+  - Fallback UI allows entering a remote Theia backend URL
+- Modified index.html (frontend) with same minimal loading content as preload.html
+  - Kept <!DOCTYPE html>, <head>, <script src="./bundle.js"> parts
+  - Replaced splash screen content inside <div class="theia-preload"> tag
+- Modified Android assets index.html with same changes
+- Modified styles.xml to:
+  - Add status bar and navigation bar colors (#1e1e2e) to NoActionBar theme
+  - Update splash screen theme with animated icon and post-splash theme transition
+  - Ensure smooth transition from native splash to app content
+- Modified build.gradle to:
+  - Add copyBackendToAssets task (copies ../../lib/backend/ to src/main/assets/backend/)
+  - Add downloadNodeJsForAndroid task (placeholder infrastructure for Node.js ARM64 binary)
+  - Both tasks run before preBuild
+  - Gracefully handles missing source directories with warnings
+
+Stage Summary:
+- Complete Android backend infrastructure created for running Node.js Theia backend
+- App works in three modes:
+  1. Local backend (when Node.js binary + backend files are in assets) - full IDE
+  2. Remote backend (via "Connect to Backend" form) - connect to desktop Theia
+  3. Graceful fallback (spinner + connect form if no backend available)
+- Node.js binary not yet available - infrastructure ready for when it's added
+- Eliminated second splash screen - replaced with minimal spinner + backend check
+- All 9 files created/modified successfully

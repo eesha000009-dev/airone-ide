@@ -61,3 +61,89 @@ try {
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
 }
+
+// ========================================
+// Task: Copy backend files to assets
+// Copies the Theia backend from ../../lib/backend/ to src/main/assets/backend/
+// ========================================
+task copyBackendToAssets(type: Copy) {
+    description = 'Copy Theia backend files to Android assets directory'
+    group = 'airone'
+
+    def backendSource = file('../../lib/backend')
+    def backendDest = file('src/main/assets/backend')
+
+    // Only copy if the source directory exists
+    if (backendSource.exists()) {
+        from backendSource
+        into backendDest
+        exclude ['*.map', '.git', '*.md']
+    } else {
+        logger.warn("Backend source directory not found: ${backendSource.absolutePath}")
+        // Create a placeholder file so the assets directory structure exists
+        doLast {
+            backendDest.mkdirs()
+            def placeholder = new File(backendDest, '.gitkeep')
+            if (!placeholder.exists()) {
+                placeholder.text = '# Placeholder - backend files will be copied here during build\n'
+                logger.info("Created placeholder in ${backendDest.absolutePath}")
+            }
+        }
+    }
+}
+
+// ========================================
+// Task: Download Node.js for Android ARM64
+// Downloads a Node.js binary for Android ARM64 and places it in assets/nodejs/bin/
+// NOTE: The actual Node.js for Android binary is NOT yet available in the official
+// Node.js distribution. This task sets up the infrastructure. When the binary
+// becomes available (or is built from source), it should be placed at:
+//   assets/nodejs/bin/node
+// ========================================
+task downloadNodeJsForAndroid {
+    description = 'Download Node.js binary for Android ARM64 (placeholder infrastructure)'
+    group = 'airone'
+
+    def nodeDestDir = file('src/main/assets/nodejs/bin')
+    def nodeBinary = new File(nodeDestDir, 'node')
+    def nodeJsVersion = '20.11.1'
+
+    outputs.file nodeBinary
+
+    doLast {
+        nodeDestDir.mkdirs()
+
+        if (nodeBinary.exists() && nodeBinary.length() > 0) {
+            logger.lifecycle("Node.js binary already exists at: ${nodeBinary.absolutePath}")
+            return
+        }
+
+        // NOTE: Official Node.js does not provide Android binaries.
+        // The binary needs to be either:
+        // 1. Built from Node.js source for Android (using NDK)
+        // 2. Obtained from a third-party provider like Termux or node-on-android
+        //
+        // For now, we create a placeholder that the NodeJsBackendService will detect
+        // and gracefully handle (showing the "Connect to Backend" UI).
+
+        logger.warn("============================================")
+        logger.warn("Node.js binary for Android not available yet.")
+        logger.warn("The app will work in 'remote backend' mode.")
+        logger.warn("To enable local backend, place an Android ARM64")
+        logger.warn("Node.js binary at: ${nodeBinary.absolutePath}")
+        logger.warn("============================================")
+
+        // Create a marker file to indicate the directory is set up
+        def marker = new File(nodeDestDir, '.gitkeep')
+        if (!marker.exists()) {
+            marker.text = '# Node.js binary for Android ARM64 should be placed here as "node"\n'
+        }
+    }
+}
+
+// Run backend copy and node download before preBuild
+preBuild.dependsOn copyBackendToAssets
+preBuild.dependsOn downloadNodeJsForAndroid
+
+// Ensure the copy task runs before the download task
+downloadNodeJsForAndroid.mustRunAfter copyBackendToAssets

@@ -5,8 +5,9 @@ const config: CapacitorConfig = {
   appName: 'Airone IDE',
   webDir: 'lib/frontend',
   server: {
-    androidScheme: 'https',
-    cleartext: true
+    androidScheme: 'http',
+    cleartext: true,
+    allowNavigation: ['*']
   },
   android: {
     allowMixedContent: true,
@@ -18,8 +19,8 @@ const config: CapacitorConfig = {
       backgroundColor: '#1e1e2e'
     },
     SplashScreen: {
-      launchShowDuration: 0,
-      launchAutoHide: false,
+      launchShowDuration: 3000,
+      launchAutoHide: true,
       backgroundColor: '#1e1e2e',
       showSpinner: false,
       androidSplashResourceName: 'splash',

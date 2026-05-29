@@ -1,0 +1,247 @@
+name: Build Airone IDE
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  # Build the Electron desktop application
+  build-electron:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+          - os: ubuntu-latest
+            target: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install yarn
+        run: npm install -g yarn
+
+      - name: Get yarn cache directory
+        id: yarn-cache
+        run: echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Cache yarn dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.yarn-cache.outputs.dir }}
+          key: yarn-${{ matrix.os }}-${{ hashFiles('yarn.lock') }}
+          restore-keys: yarn-${{ matrix.os }}-
+
+      - name: Install dependencies
+        run: yarn --network-timeout 600000
+
+      - name: Build extensions
+        run: yarn build:extensions
+
+      - name: Build Electron application
+        run: yarn --cwd applications/electron build:prod
+
+      - name: Download plugins
+        run: yarn download:plugins
+
+      - name: Package Electron application
+        run: yarn --cwd applications/electron package:prod
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows artifacts
+        if: matrix.target == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: |
+            applications/electron/dist/*.exe
+            applications/electron/dist/*.blockmap
+            applications/electron/dist/latest.yml
+          retention-days: 5
+
+      - name: Upload Linux artifacts
+        if: matrix.target == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: |
+            applications/electron/dist/*.AppImage
+            applications/electron/dist/*.deb
+            applications/electron/dist/latest-linux.yml
+          retention-days: 5
+
+  # Build the Android APK
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install yarn
+        run: npm install -g yarn
+
+      - name: Get yarn cache directory
+        id: yarn-cache
+        run: echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache yarn dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.yarn-cache.outputs.dir }}
+          key: yarn-linux-${{ hashFiles('yarn.lock') }}
+          restore-keys: yarn-linux-
+
+      - name: Install dependencies
+        run: yarn --network-timeout 600000
+
+      - name: Build extensions
+        run: yarn build:extensions
+
+      - name: Build Browser application
+        run: yarn --cwd applications/browser build:prod
+
+      - name: Download plugins
+        run: yarn download:plugins
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses 2>/dev/null || true
+
+      - name: Sync Capacitor
+        run: |
+          cd applications/browser
+          npx cap sync android
+
+      - name: Copy backend files to assets
+        run: |
+          mkdir -p applications/browser/android/app/src/main/assets/backend
+          if [ -d "applications/browser/lib/backend" ]; then
+            cp -r applications/browser/lib/backend/* applications/browser/android/app/src/main/assets/backend/
+            echo "Backend files copied successfully"
+          else
+            echo "Backend directory not found, creating placeholder"
+            echo "# Backend files will be added here" > applications/browser/android/app/src/main/assets/backend/.gitkeep
+          fi
+
+      - name: Create nodejs assets directory
+        run: |
+          mkdir -p applications/browser/android/app/src/main/assets/nodejs/bin
+          echo "# Node.js binary for Android ARM64 should be placed here as 'node'" > applications/browser/android/app/src/main/assets/nodejs/bin/.gitkeep
+
+      - name: Decode keystore
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > applications/browser/android-signing/airone-ide-release.keystore
+
+      - name: Patch signing config
+        run: |
+          python3 -c "
+          import os
+          gradle_path = 'applications/browser/android/app/build.gradle'
+          with open(gradle_path, 'r') as f:
+              content = f.read()
+          # Update signing config with secrets
+          content = content.replace(\"storePassword 'airone2024'\", \"storePassword '\${{ secrets.ANDROID_KEYSTORE_PASSWORD }}'\")
+          content = content.replace(\"keyPassword 'airone2024'\", \"keyPassword '\${{ secrets.ANDROID_KEY_PASSWORD }}'\")
+          content = content.replace(\"keyAlias 'airone-ide'\", \"keyAlias '\${{ secrets.ANDROID_KEY_ALIAS }}'\")
+          with open(gradle_path, 'w') as f:
+              f.write(content)
+          "
+
+      - name: Build Android APK
+        run: |
+          cd applications/browser/android
+          chmod +x gradlew
+          ./gradlew assembleRelease
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build
+          path: applications/browser/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          retention-days: 5
+
+  # Create GitHub Release with all artifacts
+  create-release:
+    needs: [build-electron, build-android]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release-files
+          # Windows
+          find release-artifacts/windows-build -name "*.exe" -exec cp {} release-files/ \;
+          find release-artifacts/windows-build -name "*.blockmap" -exec cp {} release-files/ \;
+          # Linux
+          find release-artifacts/linux-build -name "*.AppImage" -exec cp {} release-files/ \;
+          find release-artifacts/linux-build -name "*.deb" -exec cp {} release-files/ \;
+          # Android
+          find release-artifacts/android-build -name "*.apk" -exec cp {} release-files/AironeIDE-Android-v0.1.0.apk \;
+          ls -la release-files/
+
+      - name: Generate release tag
+        id: tag
+        run: |
+          TIMESTAMP=$(date +%Y%m%d%H%M)
+          echo "tag=v0.1.0-build.${TIMESTAMP}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Airone IDE ${{ steps.tag.outputs.tag }}
+          draft: false
+          prerelease: true
+          files: release-files/*
+          body: |
+            ## Airone IDE - ${{ steps.tag.outputs.tag }}
+
+            ### Downloads
+            - **Windows**: `AironeIDESetup.exe`
+            - **Linux**: `AironeIDE.AppImage` or `AironeIDE.deb`
+            - **Android**: `AironeIDE-Android-v0.1.0.apk`
+
+            ### Android Notes
+            - The Android app requires a Theia backend to function fully
+            - On first launch, if no local backend is available, you'll see a "Connect to Backend" screen
+            - Enter the URL of a Theia backend running on your network (e.g., `http://192.168.1.100:3000`)
+            - To run a local Theia backend: `yarn --cwd applications/browser start`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
