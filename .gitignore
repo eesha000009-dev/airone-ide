@@ -19,6 +19,11 @@ applications/browser/android/app/build/
 applications/browser/android/.gradle/
 applications/browser/lib/
 
+# Node.js binary and shared libraries for Android (downloaded by scripts/download-termux-nodejs.sh)
+# These are ~90 MB and should NOT be committed to git
+applications/browser/android/app/src/main/assets/nodejs/bin/node
+applications/browser/android/app/src/main/assets/nodejs/lib/
+
 # Keystore (should be stored as GitHub secret, not in repo)
 # Uncomment the line below for production:
 # applications/browser/android-signing/

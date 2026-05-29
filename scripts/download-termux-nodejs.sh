@@ -58,14 +58,15 @@ TMP_DIR="/tmp/termux-nodejs-download"
 
 # Packages to download (Node.js LTS + all shared library dependencies)
 # These are the minimum required for Node.js to run on Android
+# Package names must match exactly what's in the Termux repository
 PACKAGES=(
-    "nodejs-lts"   # Node.js LTS
-    "libc++"       # C++ standard library (NDK)
+    "nodejs-lts"   # Node.js LTS (v24.x)
+    "libc++"       # C++ standard library (NDK runtime)
     "openssl"      # OpenSSL (for HTTPS/TLS)
     "libicu"       # Internationalization (required by Node.js)
-    "c-ares"       # DNS resolution
+    "c-ares"       # DNS resolution library
     "libsqlite"    # SQLite (used by Node.js)
-    "zlib"         # Compression
+    "zlib"         # Compression library
 )
 
 # ==============================================================================
@@ -96,7 +97,9 @@ declare -A PKG_FILES
 
 for pkg in "${PACKAGES[@]}"; do
     # Find the package in the index
-    PKG_BLOCK=$(awk "/^Package: ${pkg}$/,/^[[:space:]]*$/" "$PACKAGES_FILE")
+    # Escape special regex characters in package name (e.g., libc++ has ++)
+    PKG_ESCAPED=$(echo "$pkg" | sed 's/[+]/\\+/g')
+    PKG_BLOCK=$(awk "/^Package: ${PKG_ESCAPED}$/,/^[[:space:]]*$/" "$PACKAGES_FILE")
 
     if [ -z "$PKG_BLOCK" ]; then
         log_error "Package '${pkg}' not found in Termux repository!"
@@ -216,7 +219,8 @@ LIB_COUNT=0
 TOTAL_LIB_SIZE=0
 
 # Find and copy all .so files from the extracted packages
-for so_file in $(find "$EXTRACT_DIR" -path "*/${TERMUX_LIB_DIR}/*.so*" -type f 2>/dev/null); do
+# Exclude OpenSSL engine modules (capi.so, legacy.so, loader_attic.so) - not needed
+for so_file in $(find "$EXTRACT_DIR" -path "*/${TERMUX_LIB_DIR}/*.so*" -type f 2>/dev/null | grep -v -E '(capi\.so|legacy\.so|loader_attic\.so)'); do
     lib_name=$(basename "$so_file")
     cp "$so_file" "${NODEJS_LIB_DIR}/"
     lib_size=$(stat -c%s "$so_file" 2>/dev/null || echo 0)
@@ -288,7 +292,7 @@ log_info "=========================================="
 log_info "  Node.js for Android ARM64 Ready!"
 log_info "=========================================="
 echo ""
-log_info "Node.js version: $(PKG_VERSIONS[nodejs-lts])"
+log_info "Node.js version: ${PKG_VERSIONS[nodejs-lts]}"
 log_info "Binary: ${NODEJS_BIN_DIR}/node"
 log_info "Libraries: ${NODEJS_LIB_DIR}/ (${LIB_COUNT} files)"
 log_info "Total size: $(du -sh "$NODEJS_ASSETS_DIR" | cut -f1)"
