@@ -105,9 +105,9 @@ async def run_inference(robot_id, sensor_text):
     if len(numbers) < config["input_size"]:
         return None, f"Need {config['input_size']} sensors, got {len(numbers)}"
 
-    # Build input tensor
+    # Build input tensor: shape (batch=1, seq=1, features) for batch_first CfC
     inputs = [float(numbers[i]) for i in range(config["input_size"])]
-    input_tensor = torch.tensor([[[inputs]]], dtype=torch.float32)
+    input_tensor = torch.tensor([inputs], dtype=torch.float32).reshape(1, 1, -1)
 
     # Get or create hidden state
     if robot_id not in hidden_states:

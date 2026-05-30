@@ -150,6 +150,7 @@ async def deploy_brain(req: DeployRequest):
         "robot_name": req.robot_name,
         "model_id": req.model_id,
         "created": str(asyncio.get_event_loop().time()),
+        "deploy_url": "https://airone-brain-template.onrender.com",
         "status": "pending"
     }
     save_brains(brains)
@@ -168,7 +169,7 @@ async def deploy_brain(req: DeployRequest):
                 "ROBOT_NAME": req.robot_name,
                 "PORT": "10000"
             },
-            "repo": "your-github-repo-url"
+            "repo": "https://github.com/eesha000009-dev/airone-ide"
         }
     }
 
