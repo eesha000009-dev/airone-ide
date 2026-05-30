@@ -105,7 +105,10 @@ export class AiroCompilerService {
         // Note: Full transpilation to C++ requires Python + airo_compiler.
         return {
             success: true,
-            output: builtInResult.output + '\n\n⚠ Full compilation requires Python + airo_compiler module.\nInstall with: pip install airo-compiler\nSyntax check passed — code structure is valid.',
+            output: builtInResult.output +
+                '\n\n⚠ Full compilation requires Python + airo_compiler module.\n' +
+                'Install with: pip install airo-compiler\n' +
+                'Syntax check passed — code structure is valid.',
         };
     }
 
@@ -120,8 +123,8 @@ export class AiroCompilerService {
      * Attempt to compile using the Python-based airo_compiler.
      * Returns null if Python or the module is not available.
      */
-    protected async tryPythonCompile(request: CompileRequest): Promise<CompileResult | null> {
-        return new Promise((resolve) => {
+    protected async tryPythonCompile(request: CompileRequest): Promise<CompileResult | undefined> {
+        return new Promise(resolve => {
             const args = [
                 '-m', 'airo_compiler',
                 request.filePath,
@@ -161,8 +164,8 @@ export class AiroCompilerService {
 
             proc.on('error', (err: Error) => {
                 // Python not found or airo_compiler not installed
-                // This is expected — return null to indicate Python is not available
-                resolve(null);
+                // This is expected — return undefined to indicate Python is not available
+                resolve(undefined);
             });
 
             // 60 second timeout
@@ -191,8 +194,8 @@ export class AiroCompilerService {
         return this.getDefaultTemplate();
     }
 
-    protected async tryPythonTemplate(): Promise<string | null> {
-        return new Promise((resolve) => {
+    protected async tryPythonTemplate(): Promise<string | undefined> {
+        return new Promise(resolve => {
             const proc = spawn(this.pythonPath, ['-m', 'airo_compiler', '--template'], {
                 cwd: this.compilerDir,
                 env: { ...process.env, PYTHONPATH: this.compilerDir },
@@ -204,11 +207,11 @@ export class AiroCompilerService {
             });
 
             proc.on('close', () => {
-                resolve(stdout || null);
+                resolve(stdout || undefined);
             });
 
             proc.on('error', () => {
-                resolve(null);
+                resolve(undefined);
             });
         });
     }

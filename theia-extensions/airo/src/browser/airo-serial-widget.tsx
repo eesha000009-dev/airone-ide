@@ -181,7 +181,7 @@ export class AiroSerialWidget extends ReactWidget {
             if (success) {
                 this.lines.push(`> ${data}`);
             } else {
-                this.lines.push(`✗ Failed to send data.`);
+                this.lines.push('✗ Failed to send data.');
             }
         } catch (err: any) {
             this.lines.push(`✗ Send error: ${err.message}`);
@@ -236,7 +236,7 @@ export class AiroSerialWidget extends ReactWidget {
                 {/* Port Selector — populated from backend */}
                 <select
                     value={this.selectedPort}
-                    onChange={(e) => { this.selectedPort = e.target.value; this.update(); }}
+                    onChange={e => { this.selectedPort = e.target.value; this.update(); }}
                     disabled={this.connected}
                     style={{
                         background: 'var(--theia-input-background)',
@@ -262,7 +262,7 @@ export class AiroSerialWidget extends ReactWidget {
                 {/* Baud Rate Selector */}
                 <select
                     value={this.baudRate.toString()}
-                    onChange={(e) => { this.baudRate = parseInt(e.target.value); this.update(); }}
+                    onChange={e => { this.baudRate = parseInt(e.target.value); this.update(); }}
                     disabled={this.connected}
                     style={{
                         background: 'var(--theia-input-background)',
@@ -333,7 +333,7 @@ export class AiroSerialWidget extends ReactWidget {
 
             {/* Console Output */}
             <div
-                ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }}
+                ref={el => { if (el) {el.scrollTop = el.scrollHeight; } }}
                 style={{
                     flex: 1,
                     overflow: 'auto',
@@ -377,7 +377,7 @@ export class AiroSerialWidget extends ReactWidget {
                         fontFamily: 'monospace',
                         opacity: this.connected ? 1 : 0.5
                     }}
-                    onKeyDown={(e) => {
+                    onKeyDown={e => {
                         if (e.key === 'Enter' && this.connected) {
                             const input = e.currentTarget.value;
                             if (input.trim()) {

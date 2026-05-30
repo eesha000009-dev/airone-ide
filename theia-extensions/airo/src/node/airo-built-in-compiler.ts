@@ -32,11 +32,10 @@ export class AiroBuiltInCompiler {
     async verify(filePath: string): Promise<VerifyResult> {
         const errors: SyntaxError[] = [];
         let content: string;
-        let fileName: string;
+        const fileName: string = path.basename(filePath.startsWith('file://') ? this.fsPathFromUri(filePath) : filePath);
 
         // Read the file
         const fsPath = filePath.startsWith('file://') ? this.fsPathFromUri(filePath) : filePath;
-        fileName = path.basename(fsPath);
 
         if (!fs.existsSync(fsPath)) {
             return {
@@ -49,12 +48,13 @@ export class AiroBuiltInCompiler {
 
         try {
             content = fs.readFileSync(fsPath, { encoding: 'utf8' });
-        } catch (err: any) {
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
             return {
                 success: false,
                 output: '',
-                error: `Cannot read file: ${err.message}`,
-                errors: [{ line: 0, column: 0, message: `Cannot read file: ${err.message}`, severity: 'error' }]
+                error: `Cannot read file: ${message}`,
+                errors: [{ line: 0, column: 0, message: `Cannot read file: ${message}`, severity: 'error' }]
             };
         }
 

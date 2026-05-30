@@ -17,9 +17,27 @@ import { SerialPortInfo } from '../common/airo-protocol';
  * installed (e.g., in a browser-only environment), the service gracefully
  * degrades and reports no available ports.
  */
+
+interface SerialPortInstance {
+    isOpen: boolean;
+    open(callback: (err?: Error) => void): void;
+    close(callback: (err?: Error) => void): void;
+    write(data: string, callback: (err?: Error) => void): void;
+    pipe(parser: unknown): unknown;
+    on(event: string, callback: (data: Buffer | string) => void): void;
+}
+
+interface SerialPortListEntry {
+    path: string;
+    manufacturer?: string;
+    pnpId?: string;
+    vendorId?: string;
+    productId?: string;
+}
+
 @injectable()
 export class AiroSerialService {
-    private port: any = null;
+    private port: SerialPortInstance | undefined = undefined;
     private dataBuffer: string = '';
     private serialportAvailable = false;
 
@@ -43,15 +61,16 @@ export class AiroSerialService {
         try {
             const { SerialPort } = require('serialport');
             const ports = await SerialPort.list();
-            return ports.map((p: any) => ({
+            return ports.map((p: SerialPortListEntry) => ({
                 path: p.path,
                 manufacturer: p.manufacturer || undefined,
                 pnpId: p.pnpId || undefined,
                 vendorId: p.vendorId || undefined,
                 productId: p.productId || undefined,
             }));
-        } catch (err: any) {
-            console.error('[AiroSerialService] Failed to list serial ports:', err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error('[AiroSerialService] Failed to list serial ports:', message);
             return [];
         }
     }
@@ -90,11 +109,11 @@ export class AiroSerialService {
                 });
             }
 
-            return new Promise((resolve) => {
-                this.port.open((err: any) => {
+            return new Promise(resolve => {
+                this.port!.open((err?: Error) => {
                     if (err) {
                         console.error('[AiroSerialService] Failed to open port:', err.message);
-                        this.port = null;
+                        this.port = undefined;
                         resolve(false);
                     } else {
                         console.log(`[AiroSerialService] Connected to ${portPath} at ${baudRate} baud`);
@@ -107,32 +126,33 @@ export class AiroSerialService {
                     if (this.port && !this.port.isOpen) {
                         console.error('[AiroSerialService] Connection timeout');
                         try { this.port.close(); } catch { /* ignore */ }
-                        this.port = null;
+                        this.port = undefined;
                         resolve(false);
                     }
                 }, 5000);
             });
-        } catch (err: any) {
-            console.error('[AiroSerialService] Connect error:', err.message);
-            this.port = null;
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error('[AiroSerialService] Connect error:', message);
+            this.port = undefined;
             return false;
         }
     }
 
     async disconnect(): Promise<boolean> {
         if (this.port && this.port.isOpen) {
-            return new Promise((resolve) => {
-                this.port.close((err: any) => {
+            return new Promise(resolve => {
+                this.port!.close((err?: Error) => {
                     if (err) {
                         console.error('[AiroSerialService] Disconnect error:', err.message);
                     }
-                    this.port = null;
+                    this.port = undefined;
                     this.dataBuffer = '';
                     resolve(!err);
                 });
             });
         }
-        this.port = null;
+        this.port = undefined;
         this.dataBuffer = '';
         return true;
     }
@@ -154,8 +174,8 @@ export class AiroSerialService {
         if (!this.port || !this.port.isOpen) {
             return false;
         }
-        return new Promise((resolve) => {
-            this.port.write(data, (err: any) => {
+        return new Promise(resolve => {
+            this.port!.write(data, (err?: Error) => {
                 if (err) {
                     console.error('[AiroSerialService] Send error:', err.message);
                     resolve(false);
@@ -167,6 +187,6 @@ export class AiroSerialService {
     }
 
     isConnected(): boolean {
-        return this.port !== null && this.port.isOpen === true;
+        return this.port !== undefined && this.port !== null && this.port.isOpen === true;
     }
 }

@@ -64,8 +64,9 @@ export function renderExtendingCustomizing(windowService: WindowService): React.
                     text="OpenVSX online" url="https://open-vsx.org/" windowService={windowService} ></BrowserLink>.
         </div>
         <div>
-            Airone IDE supports custom .airo language extensions and robotics-specific tooling. Visit the <BrowserLink text="Airone IDE repository" url="https://github.com/eesha000009-dev/airone-ide"
-                windowService={windowService} ></BrowserLink> to learn more about building extensions for the Airone ecosystem.
+            Airone IDE supports custom .airo language extensions and robotics-specific tooling. Visit the
+                <BrowserLink text="Airone IDE repository" url="https://github.com/eesha000009-dev/airone-ide"
+                    windowService={windowService} ></BrowserLink> to learn more about building extensions for the Airone ecosystem.
         </div>
     </div>;
 }
@@ -148,7 +149,8 @@ export function renderDownloads(): React.ReactNode {
             after each launch automatically.
         </div>
         <div className='gs-action-container'>
-            Alternatively you can download the most recent version from the <a href="https://github.com/eesha000009-dev/airone-ide/releases" target='_blank' rel='noreferrer'>Airone IDE releases page</a>.
+            Alternatively you can download the most recent version from the
+                <a href="https://github.com/eesha000009-dev/airone-ide/releases" target='_blank' rel='noreferrer'>Airone IDE releases page</a>.
         </div>
     </div>;
 }

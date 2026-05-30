@@ -61,7 +61,7 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     /** Only these menu labels should be visible in the menu bar */
     static readonly ALLOWED_MENU_LABELS = new Set(['File', 'Edit', 'View', 'Libraries', 'Tools']);
 
-    private uiObserver: MutationObserver | null = null;
+    private uiObserver: MutationObserver | undefined = undefined;
     private hideAttempts = 0;
     private readonly MAX_HIDE_ATTEMPTS = 500;
 
@@ -496,7 +496,7 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
     dispose(): void {
         if (this.uiObserver) {
             this.uiObserver.disconnect();
-            this.uiObserver = null;
+            this.uiObserver = undefined;
         }
     }
 }

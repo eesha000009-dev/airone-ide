@@ -81,7 +81,7 @@ task copyBackendToAssets(type: Copy) {
     if (backendSource.exists()) {
         from backendSource
         into backendDest
-        exclude ['*.map', '.git', '*.md']
+        exclude '*.map', '.git', '*.md'
     } else {
         logger.warn("Backend source directory not found: ${backendSource.absolutePath}")
         doLast {

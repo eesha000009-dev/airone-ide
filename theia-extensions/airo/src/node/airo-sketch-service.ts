@@ -199,12 +199,13 @@ export class AiroSketchService implements AiroSketchClient {
 
             // Otherwise return the built-in result (Python may just not be installed)
             return result;
-        } catch (err: any) {
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
             return {
                 success: false,
                 output: '',
-                error: err.message,
-                errors: [{ line: 0, column: 0, message: err.message, severity: 'error' }]
+                error: message,
+                errors: [{ line: 0, column: 0, message, severity: 'error' }]
             };
         }
     }
