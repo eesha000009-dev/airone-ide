@@ -116,6 +116,12 @@ export const AIRO_MANAGE_LIBRARIES_COMMAND: Command = {
     category: 'Airone'
 };
 
+export const AIRO_SYNC_BACKBONE_COMMAND: Command = {
+    id: 'airo.syncToBackbone',
+    label: 'Sync to Backbone',
+    category: 'Airone'
+};
+
 /** Helper to convert a filesystem path to a proper file:// URI */
 function toFileUri(fsPath: string): URI {
     const normalized = fsPath.replace(/\\/g, '/');
@@ -488,6 +494,79 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         }
     }
 
+    /**
+     * Sync pin definitions to the AI Backbone.
+     * Sends the Pin defi block and full .airo source to the Backbone
+     * application via HTTP POST.
+     */
+    protected async syncToBackbone(): Promise<void> {
+        const uri = this.getActiveAiroUri();
+        if (!uri) {
+            this.messageService.error('No .airo file open. Open a .airo sketch first.');
+            return;
+        }
+
+        // Get the .airo source content from the active editor
+        let airoCode: string | undefined;
+        try {
+            const activeEditor = this.editorManager.activeEditor;
+            if (activeEditor) {
+                airoCode = activeEditor.editor.document.getText();
+            }
+        } catch { /* ignore */ }
+
+        if (!airoCode) {
+            this.messageService.error('Could not read .airo source for sync.');
+            return;
+        }
+
+        // Extract pin defi block
+        const pinDefiMatch = airoCode.match(/[Pp]in\s+defi\s*\{[\s\S]*?\}/);
+        if (!pinDefiMatch) {
+            this.messageService.warn('No Pin defi block found in .airo file.');
+            return;
+        }
+
+        // Ask for backbone URL
+        const backboneUrl = await this.quickInputService.input({
+            title: 'Sync to Airone Backbone',
+            prompt: 'Enter the AI Backbone URL',
+            placeHolder: 'http://localhost:8080',
+            value: 'http://localhost:8080'
+        });
+
+        if (!backboneUrl || backboneUrl.trim().length === 0) {
+            return;
+        }
+
+        const url = backboneUrl.trim().replace(/\/$/, '');
+
+        try {
+            const sketchName = uri.path.base.replace('.airo', '');
+            const response = await fetch(`${url}/api/pins/sync`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    robotName: sketchName,
+                    pinDefinitions: pinDefiMatch[0],
+                    source: airoCode
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            this.messageService.info('✓ Pin definitions synced to Airone Backbone.');
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.messageService.error(
+                `Failed to sync to Backbone: ${message}. ` +
+                'Make sure the Airone Backbone app is running.'
+            );
+        }
+    }
+
     protected async manageLibraries(): Promise<void> {
         const builtinLibs = [
             { label: 'WiFi', desc: 'WiFi connectivity for ESP32' },
@@ -637,6 +716,12 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             execute: () => this.manageLibraries(),
             isEnabled: () => true
         });
+
+        // Sync to Backbone command — sends pin definitions to AI Backbone
+        commands.registerCommand(AIRO_SYNC_BACKBONE_COMMAND, {
+            execute: () => this.syncToBackbone(),
+            isEnabled: () => true
+        });
     }
 
     // ─── Menu Registration ───────────────────────────────────────────────
@@ -720,6 +805,13 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             label: 'Restart to Update',
             order: 'e'
         });
+
+        // Sync to Backbone in Tools menu
+        menus.registerMenuAction(AIRONE_TOOLS_SERIAL, {
+            commandId: AIRO_SYNC_BACKBONE_COMMAND.id,
+            label: 'Sync to Backbone',
+            order: 'd'
+        });
     }
 
     // ─── Keybinding Registration ─────────────────────────────────────────
@@ -740,6 +832,10 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         keybindings.registerKeybinding({
             command: AIRO_SERIAL_MONITOR_COMMAND.id,
             keybinding: 'ctrl+shift+m'
+        });
+        keybindings.registerKeybinding({
+            command: AIRO_SYNC_BACKBONE_COMMAND.id,
+            keybinding: 'ctrl+shift+b'
         });
     }
 }

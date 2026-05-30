@@ -199,6 +199,10 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>`;
     }
 
+    protected get syncIconSvg(): string {
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>`;
+    }
+
     // ─── Toolbar Creation ─────────────────────────────────────────────────────
 
     protected createToolbarRow(): HTMLElement {
@@ -248,6 +252,16 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             '#555555',
             '#444444',
             () => this.executeCommand('airo.serialMonitor')
+        ));
+
+        // Sync to Backbone button — sends pin defs to AI brain
+        rightGroup.appendChild(this.createButton(
+            'airo-sync-backbone-btn',
+            this.syncIconSvg,
+            'Sync to Backbone',
+            '#8e44ad',
+            '#7d3c98',
+            () => this.executeCommand('airo.syncToBackbone')
         ));
 
         // Restart to Update button — hidden by default, shown when update is downloaded
