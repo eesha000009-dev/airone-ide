@@ -569,17 +569,35 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             isEnabled: () => true
         });
 
-        // Restart to Update command — delegates to the built-in updater
+        // Restart to Update command — checks for updates and offers to restart
         commands.registerCommand(AIRO_RESTART_UPDATE_COMMAND, {
             execute: async () => {
                 try {
-                    // Directly call the updater's restart-to-update command.
-                    // The updater's own handler checks if an update is ready and
-                    // shows an appropriate dialog (check for updates / download from GitHub)
-                    // instead of just saying "no update ready."
-                    await commands.executeCommand('electron-theia:restart-to-update');
+                    // Check if an update has already been downloaded (data attribute set by updater)
+                    const updateReady = document.body.hasAttribute('data-airone-update-ready');
+                    if (updateReady) {
+                        // Update is ready — delegate to the built-in restart command
+                        await commands.executeCommand('electron-theia:restart-to-update');
+                    } else {
+                        // No update downloaded yet — check for updates first
+                        const checkAnswer = await this.quickInputService.pick([
+                            { label: 'Check for Updates', description: 'Check GitHub for the latest version' },
+                            { label: 'Download from GitHub', description: 'Open the releases page in your browser' },
+                        ], {
+                            placeHolder: 'No update is ready to install. What would you like to do?'
+                        });
+
+                        if (checkAnswer?.label === 'Check for Updates') {
+                            try {
+                                await commands.executeCommand('electron-theia:check-for-updates');
+                            } catch {
+                                this.messageService.info('Airone IDE — Checking for updates...');
+                            }
+                        } else if (checkAnswer?.label === 'Download from GitHub') {
+                            window.open('https://github.com/eesha000009-dev/airone-ide/releases', '_blank');
+                        }
+                    }
                 } catch (err: unknown) {
-                    // Only show our fallback if the updater command itself throws
                     const message = err instanceof Error ? err.message : String(err);
                     this.messageService.info(
                         'Could not check for updates. ' +

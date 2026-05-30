@@ -19,7 +19,21 @@
 
 html, body,
 #theia-app-shell,
-.theia-ApplicationShell {
+.theia-ApplicationShell,
+.lm-Widget,
+.p-Widget,
+.lm-BoxPanel,
+.p-BoxPanel,
+.lm-DockPanel,
+.p-DockPanel,
+.lm-SplitPanel,
+.p-SplitPanel,
+#theia-main-content-panel,
+.theia-main-content-panel,
+#theia-bottom-panel,
+.theia-bottom-panel,
+.theia-editor-area,
+.theia-centerview {
     background-color: #ffffff !important;
 }
 
@@ -28,10 +42,10 @@ html, body,
     background-position: center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 76px;
-    height: 76px;
-    min-width: 76px;
-    min-height: 76px;
+    width: 100px;
+    height: 100px;
+    min-width: 100px;
+    min-height: 100px;
 }
 
 body[data-theia-branding="next"] {
@@ -156,12 +170,12 @@ div[data-area="left"] {
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 .theia-icon {
-    width: 76px !important;
-    height: 76px !important;
-    min-width: 76px !important;
-    min-height: 76px !important;
-    background-size: 70px 70px !important;
-    padding: 3px !important;
+    width: 100px !important;
+    height: 100px !important;
+    min-width: 100px !important;
+    min-height: 100px !important;
+    background-size: 92px 92px !important;
+    padding: 4px !important;
 }
 
 /* ─── Hide theia folder in navigator ──────────────────────────────────────── */

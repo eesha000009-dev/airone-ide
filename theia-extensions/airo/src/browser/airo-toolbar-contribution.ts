@@ -476,6 +476,14 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
                 mainContentPanel.style.top = `${actualHeight}px`;
             }
 
+            if (bottomPanel) {
+                // Also ensure the bottom panel is positioned correctly
+                // The bottom panel should be below the main content panel
+                const shellHeight = document.getElementById('theia-app-shell')?.offsetHeight || window.innerHeight;
+                const bottomHeight = bottomPanel.offsetHeight || 0;
+                bottomPanel.style.top = `${shellHeight - bottomHeight}px`;
+            }
+
             // Trigger Theia's layout engine to recalculate
             try {
                 // Dispatch a resize event which causes Theia's shell to recalculate layout
@@ -486,10 +494,13 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         // Adjust immediately
         adjustOnce();
 
-        // Adjust after a short delay (Theia may reset the layout after initial render)
+        // Adjust after multiple delays (Theia may reset the layout after initial render)
+        setTimeout(adjustOnce, 50);
         setTimeout(adjustOnce, 100);
+        setTimeout(adjustOnce, 250);
         setTimeout(adjustOnce, 500);
         setTimeout(adjustOnce, 1000);
+        setTimeout(adjustOnce, 2000);
 
         // Set up ResizeObserver on the top panel to continuously adjust
         const topPanel = this.findTopPanel();
@@ -521,6 +532,20 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
                 }
             });
             this.layoutMutationObserver.observe(mainContentPanel, {
+                attributes: true,
+                attributeFilter: ['style']
+            });
+        }
+
+        // Also observe the app shell for layout changes that may reset positions
+        const appShell = document.getElementById('theia-app-shell');
+        if (appShell) {
+            const shellObserver = new MutationObserver(() => {
+                adjustOnce();
+            });
+            shellObserver.observe(appShell, {
+                childList: true,
+                subtree: true,
                 attributes: true,
                 attributeFilter: ['style']
             });
