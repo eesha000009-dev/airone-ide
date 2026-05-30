@@ -161,11 +161,15 @@ div[data-area="left"] {
 
 /* ═══════════════════════════════════════════════════════════════════════════════
    ENSURE THE TOP PANEL AND MENU BAR CONTAINER ARE VISIBLE
-   ═══════════════════════════════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════════════════════════
+   The top panel is a flex column: menu bar on top, secondary toolbar below.
+   Theia's Lumino BoxPanel positions children absolutely, so the top panel's
+   height MUST be auto so it can grow to include the toolbar. */
 
 #theia-top-panel,
 .theia-top-panel {
     display: flex !important;
+    flex-direction: column !important;
     visibility: visible !important;
     position: relative !important;
     width: 100% !important;
@@ -188,18 +192,19 @@ div[data-area="left"] {
     flex-shrink: 0 !important;
 }
 
-/* ─── Secondary Toolbar Row (below menu bar) ──────────────────────────────── */
+/* ─── Secondary Toolbar Row (inside top panel, below menu bar) ───────────── */
 
 #airo-secondary-toolbar.airo-secondary-toolbar {
     display: flex !important;
     align-items: center !important;
     justify-content: space-between !important;
     width: 100% !important;
-    height: 44px !important;
-    min-height: 44px !important;
-    max-height: 44px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    max-height: 38px !important;
     background: var(--theia-editorWidget-background, #f3f3f3) !important;
     border-bottom: 1px solid var(--theia-border-color, #ccc) !important;
+    border-top: 1px solid var(--theia-border-color, #ccc) !important;
     padding: 0 8px !important;
     box-sizing: border-box !important;
     z-index: 10 !important;

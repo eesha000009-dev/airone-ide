@@ -9,10 +9,11 @@
    1. SECONDARY TOOLBAR ROW (Below the menu bar)
    ═══════════════════════════════════════════════════════════════════════════════ */
 
-/* Ensure the top panel container is visible */
+/* Ensure the top panel container is visible — flex column for menu bar + toolbar */
 #theia-top-panel,
 .theia-top-panel {
     display: flex !important;
+    flex-direction: column !important;
     visibility: visible !important;
     position: relative !important;
     width: 100% !important;
@@ -40,11 +41,12 @@
     align-items: center !important;
     justify-content: space-between !important;
     width: 100% !important;
-    height: 44px !important;
-    min-height: 44px !important;
-    max-height: 44px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    max-height: 38px !important;
     background: var(--theia-editorWidget-background, #f3f3f3) !important;
     border-bottom: 1px solid var(--theia-border-color, #ccc) !important;
+    border-top: 1px solid var(--theia-border-color, #ccc) !important;
     padding: 0 8px !important;
     box-sizing: border-box !important;
     z-index: 10 !important;
@@ -277,12 +279,12 @@ button[aria-label="Forward"],
 .p-MenuBar-logo,
 [class*="MenuBar-logo"],
 [class*="menubar-logo"] {
-    background-size: 44px 44px !important;
-    width: 48px !important;
-    height: 48px !important;
-    min-width: 48px !important;
-    min-height: 48px !important;
-    padding: 2px !important;
+    background-size: 58px 58px !important;
+    width: 64px !important;
+    height: 64px !important;
+    min-width: 64px !important;
+    min-height: 64px !important;
+    padding: 3px !important;
 }
 
 /* Getting started page logo - MUCH BIGGER */

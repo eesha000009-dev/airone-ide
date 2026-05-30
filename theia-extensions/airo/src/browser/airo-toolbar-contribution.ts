@@ -109,27 +109,18 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             return;
         }
 
+        // BEST APPROACH: Insert the toolbar INSIDE the top panel.
+        // Theia's shell uses Lumino BoxPanel which absolutely positions its children.
+        // If we insert the toolbar as a sibling, it won't be accounted for in the layout.
+        // By putting it inside the top panel, the top panel grows to include it,
+        // and Theia's layout engine automatically adjusts the main content area.
         const topPanel = this.findTopPanel();
         if (topPanel) {
-            this.insertToolbarAfter(topPanel);
+            this.insertToolbarInsideTopPanel(topPanel);
             return;
         }
 
-        const shell = document.getElementById('theia-shell') ||
-            document.querySelector('.theia-shell') ||
-            document.querySelector('[class*="theia-shell"]');
-
-        if (shell && shell.firstElementChild) {
-            this.insertToolbarAfter(shell.firstElementChild as HTMLElement);
-            return;
-        }
-
-        const menuBar = document.querySelector('.lm-MenuBar, .p-MenuBar, .theia-MenuBar');
-        if (menuBar && menuBar.parentElement) {
-            this.insertToolbarAfter(menuBar.parentElement);
-            return;
-        }
-
+        // Fallback: If we can't find the top panel, try inserting before main content
         const mainPanel = document.getElementById('theia-main-content-panel') ||
             document.querySelector('.theia-main-content-panel') ||
             document.querySelector('[class*="main-content-panel"]');
@@ -140,15 +131,24 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         }
     }
 
-    protected insertToolbarAfter(afterElement: HTMLElement): void {
+    /**
+     * Insert the toolbar INSIDE the top panel as its last child.
+     * This is the correct approach because Theia's Lumino BoxPanel
+     * absolutely positions its direct children (top-panel, main-content, etc.).
+     * Adding the toolbar INSIDE the top panel means the top panel's height
+     * naturally includes the toolbar, and the BoxPanel adjusts the main
+     * content area automatically.
+     */
+    protected insertToolbarInsideTopPanel(topPanel: HTMLElement): void {
         const toolbarRow = this.createToolbarRow();
-        if (afterElement.parentNode) {
-            if (afterElement.nextSibling) {
-                afterElement.parentNode.insertBefore(toolbarRow, afterElement.nextSibling);
-            } else {
-                afterElement.parentNode.appendChild(toolbarRow);
-            }
-        }
+
+        // Make the top panel a flex column so menu bar and toolbar stack vertically
+        topPanel.style.display = 'flex';
+        topPanel.style.flexDirection = 'column';
+
+        // Append toolbar as last child of top panel (below the menu bar)
+        topPanel.appendChild(toolbarRow);
+
         this.injected = true;
         this.removeNavigationArrows();
         this.cleanup();

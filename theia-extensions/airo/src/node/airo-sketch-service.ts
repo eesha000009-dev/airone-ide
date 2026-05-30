@@ -51,7 +51,18 @@ export class AiroSketchService implements AiroSketchClient {
 
     async newSketch(name: string): Promise<SketchInfo> {
         const workspace = await this.workspaceServer.getMostRecentlyUsedWorkspace();
-        const root = workspace ? fsPathFromUri(workspace) : process.cwd();
+        let root: string;
+        if (workspace) {
+            root = fsPathFromUri(workspace);
+        } else {
+            // No workspace open — use a user-writable directory
+            const homeDir = process.env.HOME || process.env.USERPROFILE || process.env.HOMEPATH || process.cwd();
+            const sketchesDir = path.join(homeDir, 'AironeProjects');
+            if (!fs.existsSync(sketchesDir)) {
+                fs.mkdirSync(sketchesDir, { recursive: true });
+            }
+            root = sketchesDir;
+        }
 
         const sketchDir = path.join(root, name);
         const mainFile = path.join(sketchDir, `${name}.airo`);
@@ -60,8 +71,11 @@ export class AiroSketchService implements AiroSketchClient {
             fs.mkdirSync(sketchDir, { recursive: true });
         }
 
-        const template = await this.compilerService.getTemplate();
-        fs.writeFileSync(mainFile, template, { encoding: 'utf8' });
+        // Only write template if the file doesn't already exist
+        if (!fs.existsSync(mainFile)) {
+            const template = await this.compilerService.getTemplate();
+            fs.writeFileSync(mainFile, template, { encoding: 'utf8' });
+        }
 
         return {
             name,
@@ -72,7 +86,17 @@ export class AiroSketchService implements AiroSketchClient {
 
     async newSketchFromExample(name: string, code: string): Promise<SketchInfo> {
         const workspace = await this.workspaceServer.getMostRecentlyUsedWorkspace();
-        const root = workspace ? fsPathFromUri(workspace) : process.cwd();
+        let root: string;
+        if (workspace) {
+            root = fsPathFromUri(workspace);
+        } else {
+            const homeDir = process.env.HOME || process.env.USERPROFILE || process.env.HOMEPATH || process.cwd();
+            const sketchesDir = path.join(homeDir, 'AironeProjects');
+            if (!fs.existsSync(sketchesDir)) {
+                fs.mkdirSync(sketchesDir, { recursive: true });
+            }
+            root = sketchesDir;
+        }
 
         const sketchDir = path.join(root, name);
         const mainFile = path.join(sketchDir, `${name}.airo`);
@@ -81,7 +105,9 @@ export class AiroSketchService implements AiroSketchClient {
             fs.mkdirSync(sketchDir, { recursive: true });
         }
 
-        fs.writeFileSync(mainFile, code, { encoding: 'utf8' });
+        if (!fs.existsSync(mainFile)) {
+            fs.writeFileSync(mainFile, code, { encoding: 'utf8' });
+        }
 
         return {
             name,

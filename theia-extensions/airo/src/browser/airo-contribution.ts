@@ -20,6 +20,7 @@ import { OpenerService } from '@theia/core/lib/browser/opener-service';
 import { URI } from '@theia/core/lib/common/uri';
 import { OutputChannelManager } from '@theia/output/lib/browser/output-channel';
 import { WidgetManager } from '@theia/core/lib/browser';
+import { CommandService } from '@theia/core/lib/common/command';
 import { QuickPickService } from '@theia/core/lib/common/quick-pick-service';
 import { SingleTextInputDialog } from '@theia/core/lib/browser/dialogs';
 import { AiroSerialWidget } from './airo-serial-widget';
@@ -136,6 +137,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     @inject(OutputChannelManager) protected readonly outputChannelManager!: OutputChannelManager;
     @inject(WidgetManager) protected readonly widgetManager!: WidgetManager;
     @inject(QuickPickService) protected readonly quickPickService!: QuickPickService;
+    @inject(CommandService) protected readonly commandService!: CommandService;
 
     @inject(AiroSketchService) protected readonly sketchService!: AiroSketchClient;
     @inject(AiroSerialService) protected readonly serialService!: AiroSerialClient;
@@ -355,15 +357,30 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             }
             const sketchName = name.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
 
+            this.messageService.info(`Creating sketch "${sketchName}"...`);
+
             const sketch = await this.sketchService.newSketch(sketchName);
-            this.messageService.info(`Created sketch: ${sketch.name}`);
 
             // Convert filesystem path to proper file:// URI
             const fileUri = toFileUri(sketch.mainFile);
-            const opener = await this.openerService.getOpener(fileUri);
-            await opener.open(fileUri);
-        } catch (err: any) {
-            this.messageService.error('Failed to create sketch: ' + err.message);
+
+            // Open the newly created file
+            try {
+                const opener = await this.openerService.getOpener(fileUri);
+                await opener.open(fileUri);
+                this.messageService.info(`Created sketch: ${sketch.name}`);
+            } catch {
+                // If opener fails, try using the command service
+                try {
+                    await this.commandService.executeCommand('core.open', fileUri);
+                    this.messageService.info(`Created sketch: ${sketch.name}`);
+                } catch {
+                    this.messageService.info(`Sketch created at: ${sketch.mainFile}. Open it from the File menu.`);
+                }
+            }
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.messageService.error('Failed to create sketch: ' + message);
         }
     }
 

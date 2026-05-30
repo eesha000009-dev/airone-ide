@@ -460,13 +460,13 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             try {
                 document.querySelectorAll<HTMLElement>(sel).forEach(el => {
                     const currentWidth = el.style.width;
-                    if (currentWidth !== '48px') {
-                        el.style.width = '48px';
-                        el.style.height = '48px';
-                        el.style.minWidth = '48px';
-                        el.style.minHeight = '48px';
-                        el.style.backgroundSize = '44px 44px';
-                        el.style.padding = '2px';
+                    if (currentWidth !== '64px') {
+                        el.style.width = '64px';
+                        el.style.height = '64px';
+                        el.style.minWidth = '64px';
+                        el.style.minHeight = '64px';
+                        el.style.backgroundSize = '58px 58px';
+                        el.style.padding = '3px';
                     }
                 });
             } catch { /* invalid selector */ }

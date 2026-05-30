@@ -210,17 +210,25 @@ export class TheiaUpdaterFrontendContribution implements CommandContribution, Me
             isVisible: () => !this.readyToUpdate
         });
         registry.registerCommand(TheiaUpdaterCommands.RESTART_TO_UPDATE, {
-            execute: () => {
+            execute: async () => {
                 if (this.readyToUpdate) {
                     this.updater.onRestartToUpdateRequested();
                 } else {
-                    this.messageService.info('No update is ready to install. The app will check for updates automatically.');
+                    // Check if an update is available but not yet downloaded
+                    const checkAnswer = await this.messageService.info(
+                        'No update is ready to install yet. Would you like to check for updates now?',
+                        'Check for Updates',
+                        'Download from GitHub'
+                    );
+                    if (checkAnswer === 'Check for Updates') {
+                        this.updateNotifier.notifyCheckingUpdate();
+                        this.updater.checkForUpdates();
+                    } else if (checkAnswer === 'Download from GitHub') {
+                        window.open('https://github.com/eesha000009-dev/airone-ide/releases', '_blank');
+                    }
                 }
             },
             isEnabled: () => true,
-            // Both isEnabled and isVisible must return true for Theia's CommandRegistry
-            // to consider the handler "active" and allow execution via executeCommand().
-            // The execute() method handles the no-update-ready case gracefully.
             isVisible: () => true
         });
     }
@@ -257,7 +265,7 @@ export class TheiaUpdaterFrontendContribution implements CommandContribution, Me
     }
 
     protected handleNoUpdate(): void {
-        // Silent — don't bother the user if no update is available
+        this.messageService.info('Airone IDE is up to date — no updates available.');
     }
 
     /**
