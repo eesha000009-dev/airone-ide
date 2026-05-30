@@ -284,3 +284,34 @@ Stage Summary:
   - AironeIDESetup.exe.blockmap, latest.yml, latest-linux.yml
 - All icons now have transparent backgrounds (no white fill)
 - Android APK built as debug (release signing needs correct GitHub secrets)
+
+---
+Task ID: 7
+Agent: Main Agent
+Task: Enlarge app icon and fix black splash screen background
+
+Work Log:
+- User reported: app icon too small and black background showing in the app
+- Identified two sources of black/dark background:
+  1. AironeIDESplash.svg had fill="#1e1e1e" (almost black) as the splash screen background
+  2. preload.html had background-color: black
+- Fixed AironeIDESplash.svg:
+  - Changed background from #1e1e1e (dark) to #ffffff (white)
+  - Re-embedded Airone logo as base64 PNG (300x305 px)
+  - Logo centered with "Airone IDE" text in green and subtitle in gray
+- Fixed preload.html:
+  - Changed background-color from black to #ffffff (white)
+- Enlarged app icon (.theia-icon CSS class):
+  - Increased from 48px to 64px (width, height, min-width, min-height)
+  - Increased background-size from 44px to 58px
+  - Increased padding from 2px to 3px
+- Pushed commit da25ca0 and monitored CI/CD build (run 26672496192)
+- All builds passed: Linux ✅, Windows ✅, Android ✅, Release ✅
+- Release v0.1.0-build.202605300302 created with all 7 assets
+
+Stage Summary:
+- App icon enlarged from 48px to 64px for better visibility
+- Splash screen background changed from dark (#1e1e1e) to white (#ffffff)
+- Preload page background changed from black to white
+- All CI/CD builds passing
+- Release v0.1.0-build.202605300302 available on GitHub
