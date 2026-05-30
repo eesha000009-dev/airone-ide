@@ -315,3 +315,47 @@ Stage Summary:
 - Preload page background changed from black to white
 - All CI/CD builds passing
 - Release v0.1.0-build.202605300302 available on GitHub
+
+---
+Task ID: 8
+Agent: Main Agent
+Task: Fix toolbar overlapping editor, New Sketch not working, Restart to Update UX
+
+Work Log:
+- User reported 3 issues:
+  1. "Restart to Update" always says "No update is ready to install" even when update is available
+  2. Menu bar + toolbar covering line 1 of the editor
+  3. "New Sketch" button does nothing when clicked
+- Fixed "Restart to Update" UX:
+  - Instead of just saying "No update ready", now offers two options:
+    "Check for Updates" (triggers check) or "Download from GitHub" (opens releases page)
+  - handleNoUpdate() now shows "Airone IDE is up to date" instead of being silent
+- Fixed toolbar overlapping editor:
+  - Root cause: Theia's Lumino BoxPanel absolutely positions its children.
+    The toolbar was inserted as a sibling of the top panel, but the
+    BoxPanel didn't account for it in its layout calculations.
+  - Fix: Insert toolbar INSIDE the top panel as its last child.
+    The top panel is now a flex column (menu bar on top, toolbar below).
+    Since the top panel's height is auto, it grows to include the toolbar,
+    and Theia's layout engine automatically adjusts the main content area.
+  - Changed toolbar height from 44px to 38px for a more compact look
+  - Added border-top to toolbar for visual separation
+- Fixed "New Sketch" not working:
+  - Added CommandService injection for fallback file opening
+  - Backend now uses ~/AironeProjects/ as fallback when no workspace is open
+    (instead of process.cwd() which may not be writable in a packaged Electron app)
+  - Added progress message ("Creating sketch...") during sketch creation
+  - Better error handling with fallback open methods (opener → core.open command → info message)
+  - Only write template file if it doesn't already exist (prevents overwrite)
+- Also updated enlargeLogo() in theia-ide-contribution.tsx from 48px to 64px
+  to match the CSS changes from previous commit
+- Pushed commit 7059435 and monitored CI/CD build (run 26672929530)
+- All builds passed: Linux ✅, Windows ✅, Android ✅, Release ✅
+- Release v0.1.0-build.202605300322 created with all 7 assets
+
+Stage Summary:
+- Toolbar no longer overlaps the editor — properly inserted inside top panel
+- "New Sketch" now works with proper workspace fallback and error handling
+- "Restart to Update" provides actionable options instead of a dead-end message
+- All CI/CD builds passing
+- Release v0.1.0-build.202605300322 available on GitHub
