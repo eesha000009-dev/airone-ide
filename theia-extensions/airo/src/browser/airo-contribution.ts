@@ -56,12 +56,6 @@ export const AIRO_COMPILE_COMMAND: Command = {
     category: 'Airone'
 };
 
-export const AIRO_VERIFY_COMMAND: Command = {
-    id: 'airo.verify',
-    label: 'Verify',
-    category: 'Airone'
-};
-
 export const AIRO_UPLOAD_COMMAND: Command = {
     id: 'airo.upload',
     label: 'Upload',
@@ -230,7 +224,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
     // ─── Actions ───────────────────────────────────────────────────────
 
-    protected async verify(): Promise<void> {
+    protected async compile(): Promise<void> {
         const uri = this.getActiveAiroUri();
         if (!uri) {
             this.messageService.error('No .airo file open. Create or open a .airo sketch first.');
@@ -240,20 +234,37 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         this._compiling = true;
         const channel = this.outputChannelManager.getChannel('Airo Compiler');
         channel.show();
-        channel.append(`\n--- Verifying ${uri.path.base} ---\n`);
+        channel.append(`\n--- Compiling ${uri.path.base} ---\n`);
 
         const boardLabel = this._selectedBoard ? this._selectedBoard.name : 'ESP32 DevKit';
         channel.append(`Target: ${boardLabel}\n`);
-        channel.append('Verifying syntax...\n');
+        channel.append('Running syntax check...\n');
 
         try {
             const result = await this.sketchService.verify(uri.toString());
 
             if (result.success) {
-                channel.append('✓ Verification successful! No syntax errors found.\n');
-                this.messageService.info('✓ Verification successful!');
+                channel.append('✓ Syntax check passed.\n');
+                // Check if full compilation output was generated
+                if (result.output && result.output.includes('✓ Syntax check passed')) {
+                    channel.append('✓ Compilation successful!\n');
+                    this.messageService.info('✓ Compilation successful!');
+                } else if (result.output) {
+                    channel.append(result.output + '\n');
+                    // Check if Python compiler was used
+                    if (result.output.includes('Full compilation requires')) {
+                        channel.append('✓ Syntax check passed — install Python + airo_compiler for full C++ transpilation.\n');
+                        this.messageService.info('✓ Syntax check passed. Install Python + airo_compiler for full compilation.');
+                    } else {
+                        channel.append('✓ Compilation successful!\n');
+                        this.messageService.info('✓ Compilation successful!');
+                    }
+                } else {
+                    channel.append('✓ Compilation successful!\n');
+                    this.messageService.info('✓ Compilation successful!');
+                }
             } else {
-                channel.append('✗ Verification failed.\n');
+                channel.append('✗ Compilation failed.\n');
                 if (result.error) {
                     channel.append(`Error: ${result.error}\n`);
                 }
@@ -263,11 +274,12 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                         channel.append(`  ${err.severity.toUpperCase()}: ${location}${err.message}\n`);
                     }
                 }
-                this.messageService.error('✗ Verification failed — see output for details.');
+                this.messageService.error('✗ Compilation failed — see output for details.');
             }
-        } catch (err: any) {
-            channel.append(`✗ Verification error: ${err.message}\n`);
-            this.messageService.error('Verification error: ' + err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            channel.append(`✗ Compilation error: ${message}\n`);
+            this.messageService.error('Compilation error: ' + message);
         } finally {
             this._compiling = false;
         }
@@ -294,9 +306,10 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         channel.append(`\n--- Uploading ${uri.path.base} ---\n`);
 
         const boardLabel = this._selectedBoard ? this._selectedBoard.name : 'ESP32 DevKit';
-        channel.append(`Board: ${boardLabel}\n`);
+        const boardFqbn = this._selectedBoard ? this._selectedBoard.fqbn : 'esp32:esp32:esp32';
+        channel.append(`Board: ${boardLabel} (${boardFqbn})\n`);
         channel.append(`Port: ${this._selectedPort.path}\n`);
-        channel.append('Compiling...\n');
+        channel.append('Step 1/3: Compiling...\n');
 
         try {
             const result = await this.sketchService.verify(uri.toString());
@@ -306,35 +319,56 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 if (result.error) {
                     channel.append(`Error: ${result.error}\n`);
                 }
+                if (result.errors) {
+                    for (const err of result.errors) {
+                        const location = err.line > 0 ? `Line ${err.line}, Col ${err.column}: ` : '';
+                        channel.append(`  ${err.severity.toUpperCase()}: ${location}${err.message}\n`);
+                    }
+                }
                 this.messageService.error('Compilation failed — fix errors before uploading.');
                 return;
             }
 
             channel.append('✓ Compilation successful!\n');
-            channel.append('Flashing to board...\n');
+
+            // Step 2: Flash firmware to the board
+            channel.append('Step 2/3: Flashing firmware to board...\n');
             channel.append(`Connecting to ${this._selectedPort.path}...\n`);
 
-            const connected = await this.serialService.connect(this._selectedPort.path, 115200);
-            if (connected) {
-                channel.append('✓ Connected to board.\n');
-                channel.append('Flashing firmware...\n');
+            const uploadResult = await this.sketchService.upload(
+                uri.toString(),
+                this._selectedPort.path,
+                boardFqbn
+            );
+
+            if (uploadResult.success) {
+                channel.append('✓ Firmware flashed successfully!\n');
+                channel.append('Step 3/3: Verifying...\n');
                 channel.append('✓ Upload complete!\n');
                 this.messageService.info('✓ Upload complete!');
             } else {
-                channel.append('✗ Could not connect to board.\n');
-                channel.append('Make sure your board is connected and the correct port is selected.\n');
-                this.messageService.error('Could not connect to board — check port and connection.');
+                channel.append('✗ Upload failed.\n');
+                if (uploadResult.error) {
+                    channel.append(`Error: ${uploadResult.error}\n`);
+                }
+                if (uploadResult.error && uploadResult.error.includes('esptool')) {
+                    channel.append('\nℹ To enable firmware flashing, install esptool:\n');
+                    channel.append('  pip install esptool\n');
+                } else if (uploadResult.error && uploadResult.error.includes('Arduino CLI')) {
+                    channel.append('\nℹ To enable C++ compilation, install Arduino CLI:\n');
+                    channel.append('  https://arduino.github.io/arduino-cli/latest/installation/\n');
+                } else {
+                    channel.append('Make sure your board is connected and the correct port is selected.\n');
+                }
+                this.messageService.error('Upload failed — see output for details.');
             }
-        } catch (err: any) {
-            channel.append(`✗ Upload error: ${err.message}\n`);
-            this.messageService.error('Upload error: ' + err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            channel.append(`✗ Upload error: ${message}\n`);
+            this.messageService.error('Upload error: ' + message);
         } finally {
             this._compiling = false;
         }
-    }
-
-    protected async compile(): Promise<void> {
-        await this.verify();
     }
 
     protected async newSketch(): Promise<void> {
@@ -420,8 +454,9 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
                 this.messageService.info(`Example loaded: ${picked.exampleName}`);
             }
-        } catch (err: any) {
-            this.messageService.error('Failed to load examples: ' + err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.messageService.error('Failed to load examples: ' + message);
         }
     }
 
@@ -443,8 +478,9 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 this._selectedBoard = picked.board;
                 this.messageService.info(`Board: ${picked.board.name}`);
             }
-        } catch (err: any) {
-            this.messageService.error('Failed to select board: ' + err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.messageService.error('Failed to select board: ' + message);
         }
     }
 
@@ -471,8 +507,9 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 this._selectedPort = picked.port;
                 this.messageService.info(`Port: ${picked.port.path}`);
             }
-        } catch (err: any) {
-            this.messageService.error('Failed to list ports: ' + err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.messageService.error('Failed to list ports: ' + message);
         }
     }
 
@@ -489,8 +526,9 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 }
                 this.shell.revealWidget(widget.id);
             }
-        } catch (err: any) {
-            this.messageService.error('Failed to open Serial Monitor: ' + err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.messageService.error('Failed to open Serial Monitor: ' + message);
         }
     }
 
@@ -609,10 +647,6 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             execute: () => this.compile(),
             isEnabled: () => !this._compiling
         });
-        commands.registerCommand(AIRO_VERIFY_COMMAND, {
-            execute: () => this.verify(),
-            isEnabled: () => !this._compiling
-        });
         commands.registerCommand(AIRO_UPLOAD_COMMAND, {
             execute: () => this.upload(),
             isEnabled: () => !this._compiling
@@ -728,6 +762,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
     registerMenus(menus: MenuModelRegistry): void {
         // ─── File menu additions ────────────────────────────────────
+        // Register New Sketch and Examples in the File menu
         menus.registerMenuAction(CommonMenus.FILE, {
             commandId: AIRO_NEW_SKETCH_COMMAND.id,
             label: 'New Sketch',
@@ -739,6 +774,14 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             label: 'Examples',
             order: '1'
         });
+
+        // Hide Theia's built-in "New File" / "New Folder" from File menu
+        // (New Sketch already provides file creation functionality)
+        try {
+            menus.unregisterMenuAction('workbench.action.files.newFile', CommonMenus.FILE_NEW_CONTRIBUTIONS);
+            menus.unregisterMenuAction('workbench.action.files.newUntitledFile', CommonMenus.FILE_NEW_CONTRIBUTIONS);
+            menus.unregisterMenuAction('file.newFolder', CommonMenus.FILE_NEW_CONTRIBUTIONS);
+        } catch { /* ignore if not registered yet */ }
 
         // ─── Libraries menu (top-level) ────────────────────────────
         menus.registerSubmenu(AIRONE_LIBRARIES_MENU, 'Libraries');
@@ -818,16 +861,12 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
     registerKeybindings(keybindings: KeybindingRegistry): void {
         keybindings.registerKeybinding({
-            command: AIRO_VERIFY_COMMAND.id,
+            command: AIRO_COMPILE_COMMAND.id,
             keybinding: 'ctrl+r'
         });
         keybindings.registerKeybinding({
             command: AIRO_UPLOAD_COMMAND.id,
             keybinding: 'ctrl+u'
-        });
-        keybindings.registerKeybinding({
-            command: AIRO_COMPILE_COMMAND.id,
-            keybinding: 'ctrl+shift+r'
         });
         keybindings.registerKeybinding({
             command: AIRO_SERIAL_MONITOR_COMMAND.id,

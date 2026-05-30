@@ -15,7 +15,7 @@ import { ApplicationShell } from '@theia/core/lib/browser/shell';
 
 /**
  * Toolbar contribution that creates a SEPARATE toolbar row below the menu bar
- * for Compile, Verify, Upload, and Serial Monitor buttons.
+ * for Compile, Upload, Serial Monitor, and Sync to Backbone buttons.
  *
  * Auto-update: Updates are checked and downloaded automatically. When ready,
  * a "Restart to Update" button appears in the toolbar.
@@ -183,10 +183,6 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
     }
 
-    protected get verifyIconSvg(): string {
-        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`;
-    }
-
     protected get uploadIconSvg(): string {
         return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`;
     }
@@ -210,7 +206,7 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         toolbarRow.id = 'airo-secondary-toolbar';
         toolbarRow.className = 'airo-secondary-toolbar';
 
-        // Left group: Compile, Verify, Upload
+        // Left group: Compile, Upload
         const leftGroup = document.createElement('div');
         leftGroup.className = 'airo-toolbar-left';
 
@@ -221,15 +217,6 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             '#27ae60',
             '#219a52',
             () => this.executeCommand('airo.compile')
-        ));
-
-        leftGroup.appendChild(this.createButton(
-            'airo-verify-btn',
-            this.verifyIconSvg,
-            'Verify',
-            '#2980b9',
-            '#2471a3',
-            () => this.executeCommand('airo.verify')
         ));
 
         leftGroup.appendChild(this.createButton(

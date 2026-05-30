@@ -380,7 +380,23 @@ button[aria-label="Forward"],
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   6. HIDE .theia AND .airone-ide FOLDERS FROM FILE EXPLORER
+   6. HIDE BUILT-IN "NEW FILE" / "NEW FOLDER" FROM FILE MENU
+   ═══════════════════════════════════════════════════════════════════════════════
+   "New Sketch" already provides file creation functionality. These built-in
+   Theia menu items are redundant and confusing for robotics users. */
+
+/* Hide menu items by command ID in dropdown menus */
+.lm-Menu-item[data-command="workbench.action.files.newFile"],
+.lm-Menu-item[data-command="workbench.action.files.newUntitledFile"],
+.lm-Menu-item[data-command="file.newFolder"],
+.p-Menu-item[data-command="workbench.action.files.newFile"],
+.p-Menu-item[data-command="workbench.action.files.newUntitledFile"],
+.p-Menu-item[data-command="file.newFolder"] {
+    display: none !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   7. HIDE .theia AND .airone-ide FOLDERS FROM FILE EXPLORER
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 .theia-TreeView .theia-TreeNodeContent[data-file$=".airone-ide"],

@@ -10,6 +10,7 @@
 import { injectable, inject } from '@theia/core/shared/inversify';
 import * as path from 'path';
 import * as fs from 'fs';
+import { spawn } from 'child_process';
 import { WorkspaceServer } from '@theia/workspace/lib/common';
 import {
     AiroSketchClient,
@@ -17,6 +18,7 @@ import {
     ExampleSketch,
     BoardInfo,
     VerifyResult,
+    UploadResult,
     SyntaxError
 } from '../common/airo-protocol';
 import { AiroCompilerService } from './airo-compiler-service';
@@ -242,6 +244,205 @@ export class AiroSketchService implements AiroSketchClient {
 
     async getDefaultBoard(): Promise<BoardInfo> {
         return this.boards[0];
+    }
+
+    /**
+     * Upload compiled firmware to the ESP32 board using esptool.
+     *
+     * This performs a real firmware flash using esptool.py. The flow is:
+     * 1. Compile .airo → C++ code (using airo_compiler)
+     * 2. If Arduino CLI is available, compile C++ → .bin firmware
+     * 3. Flash the .bin to the ESP32 board using esptool
+     *
+     * If tools are not available, returns a descriptive error message.
+     */
+    async upload(filePath: string, portPath: string, boardFqbn: string): Promise<UploadResult> {
+        const fsPath = filePath.startsWith('file://') ? fsPathFromUri(filePath) : filePath;
+
+        if (!fs.existsSync(fsPath)) {
+            return {
+                success: false,
+                error: `File not found: ${fsPath}`
+            };
+        }
+
+        // Step 1: Compile .airo to C++ using the Python compiler
+        const sketchDir = path.dirname(fsPath);
+        const buildDir = path.join(sketchDir, 'build');
+
+        try {
+            const compileResult = await this.compilerService.compile({
+                filePath: fsPath,
+                target: 'esp32',
+                outputDir: buildDir
+            });
+
+            if (!compileResult.success) {
+                return {
+                    success: false,
+                    output: compileResult.output,
+                    error: compileResult.error || 'Compilation failed — no C++ output generated.'
+                };
+            }
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            return {
+                success: false,
+                error: `Compilation error: ${message}`
+            };
+        }
+
+        // Step 2: Try to flash using esptool
+        // First, check if there's a compiled firmware binary
+        const firmwareBin = path.join(buildDir, 'firmware.bin');
+        const bootloaderBin = path.join(buildDir, 'bootloader.bin');
+        const partitionsBin = path.join(buildDir, 'partitions.bin');
+
+        // If no firmware.bin exists, we need Arduino CLI to compile C++ → .bin
+        if (!fs.existsSync(firmwareBin)) {
+            // Try using Arduino CLI to compile the C++ output
+            const arduinoResult = await this.tryArduinoCliCompile(buildDir, boardFqbn);
+            if (!arduinoResult.success) {
+                return {
+                    success: false,
+                    error: arduinoResult.error ||
+                        'No compiled firmware found. Install Arduino CLI to compile C++ to firmware:\n' +
+                        '  https://arduino.github.io/arduino-cli/latest/installation/\n' +
+                        'Then install ESP32 board support:\n' +
+                        '  arduino-cli core install esp32:esp32'
+                };
+            }
+        }
+
+        // Step 3: Flash using esptool
+        if (!fs.existsSync(firmwareBin)) {
+            return {
+                success: false,
+                error: 'Firmware binary not found after compilation. Ensure Arduino CLI and ESP32 board support are installed.'
+            };
+        }
+
+        return this.flashWithEsptool(portPath, firmwareBin, bootloaderBin, partitionsBin);
+    }
+
+    /**
+     * Try to compile C++ output to firmware using Arduino CLI.
+     */
+    protected async tryArduinoCliCompile(buildDir: string, boardFqbn: string): Promise<UploadResult> {
+        // Check if arduino-cli is available
+        const arduinoCli = process.platform === 'win32' ? 'arduino-cli.exe' : 'arduino-cli';
+
+        return new Promise(resolve => {
+            const proc = spawn(arduinoCli, [
+                'compile',
+                '--fqbn', boardFqbn,
+                '--build-path', buildDir,
+                buildDir
+            ], {
+                timeout: 120000 // 2 minute timeout for compilation
+            });
+
+            let stdout = '';
+            let stderr = '';
+
+            proc.stdout.on('data', (data: Buffer) => {
+                stdout += data.toString();
+            });
+
+            proc.stderr.on('data', (data: Buffer) => {
+                stderr += data.toString();
+            });
+
+            proc.on('close', (code: number | null) => {
+                if (code === 0) {
+                    resolve({ success: true, output: stdout });
+                } else {
+                    resolve({
+                        success: false,
+                        output: stdout,
+                        error: stderr || `Arduino CLI exited with code ${code}. Install Arduino CLI: https://arduino.github.io/arduino-cli/latest/installation/`
+                    });
+                }
+            });
+
+            proc.on('error', () => {
+                resolve({
+                    success: false,
+                    error: 'Arduino CLI not found. Install it from: https://arduino.github.io/arduino-cli/latest/installation/'
+                });
+            });
+        });
+    }
+
+    /**
+     * Flash firmware to ESP32 using esptool.py.
+     */
+    protected async flashWithEsptool(
+        portPath: string,
+        firmwareBin: string,
+        bootloaderBin: string,
+        partitionsBin: string
+    ): Promise<UploadResult> {
+        const esptool = process.platform === 'win32' ? 'esptool.exe' : 'esptool.py';
+
+        // Build esptool command arguments
+        const args: string[] = [
+            '--chip', 'esp32',
+            '--port', portPath,
+            '--baud', '460800',
+            'write_flash',
+        ];
+
+        // Add bootloader if available
+        if (fs.existsSync(bootloaderBin)) {
+            args.push('0x1000', bootloaderBin);
+        }
+        // Add partitions if available
+        if (fs.existsSync(partitionsBin)) {
+            args.push('0x8000', partitionsBin);
+        }
+        // Add firmware (always required)
+        args.push('0x10000', firmwareBin);
+
+        return new Promise(resolve => {
+            const proc = spawn(esptool, args, {
+                timeout: 120000 // 2 minute timeout for flashing
+            });
+
+            let stdout = '';
+            let stderr = '';
+
+            proc.stdout.on('data', (data: Buffer) => {
+                stdout += data.toString();
+            });
+
+            proc.stderr.on('data', (data: Buffer) => {
+                stderr += data.toString();
+            });
+
+            proc.on('close', (code: number | null) => {
+                if (code === 0) {
+                    resolve({
+                        success: true,
+                        output: stdout + '\n' + stderr
+                    });
+                } else {
+                    resolve({
+                        success: false,
+                        output: stdout,
+                        error: stderr || `esptool exited with code ${code}. Install esptool: pip install esptool`
+                    });
+                }
+            });
+
+            proc.on('error', () => {
+                resolve({
+                    success: false,
+                    error: `esptool not found. Install it with: pip install esptool\n` +
+                        `Then flash manually: ${esptool} --chip esp32 --port ${portPath} write_flash 0x10000 ${firmwareBin}`
+                });
+            });
+        });
     }
 
     private parseCompilerErrors(stderr: string): SyntaxError[] {

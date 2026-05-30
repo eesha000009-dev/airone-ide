@@ -35,6 +35,12 @@ export interface VerifyResult {
     errors?: SyntaxError[];
 }
 
+export interface UploadResult {
+    success: boolean;
+    output?: string;
+    error?: string;
+}
+
 export interface SyntaxError {
     line: number;
     column: number;
@@ -100,6 +106,7 @@ export interface AiroSketchClient {
     listExamples(): Promise<ExampleSketch[]>;
     loadExample(name: string): Promise<string>;
     verify(filePath: string): Promise<VerifyResult>;
+    upload(filePath: string, portPath: string, boardFqbn: string): Promise<UploadResult>;
     getBoards(): Promise<BoardInfo[]>;
     getDefaultBoard(): Promise<BoardInfo>;
 }
