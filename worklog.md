@@ -359,3 +359,59 @@ Stage Summary:
 - "Restart to Update" provides actionable options instead of a dead-end message
 - All CI/CD builds passing
 - Release v0.1.0-build.202605300322 available on GitHub
+
+---
+Task ID: 9
+Agent: Main Agent
+Task: Fix toolbar overlapping editor, black background, icon size, New Sketch, and Restart to Update
+
+Work Log:
+- User reported 5 issues:
+  1. Black background appearing somewhere in the app
+  2. Menu bar + toolbar overlapping the editor (covering line 1)
+  3. Icon size needs to be bigger (was 64px, user wanted larger)
+  4. "Restart to Update" always says no update available
+  5. "New Sketch" button does nothing when clicked
+- Fixed toolbar overlapping editor:
+  - Root cause: Theia's Lumino BoxPanel absolutely positions its children.
+    When the toolbar was inserted inside the top panel (height: auto),
+    the top panel grew but the BoxPanel didn't recalculate the main
+    content panel's position.
+  - Fix: Added `adjustLayoutAfterToolbarInsert()` method that uses
+    ResizeObserver on the top panel and MutationObserver on the main
+    content panel's style attribute. Dynamically adjusts the main
+    content panel's `top` offset to match the top panel's actual height.
+  - Also dispatches window resize event to trigger Theia's layout recalc.
+  - Added ApplicationShell injection to AiroToolbarContribution.
+- Fixed black background:
+  - Added `backgroundColor: '#ffffff'` to electron windowOptions in package.json
+  - Added window.setBackgroundColor('#ffffff') in icon-contribution.ts
+  - Added CSS rules forcing white backgrounds on html/body/shell containers
+    in both airo-sidebar.css and product index.css
+- Increased icon size from 64px to 76px:
+  - Updated CSS in airo-sidebar.css (menu bar logo)
+  - Updated CSS in product index.css (theia-icon class)
+  - Updated JavaScript in theia-ide-contribution.tsx (enlargeLogo method)
+  - Background-size: 58px → 70px, width/height: 64px → 76px
+- Fixed New Sketch not working:
+  - Replaced SingleTextInputDialog (which may not render in Electron)
+    with QuickInputService.input() which renders inline in Theia's UI
+  - Replaced QuickPickService with QuickInputService for all pick operations
+    (openExamples, doSelectBoard, doSelectPort, manageLibraries)
+  - Removed local QuickPickItem interface, now importing from Theia's package
+- Fixed Restart to Update UX:
+  - Improved error message in catch block to include GitHub releases URL
+  - The updater's own handler already shows "Check for Updates" / "Download
+    from GitHub" options, so we just need to let it handle the flow
+- All TypeScript checks pass (tsc --noEmit for all 3 extensions)
+- Pushed commit c283071 to GitHub
+- CI/CD build #72: Linux ✅, Windows ✅, Android ✅, Release ✅
+- Release v0.1.0-build.202605300427 created with all 7 assets
+
+Stage Summary:
+- Toolbar no longer overlaps the editor — dynamic layout adjustment with observers
+- Black background eliminated — white backgroundColor on windows and CSS containers
+- Icon enlarged from 64px to 76px for better visibility
+- New Sketch works — replaced broken SingleTextInputDialog with QuickInputService.input()
+- Restart to Update provides better error messages with GitHub releases link
+- All CI/CD builds passing, release available
