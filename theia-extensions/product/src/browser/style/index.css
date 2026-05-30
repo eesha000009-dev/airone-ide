@@ -11,15 +11,27 @@
     --theia-branding-logo: url(../icons/512-512.png);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+   PREVENT BLACK / DARK BACKGROUND FLASH
+   Force white backgrounds on all top-level containers so the Electron window
+   never shows a dark background while loading.
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+html, body,
+#theia-app-shell,
+.theia-ApplicationShell {
+    background-color: #ffffff !important;
+}
+
 .theia-icon {
     background-image: url("../icons/512-512.png");
     background-position: center;
     background-repeat: no-repeat;
     background-size: contain;
-    width: 64px;
-    height: 64px;
-    min-width: 64px;
-    min-height: 64px;
+    width: 76px;
+    height: 76px;
+    min-width: 76px;
+    min-height: 76px;
 }
 
 body[data-theia-branding="next"] {
@@ -144,11 +156,11 @@ div[data-area="left"] {
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 .theia-icon {
-    width: 64px !important;
-    height: 64px !important;
-    min-width: 64px !important;
-    min-height: 64px !important;
-    background-size: 58px 58px !important;
+    width: 76px !important;
+    height: 76px !important;
+    min-width: 76px !important;
+    min-height: 76px !important;
+    background-size: 70px 70px !important;
     padding: 3px !important;
 }
 

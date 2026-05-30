@@ -21,8 +21,7 @@ import { URI } from '@theia/core/lib/common/uri';
 import { OutputChannelManager } from '@theia/output/lib/browser/output-channel';
 import { WidgetManager } from '@theia/core/lib/browser';
 import { CommandService } from '@theia/core/lib/common/command';
-import { QuickPickService } from '@theia/core/lib/common/quick-pick-service';
-import { SingleTextInputDialog } from '@theia/core/lib/browser/dialogs';
+import { QuickInputService, QuickPickItem } from '@theia/core/lib/common/quick-pick-service';
 import { AiroSerialWidget } from './airo-serial-widget';
 import { CommonMenus } from '@theia/core/lib/browser/common-frontend-contribution';
 import {
@@ -136,7 +135,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     @inject(OpenerService) protected readonly openerService!: OpenerService;
     @inject(OutputChannelManager) protected readonly outputChannelManager!: OutputChannelManager;
     @inject(WidgetManager) protected readonly widgetManager!: WidgetManager;
-    @inject(QuickPickService) protected readonly quickPickService!: QuickPickService;
+    @inject(QuickInputService) protected readonly quickInputService!: QuickInputService;
     @inject(CommandService) protected readonly commandService!: CommandService;
 
     @inject(AiroSketchService) protected readonly sketchService!: AiroSketchClient;
@@ -336,22 +335,24 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         try {
             const defaultName = `sketch_${Date.now().toString(36)}`;
 
-            const dialog = new SingleTextInputDialog({
+            // Use QuickInputService.input() — rendered inline in Theia's UI,
+            // much more reliable than SingleTextInputDialog in Electron.
+            const name = await this.quickInputService.input({
                 title: 'New Sketch',
-                initialValue: defaultName,
-                placeholder: 'Enter sketch name',
-                validate: (input: string) => {
+                value: defaultName,
+                prompt: 'Enter a name for the new sketch',
+                placeHolder: 'sketch_name',
+                validateInput: async (input: string) => {
                     if (!input || input.trim().length === 0) {
                         return 'Sketch name cannot be empty';
                     }
                     if (!/^[a-zA-Z0-9_-]+$/.test(input.trim())) {
                         return 'Only letters, numbers, underscores, and hyphens allowed';
                     }
-                    return '';
+                    return undefined;
                 }
             });
 
-            const name = await dialog.open();
             if (!name || name.trim().length === 0) {
                 return;
             }
@@ -394,8 +395,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 exampleName: ex.name
             }));
 
-            const picked = await this.quickPickService.show<(QuickPickItem & { exampleName: string })>(items, {
-                placeholder: 'Select an example sketch...'
+            const picked = await this.quickInputService.pick<(QuickPickItem & { exampleName: string })>(items, {
+                placeHolder: 'Select an example sketch...'
             });
 
             if (picked && picked.exampleName) {
@@ -428,8 +429,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 board
             }));
 
-            const picked = await this.quickPickService.show<(QuickPickItem & { board: BoardInfo })>(items, {
-                placeholder: 'Select a board...'
+            const picked = await this.quickInputService.pick<(QuickPickItem & { board: BoardInfo })>(items, {
+                placeHolder: 'Select a board...'
             });
 
             if (picked && picked.board) {
@@ -456,8 +457,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 port
             }));
 
-            const picked = await this.quickPickService.show<(QuickPickItem & { port: SerialPortInfo })>(items, {
-                placeholder: 'Select a serial port...'
+            const picked = await this.quickInputService.pick<(QuickPickItem & { port: SerialPortInfo })>(items, {
+                placeHolder: 'Select a serial port...'
             });
 
             if (picked && picked.port) {
@@ -510,8 +511,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             libName: lib.label
         }));
 
-        const picked = await this.quickPickService.show<(QuickPickItem & { libName: string })>(items, {
-            placeholder: 'Select a library to view details...'
+        const picked = await this.quickInputService.pick<(QuickPickItem & { libName: string })>(items, {
+            placeHolder: 'Select a library to view details...'
         });
 
         if (picked) {
@@ -572,11 +573,19 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         commands.registerCommand(AIRO_RESTART_UPDATE_COMMAND, {
             execute: async () => {
                 try {
-                    // The updater's restart command is always enabled now,
-                    // but checks internally if an update is actually ready
+                    // Directly call the updater's restart-to-update command.
+                    // The updater's own handler checks if an update is ready and
+                    // shows an appropriate dialog (check for updates / download from GitHub)
+                    // instead of just saying "no update ready."
                     await commands.executeCommand('electron-theia:restart-to-update');
-                } catch {
-                    this.messageService.info('No update is ready to install yet. The app checks for updates automatically.');
+                } catch (err: unknown) {
+                    // Only show our fallback if the updater command itself throws
+                    const message = err instanceof Error ? err.message : String(err);
+                    this.messageService.info(
+                        'Could not check for updates. ' +
+                        'Visit https://github.com/eesha000009-dev/airone-ide/releases to download the latest version. ' +
+                        (message ? `(${message})` : '')
+                    );
                 }
             },
             isEnabled: () => true
@@ -715,11 +724,4 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             keybinding: 'ctrl+shift+m'
         });
     }
-}
-
-// QuickPickItem interface
-interface QuickPickItem {
-    label: string;
-    description?: string;
-    detail?: string;
 }

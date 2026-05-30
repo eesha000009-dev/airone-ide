@@ -45,6 +45,9 @@
         },
         "electron": {
           "showWindowEarly": false,
+          "windowOptions": {
+            "backgroundColor": "#ffffff"
+          },
           "splashScreenOptions": {
             "content": "resources/AironeIDESplash.svg",
             "height": 400,

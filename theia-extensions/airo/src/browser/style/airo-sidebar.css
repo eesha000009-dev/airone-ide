@@ -6,6 +6,20 @@
  ********************************************************************************/
 
 /* ═══════════════════════════════════════════════════════════════════════════════
+   0. PREVENT BLACK / DARK BACKGROUND FLASH
+   ═══════════════════════════════════════════════════════════════════════════════
+   The Electron window may flash a dark background before Theia's CSS loads.
+   Force white backgrounds on all top-level containers. */
+
+html, body,
+#theia-app-shell,
+.theia-ApplicationShell,
+.lm-Widget,
+.p-Widget {
+    background-color: #ffffff !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
    1. SECONDARY TOOLBAR ROW (Below the menu bar)
    ═══════════════════════════════════════════════════════════════════════════════ */
 
@@ -279,11 +293,11 @@ button[aria-label="Forward"],
 .p-MenuBar-logo,
 [class*="MenuBar-logo"],
 [class*="menubar-logo"] {
-    background-size: 58px 58px !important;
-    width: 64px !important;
-    height: 64px !important;
-    min-width: 64px !important;
-    min-height: 64px !important;
+    background-size: 70px 70px !important;
+    width: 76px !important;
+    height: 76px !important;
+    min-width: 76px !important;
+    min-height: 76px !important;
     padding: 3px !important;
 }
 
