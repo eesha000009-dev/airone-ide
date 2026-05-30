@@ -1,0 +1,24 @@
+# Airone Robot Example
+# Connects to Render-hosted LNN brain
+
+brain_url = "wss://your-brain-url.onrender.com".
+call brain_url.
+
+pin defi {
+    distance_front = 34; input.
+    distance_rear = 35; input.
+    left_motor = 12; output.
+    right_motor = 13; output.
+}
+
+loop {
+    read_for(100) {
+        distance_front.
+        distance_rear.
+    }
+    senddatato(brain_url).
+    actfor(100) {
+        left_motor.
+        right_motor.
+    }
+}

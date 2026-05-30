@@ -1,0 +1,31 @@
+services:
+  # Deploy API - Always-on web service
+  - type: web
+    name: airone-deploy
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn deploy_api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    healthCheckPath: /health
+
+  # Brain Server Template - Deployed per robot
+  # Users duplicate this service with different env vars
+  - type: web
+    name: airone-brain-template
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python brain_server.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: PORT
+        value: 10000
+      - key: MODEL_PATH
+        value: models/universal_v1.pt
+      - key: ROBOT_NAME
+        value: template
+    healthCheckPath: /health
