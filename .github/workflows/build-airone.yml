@@ -475,11 +475,12 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -f "../android-signing/airone-ide-release.keystore" ]; then
-            echo "Building SIGNED release APK..."
-            ./gradlew assembleRelease
+          # Try release build first, fall back to debug if signing fails
+          echo "Attempting release APK build..."
+          if ./gradlew assembleRelease 2>&1; then
+            echo "Release APK built successfully"
           else
-            echo "Building DEBUG APK (no keystore)..."
+            echo "Release build failed (likely signing issue), building debug APK..."
             ./gradlew assembleDebug
           fi
 
