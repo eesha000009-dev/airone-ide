@@ -249,12 +249,22 @@ export class AiroBuiltInCompiler {
     // ─── Helper Methods ──────────────────────────────────────────────────
 
     private findLineWith(lines: string[], text: string): number {
+        // Special section markers that start with # but are NOT comments
+        const sectionMarkers = ['#library#', '#variables#', '#endregion'];
+
         for (let i = 0; i < lines.length; i++) {
-            if (lines[i].includes(text) && !lines[i].trim().startsWith('#')) {
-                return i;
+            const trimmed = lines[i].trim();
+            if (lines[i].includes(text)) {
+                // Allow section markers like #library# and #variables#
+                if (sectionMarkers.some(marker => trimmed === marker || trimmed.startsWith(marker))) {
+                    return i;
+                }
+                // Skip regular comment lines (start with # but aren't section markers)
+                if (!trimmed.startsWith('#')) {
+                    return i;
+                }
             }
         }
-        // Also check commented-out sections (they might still be relevant)
         return -1;
     }
 

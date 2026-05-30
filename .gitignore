@@ -26,4 +26,4 @@ applications/browser/android/app/src/main/assets/nodejs/lib/
 
 # Keystore (should be stored as GitHub secret, not in repo)
 # Uncomment the line below for production:
-# applications/browser/android-signing/
+# applications/browser/android-signing/upload/

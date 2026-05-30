@@ -41,13 +41,11 @@
     "build:dev": "yarn build:extensions && yarn build:applications:dev",
     "build:applications": "lerna run --scope=\"airone-ide*app\" build:prod --concurrency 1",
     "build:applications:dev": "lerna run --scope=\"airone-ide*app\" build --concurrency 1",
-
     "build:extensions": "lerna run --scope=\"airone-ide*ext\" build",
     "download:plugins": "theia download:plugins --rate-limit=15 --parallel=false && yarn permissions:writeable",
     "package:applications": "lerna run --scope=\"airone-ide*app\" package --concurrency 1",
     "package:applications:preview": "lerna run --scope=\"airone-ide*app\" package:preview --concurrency 1",
     "package:applications:prod": "lerna run --scope=\"airone-ide*app\" package:prod --concurrency 1",
-
     "permissions:writeable": "ts-node scripts/make-files-writeable.ts plugins",
     "watch": "lerna run --parallel watch",
     "test": "lerna run test",
@@ -55,7 +53,6 @@
     "browser": "yarn --cwd applications/browser",
     "update:theia": "ts-node scripts/update-theia-version.ts",
     "update:theia:children": "lerna run update:theia -- ",
-
     "lint": "eslint --ext js,jsx,ts,tsx scripts && lerna run lint",
     "lint:fix": "eslint --ext js,jsx,ts,tsx scripts --fix && lerna run lint:fix",
     "license:check": "npx dash-licenses-wrapper  --configFile=./configs/license-check-config.json",
@@ -86,5 +83,8 @@
     "**/cpu-features": "0.0.9",
     "**/perfect-scrollbar": "1.5.5",
     "**/node-abi": "4.14.0"
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
   }
 }

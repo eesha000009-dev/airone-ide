@@ -6,13 +6,59 @@
  ********************************************************************************/
 
 /* ═══════════════════════════════════════════════════════════════════════════════
+   0. PREVENT BLACK / DARK BACKGROUND FLASH
+   ═══════════════════════════════════════════════════════════════════════════════
+   The Electron window may flash a dark background before Theia's CSS loads.
+   Force white backgrounds on ALL containers and widgets. */
+
+html, body,
+#theia-app-shell,
+.theia-ApplicationShell,
+.lm-Widget,
+.p-Widget,
+.lm-BoxPanel,
+.p-BoxPanel,
+.lm-DockPanel,
+.p-DockPanel,
+.lm-SplitPanel,
+.p-SplitPanel,
+.lm-TabPanel,
+.p-TabPanel,
+.lm-StackedPanel,
+.p-StackedPanel,
+#theia-main-content-panel,
+.theia-main-content-panel,
+#theia-bottom-panel,
+.theia-bottom-panel,
+.theia-editor-area,
+.lm-DockPanel-widget,
+.p-DockPanel-widget,
+.theia-centerview,
+.lm-Widget.theia-centerview,
+.p-Widget.theia-centerview {
+    background-color: #ffffff !important;
+}
+
+/* Ensure the editor widget itself has a white background */
+.theia-editor,
+.theia-editor-wrapper,
+.theia-editor-content,
+.monaco-editor,
+.monaco-editor-background,
+.monaco-editor .margin,
+.monaco-editor .monaco-editor-background {
+    background-color: #ffffff !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
    1. SECONDARY TOOLBAR ROW (Below the menu bar)
    ═══════════════════════════════════════════════════════════════════════════════ */
 
-/* Ensure the top panel container is visible */
+/* Ensure the top panel container is visible — flex column for menu bar + toolbar */
 #theia-top-panel,
 .theia-top-panel {
     display: flex !important;
+    flex-direction: column !important;
     visibility: visible !important;
     position: relative !important;
     width: 100% !important;
@@ -40,11 +86,12 @@
     align-items: center !important;
     justify-content: space-between !important;
     width: 100% !important;
-    height: 44px !important;
-    min-height: 44px !important;
-    max-height: 44px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    max-height: 38px !important;
     background: var(--theia-editorWidget-background, #f3f3f3) !important;
     border-bottom: 1px solid var(--theia-border-color, #ccc) !important;
+    border-top: 1px solid var(--theia-border-color, #ccc) !important;
     padding: 0 8px !important;
     box-sizing: border-box !important;
     z-index: 10 !important;
@@ -277,12 +324,12 @@ button[aria-label="Forward"],
 .p-MenuBar-logo,
 [class*="MenuBar-logo"],
 [class*="menubar-logo"] {
-    background-size: 44px 44px !important;
-    width: 48px !important;
-    height: 48px !important;
-    min-width: 48px !important;
-    min-height: 48px !important;
-    padding: 2px !important;
+    background-size: 92px 92px !important;
+    width: 100px !important;
+    height: 100px !important;
+    min-width: 100px !important;
+    min-height: 100px !important;
+    padding: 4px !important;
 }
 
 /* Getting started page logo - MUCH BIGGER */
@@ -333,7 +380,23 @@ button[aria-label="Forward"],
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   6. HIDE .theia AND .airone-ide FOLDERS FROM FILE EXPLORER
+   6. HIDE BUILT-IN "NEW FILE" / "NEW FOLDER" FROM FILE MENU
+   ═══════════════════════════════════════════════════════════════════════════════
+   "New Sketch" already provides file creation functionality. These built-in
+   Theia menu items are redundant and confusing for robotics users. */
+
+/* Hide menu items by command ID in dropdown menus */
+.lm-Menu-item[data-command="workbench.action.files.newFile"],
+.lm-Menu-item[data-command="workbench.action.files.newUntitledFile"],
+.lm-Menu-item[data-command="file.newFolder"],
+.p-Menu-item[data-command="workbench.action.files.newFile"],
+.p-Menu-item[data-command="workbench.action.files.newUntitledFile"],
+.p-Menu-item[data-command="file.newFolder"] {
+    display: none !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   7. HIDE .theia AND .airone-ide FOLDERS FROM FILE EXPLORER
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 .theia-TreeView .theia-TreeNodeContent[data-file$=".airone-ide"],

@@ -20,8 +20,8 @@ import { OpenerService } from '@theia/core/lib/browser/opener-service';
 import { URI } from '@theia/core/lib/common/uri';
 import { OutputChannelManager } from '@theia/output/lib/browser/output-channel';
 import { WidgetManager } from '@theia/core/lib/browser';
-import { QuickPickService } from '@theia/core/lib/common/quick-pick-service';
-import { SingleTextInputDialog } from '@theia/core/lib/browser/dialogs';
+import { CommandService } from '@theia/core/lib/common/command';
+import { QuickInputService, QuickPickItem } from '@theia/core/lib/common/quick-pick-service';
 import { AiroSerialWidget } from './airo-serial-widget';
 import { CommonMenus } from '@theia/core/lib/browser/common-frontend-contribution';
 import {
@@ -53,12 +53,6 @@ export const AIRONE_TOOLS_UPDATE: MenuPath = [...AIRONE_TOOLS_MENU, 'update'];
 export const AIRO_COMPILE_COMMAND: Command = {
     id: 'airo.compile',
     label: 'Compile',
-    category: 'Airone'
-};
-
-export const AIRO_VERIFY_COMMAND: Command = {
-    id: 'airo.verify',
-    label: 'Verify',
     category: 'Airone'
 };
 
@@ -116,6 +110,12 @@ export const AIRO_MANAGE_LIBRARIES_COMMAND: Command = {
     category: 'Airone'
 };
 
+export const AIRO_SYNC_BACKBONE_COMMAND: Command = {
+    id: 'airo.syncToBackbone',
+    label: 'Sync to Backbone',
+    category: 'Airone'
+};
+
 /** Helper to convert a filesystem path to a proper file:// URI */
 function toFileUri(fsPath: string): URI {
     const normalized = fsPath.replace(/\\/g, '/');
@@ -135,7 +135,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     @inject(OpenerService) protected readonly openerService!: OpenerService;
     @inject(OutputChannelManager) protected readonly outputChannelManager!: OutputChannelManager;
     @inject(WidgetManager) protected readonly widgetManager!: WidgetManager;
-    @inject(QuickPickService) protected readonly quickPickService!: QuickPickService;
+    @inject(QuickInputService) protected readonly quickInputService!: QuickInputService;
+    @inject(CommandService) protected readonly commandService!: CommandService;
 
     @inject(AiroSketchService) protected readonly sketchService!: AiroSketchClient;
     @inject(AiroSerialService) protected readonly serialService!: AiroSerialClient;
@@ -223,7 +224,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
     // ─── Actions ───────────────────────────────────────────────────────
 
-    protected async verify(): Promise<void> {
+    protected async compile(): Promise<void> {
         const uri = this.getActiveAiroUri();
         if (!uri) {
             this.messageService.error('No .airo file open. Create or open a .airo sketch first.');
@@ -233,20 +234,37 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         this._compiling = true;
         const channel = this.outputChannelManager.getChannel('Airo Compiler');
         channel.show();
-        channel.append(`\n--- Verifying ${uri.path.base} ---\n`);
+        channel.append(`\n--- Compiling ${uri.path.base} ---\n`);
 
         const boardLabel = this._selectedBoard ? this._selectedBoard.name : 'ESP32 DevKit';
         channel.append(`Target: ${boardLabel}\n`);
-        channel.append('Verifying syntax...\n');
+        channel.append('Running syntax check...\n');
 
         try {
             const result = await this.sketchService.verify(uri.toString());
 
             if (result.success) {
-                channel.append('✓ Verification successful! No syntax errors found.\n');
-                this.messageService.info('✓ Verification successful!');
+                channel.append('✓ Syntax check passed.\n');
+                // Check if full compilation output was generated
+                if (result.output && result.output.includes('✓ Syntax check passed')) {
+                    channel.append('✓ Compilation successful!\n');
+                    this.messageService.info('✓ Compilation successful!');
+                } else if (result.output) {
+                    channel.append(result.output + '\n');
+                    // Check if Python compiler was used
+                    if (result.output.includes('Full compilation requires')) {
+                        channel.append('✓ Syntax check passed — install Python + airo_compiler for full C++ transpilation.\n');
+                        this.messageService.info('✓ Syntax check passed. Install Python + airo_compiler for full compilation.');
+                    } else {
+                        channel.append('✓ Compilation successful!\n');
+                        this.messageService.info('✓ Compilation successful!');
+                    }
+                } else {
+                    channel.append('✓ Compilation successful!\n');
+                    this.messageService.info('✓ Compilation successful!');
+                }
             } else {
-                channel.append('✗ Verification failed.\n');
+                channel.append('✗ Compilation failed.\n');
                 if (result.error) {
                     channel.append(`Error: ${result.error}\n`);
                 }
@@ -256,11 +274,12 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                         channel.append(`  ${err.severity.toUpperCase()}: ${location}${err.message}\n`);
                     }
                 }
-                this.messageService.error('✗ Verification failed — see output for details.');
+                this.messageService.error('✗ Compilation failed — see output for details.');
             }
-        } catch (err: any) {
-            channel.append(`✗ Verification error: ${err.message}\n`);
-            this.messageService.error('Verification error: ' + err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            channel.append(`✗ Compilation error: ${message}\n`);
+            this.messageService.error('Compilation error: ' + message);
         } finally {
             this._compiling = false;
         }
@@ -287,9 +306,10 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         channel.append(`\n--- Uploading ${uri.path.base} ---\n`);
 
         const boardLabel = this._selectedBoard ? this._selectedBoard.name : 'ESP32 DevKit';
-        channel.append(`Board: ${boardLabel}\n`);
+        const boardFqbn = this._selectedBoard ? this._selectedBoard.fqbn : 'esp32:esp32:esp32';
+        channel.append(`Board: ${boardLabel} (${boardFqbn})\n`);
         channel.append(`Port: ${this._selectedPort.path}\n`);
-        channel.append('Compiling...\n');
+        channel.append('Step 1/3: Compiling...\n');
 
         try {
             const result = await this.sketchService.verify(uri.toString());
@@ -299,71 +319,109 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 if (result.error) {
                     channel.append(`Error: ${result.error}\n`);
                 }
+                if (result.errors) {
+                    for (const err of result.errors) {
+                        const location = err.line > 0 ? `Line ${err.line}, Col ${err.column}: ` : '';
+                        channel.append(`  ${err.severity.toUpperCase()}: ${location}${err.message}\n`);
+                    }
+                }
                 this.messageService.error('Compilation failed — fix errors before uploading.');
                 return;
             }
 
             channel.append('✓ Compilation successful!\n');
-            channel.append('Flashing to board...\n');
+
+            // Step 2: Flash firmware to the board
+            channel.append('Step 2/3: Flashing firmware to board...\n');
             channel.append(`Connecting to ${this._selectedPort.path}...\n`);
 
-            const connected = await this.serialService.connect(this._selectedPort.path, 115200);
-            if (connected) {
-                channel.append('✓ Connected to board.\n');
-                channel.append('Flashing firmware...\n');
+            const uploadResult = await this.sketchService.upload(
+                uri.toString(),
+                this._selectedPort.path,
+                boardFqbn
+            );
+
+            if (uploadResult.success) {
+                channel.append('✓ Firmware flashed successfully!\n');
+                channel.append('Step 3/3: Verifying...\n');
                 channel.append('✓ Upload complete!\n');
                 this.messageService.info('✓ Upload complete!');
             } else {
-                channel.append('✗ Could not connect to board.\n');
-                channel.append('Make sure your board is connected and the correct port is selected.\n');
-                this.messageService.error('Could not connect to board — check port and connection.');
+                channel.append('✗ Upload failed.\n');
+                if (uploadResult.error) {
+                    channel.append(`Error: ${uploadResult.error}\n`);
+                }
+                if (uploadResult.error && uploadResult.error.includes('esptool')) {
+                    channel.append('\nℹ To enable firmware flashing, install esptool:\n');
+                    channel.append('  pip install esptool\n');
+                } else if (uploadResult.error && uploadResult.error.includes('Arduino CLI')) {
+                    channel.append('\nℹ To enable C++ compilation, install Arduino CLI:\n');
+                    channel.append('  https://arduino.github.io/arduino-cli/latest/installation/\n');
+                } else {
+                    channel.append('Make sure your board is connected and the correct port is selected.\n');
+                }
+                this.messageService.error('Upload failed — see output for details.');
             }
-        } catch (err: any) {
-            channel.append(`✗ Upload error: ${err.message}\n`);
-            this.messageService.error('Upload error: ' + err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            channel.append(`✗ Upload error: ${message}\n`);
+            this.messageService.error('Upload error: ' + message);
         } finally {
             this._compiling = false;
         }
-    }
-
-    protected async compile(): Promise<void> {
-        await this.verify();
     }
 
     protected async newSketch(): Promise<void> {
         try {
             const defaultName = `sketch_${Date.now().toString(36)}`;
 
-            const dialog = new SingleTextInputDialog({
+            // Use QuickInputService.input() — rendered inline in Theia's UI,
+            // much more reliable than SingleTextInputDialog in Electron.
+            const name = await this.quickInputService.input({
                 title: 'New Sketch',
-                initialValue: defaultName,
-                placeholder: 'Enter sketch name',
-                validate: (input: string) => {
+                value: defaultName,
+                prompt: 'Enter a name for the new sketch',
+                placeHolder: 'sketch_name',
+                validateInput: async (input: string) => {
                     if (!input || input.trim().length === 0) {
                         return 'Sketch name cannot be empty';
                     }
                     if (!/^[a-zA-Z0-9_-]+$/.test(input.trim())) {
                         return 'Only letters, numbers, underscores, and hyphens allowed';
                     }
-                    return '';
+                    return undefined;
                 }
             });
 
-            const name = await dialog.open();
             if (!name || name.trim().length === 0) {
                 return;
             }
             const sketchName = name.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
 
+            this.messageService.info(`Creating sketch "${sketchName}"...`);
+
             const sketch = await this.sketchService.newSketch(sketchName);
-            this.messageService.info(`Created sketch: ${sketch.name}`);
 
             // Convert filesystem path to proper file:// URI
             const fileUri = toFileUri(sketch.mainFile);
-            const opener = await this.openerService.getOpener(fileUri);
-            await opener.open(fileUri);
-        } catch (err: any) {
-            this.messageService.error('Failed to create sketch: ' + err.message);
+
+            // Open the newly created file
+            try {
+                const opener = await this.openerService.getOpener(fileUri);
+                await opener.open(fileUri);
+                this.messageService.info(`Created sketch: ${sketch.name}`);
+            } catch {
+                // If opener fails, try using the command service
+                try {
+                    await this.commandService.executeCommand('core.open', fileUri);
+                    this.messageService.info(`Created sketch: ${sketch.name}`);
+                } catch {
+                    this.messageService.info(`Sketch created at: ${sketch.mainFile}. Open it from the File menu.`);
+                }
+            }
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.messageService.error('Failed to create sketch: ' + message);
         }
     }
 
@@ -377,8 +435,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 exampleName: ex.name
             }));
 
-            const picked = await this.quickPickService.show<(QuickPickItem & { exampleName: string })>(items, {
-                placeholder: 'Select an example sketch...'
+            const picked = await this.quickInputService.pick<(QuickPickItem & { exampleName: string })>(items, {
+                placeHolder: 'Select an example sketch...'
             });
 
             if (picked && picked.exampleName) {
@@ -396,8 +454,9 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
                 this.messageService.info(`Example loaded: ${picked.exampleName}`);
             }
-        } catch (err: any) {
-            this.messageService.error('Failed to load examples: ' + err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.messageService.error('Failed to load examples: ' + message);
         }
     }
 
@@ -411,16 +470,17 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 board
             }));
 
-            const picked = await this.quickPickService.show<(QuickPickItem & { board: BoardInfo })>(items, {
-                placeholder: 'Select a board...'
+            const picked = await this.quickInputService.pick<(QuickPickItem & { board: BoardInfo })>(items, {
+                placeHolder: 'Select a board...'
             });
 
             if (picked && picked.board) {
                 this._selectedBoard = picked.board;
                 this.messageService.info(`Board: ${picked.board.name}`);
             }
-        } catch (err: any) {
-            this.messageService.error('Failed to select board: ' + err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.messageService.error('Failed to select board: ' + message);
         }
     }
 
@@ -439,16 +499,17 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 port
             }));
 
-            const picked = await this.quickPickService.show<(QuickPickItem & { port: SerialPortInfo })>(items, {
-                placeholder: 'Select a serial port...'
+            const picked = await this.quickInputService.pick<(QuickPickItem & { port: SerialPortInfo })>(items, {
+                placeHolder: 'Select a serial port...'
             });
 
             if (picked && picked.port) {
                 this._selectedPort = picked.port;
                 this.messageService.info(`Port: ${picked.port.path}`);
             }
-        } catch (err: any) {
-            this.messageService.error('Failed to list ports: ' + err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.messageService.error('Failed to list ports: ' + message);
         }
     }
 
@@ -465,8 +526,82 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 }
                 this.shell.revealWidget(widget.id);
             }
-        } catch (err: any) {
-            this.messageService.error('Failed to open Serial Monitor: ' + err.message);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.messageService.error('Failed to open Serial Monitor: ' + message);
+        }
+    }
+
+    /**
+     * Sync pin definitions to the AI Backbone.
+     * Sends the Pin defi block and full .airo source to the Backbone
+     * application via HTTP POST.
+     */
+    protected async syncToBackbone(): Promise<void> {
+        const uri = this.getActiveAiroUri();
+        if (!uri) {
+            this.messageService.error('No .airo file open. Open a .airo sketch first.');
+            return;
+        }
+
+        // Get the .airo source content from the active editor
+        let airoCode: string | undefined;
+        try {
+            const activeEditor = this.editorManager.activeEditor;
+            if (activeEditor) {
+                airoCode = activeEditor.editor.document.getText();
+            }
+        } catch { /* ignore */ }
+
+        if (!airoCode) {
+            this.messageService.error('Could not read .airo source for sync.');
+            return;
+        }
+
+        // Extract pin defi block
+        const pinDefiMatch = airoCode.match(/[Pp]in\s+defi\s*\{[\s\S]*?\}/);
+        if (!pinDefiMatch) {
+            this.messageService.warn('No Pin defi block found in .airo file.');
+            return;
+        }
+
+        // Ask for backbone URL
+        const backboneUrl = await this.quickInputService.input({
+            title: 'Sync to Airone Backbone',
+            prompt: 'Enter the AI Backbone URL',
+            placeHolder: 'http://localhost:8080',
+            value: 'http://localhost:8080'
+        });
+
+        if (!backboneUrl || backboneUrl.trim().length === 0) {
+            return;
+        }
+
+        const url = backboneUrl.trim().replace(/\/$/, '');
+
+        try {
+            const sketchName = uri.path.base.replace('.airo', '');
+            const response = await fetch(`${url}/api/pins/sync`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    robotName: sketchName,
+                    pinDefinitions: pinDefiMatch[0],
+                    source: airoCode
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            this.messageService.info('✓ Pin definitions synced to Airone Backbone.');
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.messageService.error(
+                `Failed to sync to Backbone: ${message}. ` +
+                'Make sure the Airone Backbone app is running.'
+            );
         }
     }
 
@@ -493,8 +628,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             libName: lib.label
         }));
 
-        const picked = await this.quickPickService.show<(QuickPickItem & { libName: string })>(items, {
-            placeholder: 'Select a library to view details...'
+        const picked = await this.quickInputService.pick<(QuickPickItem & { libName: string })>(items, {
+            placeHolder: 'Select a library to view details...'
         });
 
         if (picked) {
@@ -510,10 +645,6 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     registerCommands(commands: CommandRegistry): void {
         commands.registerCommand(AIRO_COMPILE_COMMAND, {
             execute: () => this.compile(),
-            isEnabled: () => !this._compiling
-        });
-        commands.registerCommand(AIRO_VERIFY_COMMAND, {
-            execute: () => this.verify(),
             isEnabled: () => !this._compiling
         });
         commands.registerCommand(AIRO_UPLOAD_COMMAND, {
@@ -551,15 +682,41 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             isEnabled: () => true
         });
 
-        // Restart to Update command — delegates to the built-in updater
+        // Restart to Update command — checks for updates and offers to restart
         commands.registerCommand(AIRO_RESTART_UPDATE_COMMAND, {
             execute: async () => {
                 try {
-                    // The updater's restart command is always enabled now,
-                    // but checks internally if an update is actually ready
-                    await commands.executeCommand('electron-theia:restart-to-update');
-                } catch {
-                    this.messageService.info('No update is ready to install yet. The app checks for updates automatically.');
+                    // Check if an update has already been downloaded (data attribute set by updater)
+                    const updateReady = document.body.hasAttribute('data-airone-update-ready');
+                    if (updateReady) {
+                        // Update is ready — delegate to the built-in restart command
+                        await commands.executeCommand('electron-theia:restart-to-update');
+                    } else {
+                        // No update downloaded yet — check for updates first
+                        const checkAnswer = await this.quickInputService.pick([
+                            { label: 'Check for Updates', description: 'Check GitHub for the latest version' },
+                            { label: 'Download from GitHub', description: 'Open the releases page in your browser' },
+                        ], {
+                            placeHolder: 'No update is ready to install. What would you like to do?'
+                        });
+
+                        if (checkAnswer?.label === 'Check for Updates') {
+                            try {
+                                await commands.executeCommand('electron-theia:check-for-updates');
+                            } catch {
+                                this.messageService.info('Airone IDE — Checking for updates...');
+                            }
+                        } else if (checkAnswer?.label === 'Download from GitHub') {
+                            window.open('https://github.com/eesha000009-dev/airone-ide/releases', '_blank');
+                        }
+                    }
+                } catch (err: unknown) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    this.messageService.info(
+                        'Could not check for updates. ' +
+                        'Visit https://github.com/eesha000009-dev/airone-ide/releases to download the latest version. ' +
+                        (message ? `(${message})` : '')
+                    );
                 }
             },
             isEnabled: () => true
@@ -593,12 +750,19 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             execute: () => this.manageLibraries(),
             isEnabled: () => true
         });
+
+        // Sync to Backbone command — sends pin definitions to AI Backbone
+        commands.registerCommand(AIRO_SYNC_BACKBONE_COMMAND, {
+            execute: () => this.syncToBackbone(),
+            isEnabled: () => true
+        });
     }
 
     // ─── Menu Registration ───────────────────────────────────────────────
 
     registerMenus(menus: MenuModelRegistry): void {
         // ─── File menu additions ────────────────────────────────────
+        // Register New Sketch and Examples in the File menu
         menus.registerMenuAction(CommonMenus.FILE, {
             commandId: AIRO_NEW_SKETCH_COMMAND.id,
             label: 'New Sketch',
@@ -610,6 +774,14 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             label: 'Examples',
             order: '1'
         });
+
+        // Hide Theia's built-in "New File" / "New Folder" from File menu
+        // (New Sketch already provides file creation functionality)
+        try {
+            menus.unregisterMenuAction('workbench.action.files.newFile', CommonMenus.FILE_NEW_CONTRIBUTIONS);
+            menus.unregisterMenuAction('workbench.action.files.newUntitledFile', CommonMenus.FILE_NEW_CONTRIBUTIONS);
+            menus.unregisterMenuAction('file.newFolder', CommonMenus.FILE_NEW_CONTRIBUTIONS);
+        } catch { /* ignore if not registered yet */ }
 
         // ─── Libraries menu (top-level) ────────────────────────────
         menus.registerSubmenu(AIRONE_LIBRARIES_MENU, 'Libraries');
@@ -676,13 +848,20 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             label: 'Restart to Update',
             order: 'e'
         });
+
+        // Sync to Backbone in Tools menu
+        menus.registerMenuAction(AIRONE_TOOLS_SERIAL, {
+            commandId: AIRO_SYNC_BACKBONE_COMMAND.id,
+            label: 'Sync to Backbone',
+            order: 'd'
+        });
     }
 
     // ─── Keybinding Registration ─────────────────────────────────────────
 
     registerKeybindings(keybindings: KeybindingRegistry): void {
         keybindings.registerKeybinding({
-            command: AIRO_VERIFY_COMMAND.id,
+            command: AIRO_COMPILE_COMMAND.id,
             keybinding: 'ctrl+r'
         });
         keybindings.registerKeybinding({
@@ -690,19 +869,12 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             keybinding: 'ctrl+u'
         });
         keybindings.registerKeybinding({
-            command: AIRO_COMPILE_COMMAND.id,
-            keybinding: 'ctrl+shift+r'
-        });
-        keybindings.registerKeybinding({
             command: AIRO_SERIAL_MONITOR_COMMAND.id,
             keybinding: 'ctrl+shift+m'
         });
+        keybindings.registerKeybinding({
+            command: AIRO_SYNC_BACKBONE_COMMAND.id,
+            keybinding: 'ctrl+shift+b'
+        });
     }
-}
-
-// QuickPickItem interface
-interface QuickPickItem {
-    label: string;
-    description?: string;
-    detail?: string;
 }

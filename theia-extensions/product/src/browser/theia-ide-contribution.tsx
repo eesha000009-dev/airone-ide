@@ -121,6 +121,9 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
 
         // 6. Make logo bigger
         this.enlargeLogo();
+
+        // 7. Hide "New File" / "New Folder" from File menu dropdown
+        this.hideNewFileMenuItems();
     }
 
     /**
@@ -460,13 +463,47 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             try {
                 document.querySelectorAll<HTMLElement>(sel).forEach(el => {
                     const currentWidth = el.style.width;
-                    if (currentWidth !== '48px') {
-                        el.style.width = '48px';
-                        el.style.height = '48px';
-                        el.style.minWidth = '48px';
-                        el.style.minHeight = '48px';
-                        el.style.backgroundSize = '44px 44px';
-                        el.style.padding = '2px';
+                    if (currentWidth !== '100px') {
+                        el.style.width = '100px';
+                        el.style.height = '100px';
+                        el.style.minWidth = '100px';
+                        el.style.minHeight = '100px';
+                        el.style.backgroundSize = '92px 92px';
+                        el.style.padding = '4px';
+                    }
+                });
+            } catch { /* invalid selector */ }
+        }
+    }
+
+    /**
+     * Hide "New File" and "New Folder" menu items from the File menu dropdown.
+     * "New Sketch" already provides file creation functionality.
+     * Uses data-command attribute matching on menu items.
+     */
+    protected hideNewFileMenuItems(): void {
+        const hideCommandIds = [
+            'workbench.action.files.newFile',
+            'workbench.action.files.newUntitledFile',
+            'file.newFolder',
+        ];
+
+        const menuItemSelectors = [
+            '.lm-Menu-item',
+            '.p-Menu-item',
+        ];
+
+        for (const sel of menuItemSelectors) {
+            try {
+                document.querySelectorAll<HTMLElement>(sel).forEach(item => {
+                    const command = item.getAttribute('data-command') || '';
+                    if (hideCommandIds.includes(command)) {
+                        item.style.display = 'none';
+                        item.style.height = '0';
+                        item.style.minHeight = '0';
+                        item.style.padding = '0';
+                        item.style.margin = '0';
+                        item.style.overflow = 'hidden';
                     }
                 });
             } catch { /* invalid selector */ }

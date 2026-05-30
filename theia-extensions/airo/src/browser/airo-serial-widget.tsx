@@ -84,7 +84,7 @@ export class AiroSerialWidget extends ReactWidget {
             }
 
             this.update();
-        } catch (err: any) {
+        } catch (_err: unknown) {
             // Silently fail — don't spam errors every 5s
             this.availablePorts = [];
             this.update();
@@ -118,10 +118,11 @@ export class AiroSerialWidget extends ReactWidget {
                 this.connectionStatus = 'disconnected';
                 this.lines.push(`✗ Failed to connect to ${this.selectedPort}`);
             }
-        } catch (err: any) {
+        } catch (err: unknown) {
             this.connected = false;
             this.connectionStatus = 'disconnected';
-            this.lines.push(`✗ Connection error: ${err.message}`);
+            const message = err instanceof Error ? err.message : String(err);
+            this.lines.push(`✗ Connection error: ${message}`);
         }
         this.update();
     }
@@ -163,8 +164,9 @@ export class AiroSerialWidget extends ReactWidget {
             this.connected = false;
             this.connectionStatus = 'disconnected';
             this.lines.push(`✓ Disconnected from ${this.selectedPort}`);
-        } catch (err: any) {
-            this.lines.push(`✗ Disconnect error: ${err.message}`);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.lines.push(`✗ Disconnect error: ${message}`);
         }
         this.update();
     }
@@ -183,8 +185,9 @@ export class AiroSerialWidget extends ReactWidget {
             } else {
                 this.lines.push('✗ Failed to send data.');
             }
-        } catch (err: any) {
-            this.lines.push(`✗ Send error: ${err.message}`);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.lines.push(`✗ Send error: ${message}`);
         }
         this.update();
     }

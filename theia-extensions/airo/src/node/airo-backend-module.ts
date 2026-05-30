@@ -34,17 +34,17 @@ export default new ContainerModule(bind => {
 
     // ─── RPC Connection Handlers ─────────────────────────────────────────
 
-    bind(ConnectionHandler).toDynamicValue(ctx =>
+    bind(ConnectionHandler).toDynamicValue((ctx: any) =>
         new JsonRpcConnectionHandler<AiroSketchClient>(
             AIRO_SKETCH_PATH,
-            () => ctx.container.get<AiroSketchService>(AiroSketchService)
+            () => ctx.container.get(AiroSketchService)
         )
     ).inSingletonScope();
 
-    bind(ConnectionHandler).toDynamicValue(ctx =>
+    bind(ConnectionHandler).toDynamicValue((ctx: any) =>
         new JsonRpcConnectionHandler<AiroSerialClient>(
             AIRO_SERIAL_PATH,
-            () => ctx.container.get<AiroSerialService>(AiroSerialService)
+            () => ctx.container.get(AiroSerialService)
         )
     ).inSingletonScope();
 });

@@ -217,58 +217,16 @@ export class AiroCompilerService {
     }
 
     private getDefaultTemplate(): string {
-        return `# ============================================
-# AIRONE ROBOT CONFIGURATION
-# ============================================
-
-#library#
-# Import body modules for your robot
-# call body/actuation/upper-right-hands.airo.
-# call body/sight/eyes.airo.
-# call body/hearing/ears.airo.
-# call body/speech/mouth.airo.
-# call body/other_sensors/temperature.airo.
+        return `#library#
 
 Pin defi {
-    # pin_name = pin_number; mode.
-    # mode: input (brings data in / senses) or output (makes action)
-    ledpin = 2; output.
-    # temperature_sensor = 35; input.
-    # ultrasonic = 34; input.
-    # servo_right = 13; output.
+
 }
 
 #variables#
-# Brain URL — where your AI brain lives
-brain_url = "wss://your-brain.local:8080".
-call brain_url.
 
-# Aliases (short names for body modules)
-# body/sight/eyes.airo = eyes.
-# body/hearing/ears.airo = ears.
-
-# ============================================
-# MAIN LOOP — The robot runs this forever
-# SENSE → THINK → ACT
-# ============================================
 loop {
-    # Phase 1: SENSE — Read all input sensors
-    # Only place sensors/modules that bring in data or sense
-    read_for(1000) {
-        # temperature.
-        # eyes.
-        # ears.
-    }
 
-    # Phase 2: THINK — Send data to brain via WebSocket
-    senddatato(brain_url).
-
-    # Phase 3: ACT — Execute brain commands
-    # Only place output modules here (things that make actions)
-    actfor(1000) {
-        ledpin.
-        # servo_right.
-    }
 }
 `;
     }

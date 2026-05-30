@@ -11,10 +11,11 @@ import { injectable, inject } from '@theia/core/shared/inversify';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import { CommandService } from '@theia/core/lib/common/command';
 import { MessageService } from '@theia/core/lib/common/message-service';
+import { ApplicationShell } from '@theia/core/lib/browser/shell';
 
 /**
  * Toolbar contribution that creates a SEPARATE toolbar row below the menu bar
- * for Compile, Verify, Upload, and Serial Monitor buttons.
+ * for Compile, Upload, Serial Monitor, and Sync to Backbone buttons.
  *
  * Auto-update: Updates are checked and downloaded automatically. When ready,
  * a "Restart to Update" button appears in the toolbar.
@@ -31,12 +32,17 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
     @inject(MessageService)
     protected readonly messageService!: MessageService;
 
+    @inject(ApplicationShell)
+    protected readonly shell!: ApplicationShell;
+
     private observer: MutationObserver | null = null;
     private injected = false;
     private retryCount = 0;
     private readonly MAX_RETRIES = 150;
     private retryTimer: ReturnType<typeof setTimeout> | null = null;
     private updateReadyBtn: HTMLButtonElement | null = null;
+    private layoutResizeObserver: ResizeObserver | null = null;
+    private layoutMutationObserver: MutationObserver | null = null;
 
     onStart(): void {
         this.scheduleInject();
@@ -109,27 +115,18 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             return;
         }
 
+        // BEST APPROACH: Insert the toolbar INSIDE the top panel.
+        // Theia's shell uses Lumino BoxPanel which absolutely positions its children.
+        // If we insert the toolbar as a sibling, it won't be accounted for in the layout.
+        // By putting it inside the top panel, the top panel grows to include it,
+        // and Theia's layout engine automatically adjusts the main content area.
         const topPanel = this.findTopPanel();
         if (topPanel) {
-            this.insertToolbarAfter(topPanel);
+            this.insertToolbarInsideTopPanel(topPanel);
             return;
         }
 
-        const shell = document.getElementById('theia-shell') ||
-            document.querySelector('.theia-shell') ||
-            document.querySelector('[class*="theia-shell"]');
-
-        if (shell && shell.firstElementChild) {
-            this.insertToolbarAfter(shell.firstElementChild as HTMLElement);
-            return;
-        }
-
-        const menuBar = document.querySelector('.lm-MenuBar, .p-MenuBar, .theia-MenuBar');
-        if (menuBar && menuBar.parentElement) {
-            this.insertToolbarAfter(menuBar.parentElement);
-            return;
-        }
-
+        // Fallback: If we can't find the top panel, try inserting before main content
         const mainPanel = document.getElementById('theia-main-content-panel') ||
             document.querySelector('.theia-main-content-panel') ||
             document.querySelector('[class*="main-content-panel"]');
@@ -140,18 +137,33 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         }
     }
 
-    protected insertToolbarAfter(afterElement: HTMLElement): void {
+    /**
+     * Insert the toolbar INSIDE the top panel as its last child.
+     * This is the correct approach because Theia's Lumino BoxPanel
+     * absolutely positions its direct children (top-panel, main-content, etc.).
+     * Adding the toolbar INSIDE the top panel means the top panel's height
+     * naturally includes the toolbar, and the BoxPanel adjusts the main
+     * content area automatically.
+     */
+    protected insertToolbarInsideTopPanel(topPanel: HTMLElement): void {
         const toolbarRow = this.createToolbarRow();
-        if (afterElement.parentNode) {
-            if (afterElement.nextSibling) {
-                afterElement.parentNode.insertBefore(toolbarRow, afterElement.nextSibling);
-            } else {
-                afterElement.parentNode.appendChild(toolbarRow);
-            }
-        }
+
+        // Make the top panel a flex column so menu bar and toolbar stack vertically
+        topPanel.style.display = 'flex';
+        topPanel.style.flexDirection = 'column';
+
+        // Append toolbar as last child of top panel (below the menu bar)
+        topPanel.appendChild(toolbarRow);
+
         this.injected = true;
         this.removeNavigationArrows();
         this.cleanup();
+
+        // CRITICAL: Adjust the layout so the editor area doesn't overlap with the toolbar.
+        // Theia's Lumino BoxPanel positions children absolutely with inline styles.
+        // When the top panel grows (because we added the toolbar), the BoxPanel
+        // doesn't recalculate the main content panel's position. We need to fix this.
+        this.adjustLayoutAfterToolbarInsert();
     }
 
     protected insertToolbarBefore(beforeElement: HTMLElement): void {
@@ -162,16 +174,13 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         this.injected = true;
         this.removeNavigationArrows();
         this.cleanup();
+        this.adjustLayoutAfterToolbarInsert();
     }
 
     // ─── SVG Icons ────────────────────────────────────────────────────────────
 
     protected get compileIconSvg(): string {
         return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
-    }
-
-    protected get verifyIconSvg(): string {
-        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`;
     }
 
     protected get uploadIconSvg(): string {
@@ -186,6 +195,10 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>`;
     }
 
+    protected get syncIconSvg(): string {
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>`;
+    }
+
     // ─── Toolbar Creation ─────────────────────────────────────────────────────
 
     protected createToolbarRow(): HTMLElement {
@@ -193,7 +206,7 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         toolbarRow.id = 'airo-secondary-toolbar';
         toolbarRow.className = 'airo-secondary-toolbar';
 
-        // Left group: Compile, Verify, Upload
+        // Left group: Compile, Upload
         const leftGroup = document.createElement('div');
         leftGroup.className = 'airo-toolbar-left';
 
@@ -204,15 +217,6 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             '#27ae60',
             '#219a52',
             () => this.executeCommand('airo.compile')
-        ));
-
-        leftGroup.appendChild(this.createButton(
-            'airo-verify-btn',
-            this.verifyIconSvg,
-            'Verify',
-            '#2980b9',
-            '#2471a3',
-            () => this.executeCommand('airo.verify')
         ));
 
         leftGroup.appendChild(this.createButton(
@@ -235,6 +239,16 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             '#555555',
             '#444444',
             () => this.executeCommand('airo.serialMonitor')
+        ));
+
+        // Sync to Backbone button — sends pin defs to AI brain
+        rightGroup.appendChild(this.createButton(
+            'airo-sync-backbone-btn',
+            this.syncIconSvg,
+            'Sync to Backbone',
+            '#8e44ad',
+            '#7d3c98',
+            () => this.executeCommand('airo.syncToBackbone')
         ));
 
         // Restart to Update button — hidden by default, shown when update is downloaded
@@ -433,6 +447,112 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         }
     }
 
+    /**
+     * After the toolbar is inserted inside the top panel, the top panel's height
+     * increases (because height: auto). But Theia's Lumino BoxPanel positions its
+     * children (top panel, main content, bottom panel) absolutely with calculated
+     * inline styles. The main content panel's `top` is still set to the old top
+     * panel height, causing the toolbar to overlap the editor.
+     *
+     * This method:
+     * 1. Observes the top panel's actual height with a ResizeObserver
+     * 2. Adjusts the main content panel's `top` and `height` to account for it
+     * 3. Also triggers Theia's shell layout update
+     */
+    protected adjustLayoutAfterToolbarInsert(): void {
+        const adjustOnce = () => {
+            const topPanel = this.findTopPanel();
+            if (!topPanel) return;
+
+            const actualHeight = topPanel.offsetHeight;
+
+            // Find the main content panel and bottom panel
+            const mainContentPanel = document.getElementById('theia-main-content-panel') ||
+                document.querySelector('.theia-main-content-panel') as HTMLElement;
+            const bottomPanel = document.getElementById('theia-bottom-panel') ||
+                document.querySelector('.theia-bottom-panel') as HTMLElement;
+
+            if (mainContentPanel) {
+                // Override the inline `top` style set by Lumino BoxPanel
+                mainContentPanel.style.top = `${actualHeight}px`;
+            }
+
+            if (bottomPanel) {
+                // Also ensure the bottom panel is positioned correctly
+                // The bottom panel should be below the main content panel
+                const shellHeight = document.getElementById('theia-app-shell')?.offsetHeight || window.innerHeight;
+                const bottomHeight = bottomPanel.offsetHeight || 0;
+                bottomPanel.style.top = `${shellHeight - bottomHeight}px`;
+            }
+
+            // Trigger Theia's layout engine to recalculate
+            try {
+                // Dispatch a resize event which causes Theia's shell to recalculate layout
+                window.dispatchEvent(new Event('resize'));
+            } catch { /* ignore */ }
+        };
+
+        // Adjust immediately
+        adjustOnce();
+
+        // Adjust after multiple delays (Theia may reset the layout after initial render)
+        setTimeout(adjustOnce, 50);
+        setTimeout(adjustOnce, 100);
+        setTimeout(adjustOnce, 250);
+        setTimeout(adjustOnce, 500);
+        setTimeout(adjustOnce, 1000);
+        setTimeout(adjustOnce, 2000);
+
+        // Set up ResizeObserver on the top panel to continuously adjust
+        const topPanel = this.findTopPanel();
+        if (topPanel) {
+            this.layoutResizeObserver = new ResizeObserver(() => {
+                adjustOnce();
+            });
+            this.layoutResizeObserver.observe(topPanel);
+        }
+
+        // Also observe when Theia's layout engine resets the main content panel's position
+        const mainContentPanel = document.getElementById('theia-main-content-panel') ||
+            document.querySelector('.theia-main-content-panel');
+        if (mainContentPanel) {
+            this.layoutMutationObserver = new MutationObserver(mutations => {
+                for (const mutation of mutations) {
+                    if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+                        // Theia's layout engine may have reset the top position
+                        // Re-apply our adjustment
+                        const topPanel = this.findTopPanel();
+                        if (topPanel) {
+                            const actualHeight = topPanel.offsetHeight;
+                            const currentTop = parseInt((mainContentPanel as HTMLElement).style.top || '0', 10);
+                            if (currentTop !== actualHeight) {
+                                (mainContentPanel as HTMLElement).style.top = `${actualHeight}px`;
+                            }
+                        }
+                    }
+                }
+            });
+            this.layoutMutationObserver.observe(mainContentPanel, {
+                attributes: true,
+                attributeFilter: ['style']
+            });
+        }
+
+        // Also observe the app shell for layout changes that may reset positions
+        const appShell = document.getElementById('theia-app-shell');
+        if (appShell) {
+            const shellObserver = new MutationObserver(() => {
+                adjustOnce();
+            });
+            shellObserver.observe(appShell, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['style']
+            });
+        }
+    }
+
     protected cleanup(): void {
         if (this.observer) {
             this.observer.disconnect();
@@ -441,6 +561,14 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         if (this.retryTimer) {
             clearInterval(this.retryTimer);
             this.retryTimer = null;
+        }
+        if (this.layoutResizeObserver) {
+            this.layoutResizeObserver.disconnect();
+            this.layoutResizeObserver = null;
+        }
+        if (this.layoutMutationObserver) {
+            this.layoutMutationObserver.disconnect();
+            this.layoutMutationObserver = null;
         }
     }
 
