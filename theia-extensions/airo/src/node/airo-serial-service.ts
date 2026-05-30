@@ -21,10 +21,10 @@ import { SerialPortInfo } from '../common/airo-protocol';
 interface SerialPortInstance {
     isOpen: boolean;
     open(callback: (err?: Error) => void): void;
-    close(callback: (err?: Error) => void): void;
+    close(callback?: (err?: Error) => void): void;
     write(data: string, callback: (err?: Error) => void): void;
     pipe(parser: unknown): unknown;
-    on(event: string, callback: (data: Buffer | string) => void): void;
+    on(event: string, callback: (data: string | Buffer) => void): void;
 }
 
 interface SerialPortListEntry {
@@ -97,14 +97,16 @@ export class AiroSerialService {
             // Try to load the readline parser
             try {
                 const { ReadlineParser } = require('@serialport/parser-readline');
-                const parser = this.port.pipe(new ReadlineParser({ delimiter: '\n' }));
+                const parser = this.port!.pipe(new ReadlineParser({ delimiter: '\n' })) as {
+                    on: (event: string, cb: (data: string) => void) => void;
+                };
                 parser.on('data', (line: string) => {
                     this.dataBuffer += line + '\n';
                 });
             } catch {
                 // If parser not available, use raw data
                 console.warn('[AiroSerialService] @serialport/parser-readline not available, using raw data mode.');
-                this.port.on('data', (chunk: Buffer) => {
+                this.port!.on('data', (chunk: string | Buffer) => {
                     this.dataBuffer += chunk.toString();
                 });
             }
