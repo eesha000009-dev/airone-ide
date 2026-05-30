@@ -132,7 +132,7 @@ async def run_inference(robot_id, sensor_text):
         raw_value = values[i]
         min_val, max_val = actuator["range"]
         scaled = int((raw_value + 1.0) / 2.0 * (max_val - min_val) + min_val)
-        scaled = max(min_val, min(min_val, scaled))  # Clamp
+        scaled = max(min_val, min(max_val, scaled))  # Clamp
 
         commands[actuator["name"]] = {
             "value": scaled,
