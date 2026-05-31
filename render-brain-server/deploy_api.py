@@ -172,7 +172,7 @@ class LiquidNeuralNetwork:
                     self.output_types[name] = pin_type
 
         # Training metadata
-        self.trained = config.get('trained', False)
+        self.trained = config.get('trained', False) or bool(config.get('weights', {}).get('W_in'))
         # Support both top-level and training_info.accuracy formats
         self.training_accuracy = config.get('training_accuracy') or (config.get('training_info') or {}).get('accuracy')
         self.training_iterations = config.get('training_iterations') or (config.get('training_info') or {}).get('epochs')
@@ -715,8 +715,9 @@ class LiquidNeuralNetwork:
 
         # Run LNN forward pass
         # Use simple_forward when trained weights are loaded (matches nvidia-client.js training)
-        has_trained_weights = hasattr(self, 'bias_input') and any(b != 0 for b in self.bias_input)
-        if self.trained and has_trained_weights:
+        has_trained_weights = (hasattr(self, 'bias_input') and 
+                              any(abs(b) > 0.001 for b in self.bias_input))
+        if has_trained_weights:
             raw_outputs = self.simple_forward(input_values)
         else:
             raw_outputs = self.forward(input_values)
