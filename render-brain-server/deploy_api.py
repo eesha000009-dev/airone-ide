@@ -78,8 +78,8 @@ RENDER_OWNER_ID = "tea-d8dh89s2m8qs7388ajb0"
 BRAIN_TEMPLATE_ID = "srv-d8dh9esm0tmc73duts10"
 
 # Kimi API settings
-KIMI_TIMEOUT = 45.0        # seconds per attempt
-KIMI_MAX_RETRIES = 1       # Single attempt in SSE context
+KIMI_TIMEOUT = 120.0       # seconds per attempt (increased for Kimi K2.6)
+KIMI_MAX_RETRIES = 2       # Retry once on failure
 KIMI_BACKOFF_BASE = 2.0    # exponential backoff base
 
 # Detect brain-template mode
@@ -351,29 +351,33 @@ class LiquidNeuralNetwork:
 
         return correct / total
 
-    def train(self, training_data: list, iterations: int = 100,
-              population: int = 20, sigma: float = 0.1,
-              learning_rate: float = 0.03,
+    def train(self, training_data: list, iterations: int = 300,
+              population: int = 30, sigma: float = 0.15,
+              learning_rate: float = 0.04,
               progress_callback=None) -> dict:
         """
-        Train LNN weights using Evolutionary Strategy (ES).
+        Train LNN weights using Evolutionary Strategy (ES) followed by
+        gradient-descent fine-tuning.
 
         The algorithm:
         1. Start with current (Xavier-initialized) weights
-        2. For each iteration:
+        2. For each ES iteration:
            a. Generate N perturbations by adding Gaussian noise to weights
            b. Evaluate each perturbation on training data (MSE loss)
            c. Update weights as weighted average of perturbations,
               weighted by negative loss improvement
-        3. Track best loss throughout training
+           d. Adaptive sigma: decrease sigma over iterations for refinement
+           e. Early stopping when loss < 0.01
+        3. After ES, run gradient-descent fine-tuning for 100 epochs
+        4. Track best loss throughout training
 
         Args:
             training_data: List of training scenarios with 'inputs' and
                 'expected_outputs' (normalized to [0,1]).
-            iterations: Number of ES iterations (default 100).
-            population: Number of perturbations per iteration (default 20).
-            sigma: Standard deviation of Gaussian noise (default 0.1).
-            learning_rate: Step size for weight updates (default 0.03).
+            iterations: Number of ES iterations (default 300).
+            population: Number of perturbations per iteration (default 30).
+            sigma: Initial standard deviation of Gaussian noise (default 0.15).
+            learning_rate: Step size for weight updates (default 0.04).
             progress_callback: Optional callable(iteration, loss, best_loss)
                 called every 10 iterations for progress reporting.
 
@@ -385,6 +389,7 @@ class LiquidNeuralNetwork:
             logger.warning("No training data provided; skipping training.")
             return {"final_loss": None, "best_loss": None, "iterations": 0, "accuracy": 0.0}
 
+        initial_sigma = sigma
         logger.info(f"Starting ES training: {iterations} iterations, "
                     f"population={population}, sigma={sigma}, lr={learning_rate}")
 
@@ -424,18 +429,22 @@ class LiquidNeuralNetwork:
 
         best_weights = flatten_weights(self.weights_input, self.weights_recurrent, self.weights_output)
         best_loss = self.compute_loss(training_data)
-        current_loss = best_loss
 
         n_params = len(best_weights)
+        es_iterations_completed = 0
 
         for iteration in range(iterations):
+            # Adaptive sigma: decrease over iterations for finer refinement
+            # sigma starts at initial_sigma and decays to initial_sigma * 0.1
+            current_sigma = initial_sigma * (0.1 ** (iteration / max(iterations, 1)))
+
             # Generate perturbations and evaluate
             perturbations = []
             losses = []
 
             for p in range(population):
-                # Generate noise vector
-                noise = [random.gauss(0, sigma) for _ in range(n_params)]
+                # Generate noise vector with adaptive sigma
+                noise = [random.gauss(0, current_sigma) for _ in range(n_params)]
 
                 # Create perturbed weights
                 perturbed = [best_weights[i] + noise[i] for i in range(n_params)]
@@ -467,7 +476,7 @@ class LiquidNeuralNetwork:
             if total_weight > 0:
                 # Normalize and apply learning rate
                 for i in range(n_params):
-                    update[i] = (update[i] / total_weight) * learning_rate / sigma
+                    update[i] = (update[i] / total_weight) * learning_rate / max(current_sigma, 1e-6)
 
                 # Always update from best weights (greedy ES)
                 new_weights = [best_weights[i] + update[i] for i in range(n_params)]
@@ -482,9 +491,86 @@ class LiquidNeuralNetwork:
                     best_loss = new_loss
                 # else: reject, keep best_weights unchanged (greedy)
 
+            es_iterations_completed = iteration + 1
+
+            # Early stopping: if loss is very low, stop ES
+            if best_loss < 0.01:
+                logger.info(f"ES early stopping at iteration {iteration+1}: loss={best_loss:.6f} < 0.01")
+                break
+
             # Progress callback
             if progress_callback and (iteration % 10 == 0 or iteration == iterations - 1):
                 progress_callback(iteration + 1, best_loss, best_loss)
+
+        # ── Gradient-descent fine-tuning after ES ──────────────────────
+        logger.info(f"ES training done ({es_iterations_completed} iters, loss={best_loss:.6f}). "
+                    f"Starting gradient-descent fine-tuning for 100 epochs...")
+        gd_epochs = 100
+        gd_lr = 0.01
+
+        # Apply best ES weights before GD fine-tuning
+        best_wi, best_wr, best_wo = unflatten_weights(best_weights, hu, ins, outs)
+
+        for epoch in range(gd_epochs):
+            # Compute gradients numerically via finite differences
+            grad_wi = [[0.0] * ins for _ in range(hu)]
+            grad_wr = [[0.0] * hu for _ in range(hu)]
+            grad_wo = [[0.0] * hu for _ in range(outs)]
+
+            eps = 1e-4
+            base_loss = self.compute_loss(training_data, best_wi, best_wr, best_wo)
+
+            # Gradient for weights_input
+            for h in range(hu):
+                for i in range(ins):
+                    wi_plus = [row[:] for row in best_wi]
+                    wi_plus[h][i] += eps
+                    loss_plus = self.compute_loss(training_data, wi_plus, best_wr, best_wo)
+                    grad_wi[h][i] = (loss_plus - base_loss) / eps
+
+            # Gradient for weights_recurrent
+            for h in range(hu):
+                for j in range(hu):
+                    wr_plus = [row[:] for row in best_wr]
+                    wr_plus[h][j] += eps
+                    loss_plus = self.compute_loss(training_data, best_wi, wr_plus, best_wo)
+                    grad_wr[h][j] = (loss_plus - base_loss) / eps
+
+            # Gradient for weights_output
+            for o in range(outs):
+                for h in range(hu):
+                    wo_plus = [row[:] for row in best_wo]
+                    wo_plus[o][h] += eps
+                    loss_plus = self.compute_loss(training_data, best_wi, best_wr, wo_plus)
+                    grad_wo[o][h] = (loss_plus - base_loss) / eps
+
+            # Apply gradient descent update
+            for h in range(hu):
+                for i in range(ins):
+                    best_wi[h][i] -= gd_lr * grad_wi[h][i]
+            for h in range(hu):
+                for j in range(hu):
+                    best_wr[h][j] -= gd_lr * grad_wr[h][j]
+            for o in range(outs):
+                for h in range(hu):
+                    best_wo[o][h] -= gd_lr * grad_wo[o][h]
+
+            # Check new loss
+            new_loss = self.compute_loss(training_data, best_wi, best_wr, best_wo)
+            if new_loss < best_loss:
+                best_loss = new_loss
+                best_weights = flatten_weights(best_wi, best_wr, best_wo)
+            else:
+                # Revert if worse
+                best_wi, best_wr, best_wo = unflatten_weights(best_weights, hu, ins, outs)
+
+            if progress_callback and epoch % 20 == 0:
+                progress_callback(es_iterations_completed + epoch + 1, best_loss, best_loss)
+
+            # Early stopping
+            if best_loss < 0.005:
+                logger.info(f"GD early stopping at epoch {epoch+1}: loss={best_loss:.6f} < 0.005")
+                break
 
         # Apply best weights to the model
         best_wi, best_wr, best_wo = unflatten_weights(best_weights, hu, ins, outs)
@@ -501,16 +587,17 @@ class LiquidNeuralNetwork:
         # Update training metadata
         self.trained = True
         self.training_accuracy = round(accuracy, 4)
-        self.training_iterations = iterations
+        self.training_iterations = es_iterations_completed
         self.training_loss = round(best_loss, 6)
 
         logger.info(f"Training complete: best_loss={best_loss:.6f}, "
-                    f"accuracy={accuracy:.2%}, iterations={iterations}")
+                    f"accuracy={accuracy:.2%}, ES_iters={es_iterations_completed}, "
+                    f"+ GD fine-tuning")
 
         return {
             "final_loss": round(best_loss, 6),
             "best_loss": round(best_loss, 6),
-            "iterations": iterations,
+            "iterations": es_iterations_completed,
             "accuracy": round(accuracy, 4),
         }
 
@@ -551,7 +638,15 @@ class LiquidNeuralNetwork:
             return {"action": "servo", "angle": angle}
 
     def process_sensor_data(self, sensor_data: dict, output_modules: list) -> dict:
-        """Process sensor data and generate commands."""
+        """Process sensor data and generate commands.
+        
+        If LNN training accuracy < 60%, falls back to rule-based processing.
+        """
+        # Default output_modules to all output mapping keys if empty
+        if not output_modules:
+            output_modules = list(self.output_mapping.keys())
+            logger.info(f"output_modules empty, defaulting to all outputs: {output_modules}")
+
         # Encode inputs to [0, 1] range
         input_values = [0.0] * self.input_size
         for name, idx in self.input_mapping.items():
@@ -573,10 +668,31 @@ class LiquidNeuralNetwork:
                     except (ValueError, TypeError):
                         pass
 
-        # Run forward pass
+        # Run LNN forward pass
         raw_outputs = self.forward(input_values)
 
-        # Decode outputs to commands
+        # Check if LNN accuracy is too low — use rule-based fallback
+        if self.training_accuracy is not None and self.training_accuracy < 0.6:
+            rule_outputs = RuleBasedProcessor.process(
+                sensor_data, input_values, self.input_mapping,
+                self.output_mapping, self.output_types, self.description
+            )
+            if rule_outputs:
+                # Blend: 70% rule-based, 30% LNN for exploration
+                blended = {}
+                for idx, name in self.idx_to_output_name.items():
+                    if name in output_modules:
+                        lnn_val = raw_outputs[idx] if idx < len(raw_outputs) else 0.5
+                        rule_val = rule_outputs.get(name, lnn_val)
+                        blended_val = 0.7 * rule_val + 0.3 * lnn_val
+                        blended[name] = blended_val
+                commands = {}
+                for name, val in blended.items():
+                    commands[name] = self._get_output_action(name, val)
+                logger.info(f"Using rule-based fallback (LNN accuracy={self.training_accuracy:.2%})")
+                return commands
+
+        # Decode outputs to commands (normal LNN path)
         commands = {}
         for idx, name in self.idx_to_output_name.items():
             if idx < len(raw_outputs) and name in output_modules:
@@ -605,6 +721,524 @@ class LiquidNeuralNetwork:
             config['training_iterations'] = self.training_iterations
             config['training_loss'] = self.training_loss
         return config
+
+
+
+# ─── Rule-Based Processor (Fallback) ────────────────────────────────────────
+
+class RuleBasedProcessor:
+    """
+    Rule-based fallback processor for when LNN accuracy is low.
+    
+    Handles common robot types directly:
+    - Obstacle avoidance robots: turn away from closest obstacle
+    - Line-following robots: follow the line based on sensor values
+    - Generic robots: use behavior rules from description
+    """
+
+    # Keywords for detecting robot type
+    OBSTACLE_KEYWORDS = ['obstacle', 'avoid', 'ultrasonic', 'distance', 'proximity', 'ir_sensor', 'sonar', 'range']
+    LINE_KEYWORDS = ['line', 'follow', 'track', 'ir', 'infrared', 'reflectance', 'qtr']
+
+    @staticmethod
+    def detect_robot_type(input_names: list, output_names: list, description: str) -> str:
+        """Detect robot type from sensor/actuator names and description."""
+        all_text = ' '.join(input_names + output_names).lower() + ' ' + description.lower()
+        
+        obstacle_score = sum(1 for kw in RuleBasedProcessor.OBSTACLE_KEYWORDS if kw in all_text)
+        line_score = sum(1 for kw in RuleBasedProcessor.LINE_KEYWORDS if kw in all_text)
+        
+        if obstacle_score > line_score:
+            return 'obstacle_avoidance'
+        elif line_score > 0:
+            return 'line_following'
+        else:
+            return 'generic'
+
+    @staticmethod
+    def process(sensor_data: dict, input_values: list, input_mapping: dict,
+                output_mapping: dict, output_types: dict, description: str) -> dict:
+        """
+        Process sensor data using rule-based logic.
+        
+        Returns dict of {output_name: normalized_value} or empty dict if no rules apply.
+        """
+        input_names = list(input_mapping.keys())
+        output_names = list(output_mapping.keys())
+        
+        robot_type = RuleBasedProcessor.detect_robot_type(input_names, output_names, description)
+        
+        if robot_type == 'obstacle_avoidance':
+            return RuleBasedProcessor._obstacle_avoidance_rules(
+                sensor_data, input_values, input_mapping, output_mapping, description
+            )
+        elif robot_type == 'line_following':
+            return RuleBasedProcessor._line_following_rules(
+                sensor_data, input_values, input_mapping, output_mapping, description
+            )
+        else:
+            return RuleBasedProcessor._generic_rules(
+                sensor_data, input_values, input_mapping, output_mapping, description
+            )
+
+    @staticmethod
+    def _obstacle_avoidance_rules(sensor_data: dict, input_values: list,
+                                   input_mapping: dict, output_mapping: dict,
+                                   description: str) -> dict:
+        """
+        Obstacle avoidance: IF front sensor < threshold -> turn away from closest obstacle.
+        
+        Sensors: proximity/distance sensors (0.0 = very close, 1.0 = far)
+        Outputs: motor_left, motor_right (0.0 = stopped, 1.0 = full speed)
+        """
+        input_names = list(input_mapping.keys())
+        output_names = list(output_mapping.keys())
+        
+        # Get normalized sensor values (0 = obstacle close, 1 = clear)
+        sensor_vals = {}
+        for name, idx in input_mapping.items():
+            if idx < len(input_values):
+                sensor_vals[name] = input_values[idx]
+            else:
+                sensor_vals[name] = 0.5
+        
+        # Find left/right/front sensors by name patterns
+        left_sensors = []
+        right_sensors = []
+        front_sensors = []
+        
+        for name, val in sensor_vals.items():
+            name_lower = name.lower()
+            if any(kw in name_lower for kw in ['left', 'l']):
+                left_sensors.append((name, val))
+            elif any(kw in name_lower for kw in ['right', 'r']):
+                right_sensors.append((name, val))
+            else:
+                front_sensors.append((name, val))
+        
+        # If no left/right distinction, split sensors evenly
+        if not left_sensors and not right_sensors:
+            n = len(list(sensor_vals.values()))
+            half = n // 2
+            all_vals = list(sensor_vals.items())
+            left_sensors = all_vals[:half]
+            right_sensors = all_vals[half:]
+            front_sensors = []
+        
+        # Compute left/right obstacle proximity (lower value = closer obstacle)
+        left_min = min((v for _, v in left_sensors), default=1.0)
+        right_min = min((v for _, v in right_sensors), default=1.0)
+        front_min = min((v for _, v in front_sensors), default=1.0)
+        
+        # Overall minimum (closest obstacle)
+        overall_min = min(left_min, right_min, front_min)
+        
+        # Determine motor outputs by name patterns
+        left_motor_name = None
+        right_motor_name = None
+        other_outputs = []
+        
+        for name in output_names:
+            name_lower = name.lower()
+            if any(kw in name_lower for kw in ['left', 'l_']):
+                left_motor_name = name
+            elif any(kw in name_lower for kw in ['right', 'r_']):
+                right_motor_name = name
+        
+        if not left_motor_name or not right_motor_name:
+            # Assign by index: first output = left, second = right
+            if len(output_names) >= 2:
+                left_motor_name = output_names[0]
+                right_motor_name = output_names[1]
+            other_outputs = output_names[2:]
+        else:
+            other_outputs = [n for n in output_names if n not in (left_motor_name, right_motor_name)]
+        
+        # Obstacle avoidance logic:
+        # - Clear path (all sensors high): both motors full speed
+        # - Obstacle left: turn right (slow down right motor, speed up left)
+        # - Obstacle right: turn left (slow down left motor, speed up right)
+        # - Obstacle front/both: sharp turn
+        
+        OBSTACLE_THRESHOLD = 0.4  # Below this = obstacle detected
+        
+        if overall_min > OBSTACLE_THRESHOLD:
+            # Clear path: go forward
+            left_speed = 0.9
+            right_speed = 0.9
+        elif left_min < OBSTACLE_THRESHOLD and right_min >= OBSTACLE_THRESHOLD:
+            # Obstacle on left: turn right
+            left_speed = 0.9
+            right_speed = 0.2 + 0.3 * right_min
+        elif right_min < OBSTACLE_THRESHOLD and left_min >= OBSTACLE_THRESHOLD:
+            # Obstacle on right: turn left
+            left_speed = 0.2 + 0.3 * left_min
+            right_speed = 0.9
+        elif front_min < OBSTACLE_THRESHOLD:
+            # Obstacle in front: sharp turn (turn right by default)
+            left_speed = 0.8
+            right_speed = 0.1
+        else:
+            # Obstacles on both sides: slight right turn
+            left_speed = 0.7
+            right_speed = 0.3
+        
+        # Scale speed by how close the nearest obstacle is
+        safety_factor = max(0.3, overall_min)
+        left_speed *= safety_factor
+        right_speed *= safety_factor
+        
+        # Clamp
+        left_speed = max(0.0, min(1.0, left_speed))
+        right_speed = max(0.0, min(1.0, right_speed))
+        
+        outputs = {}
+        if left_motor_name:
+            outputs[left_motor_name] = left_speed
+        if right_motor_name:
+            outputs[right_motor_name] = right_speed
+        
+        # Other outputs: use threshold logic
+        for name in other_outputs:
+            name_lower = name.lower()
+            if 'led' in name_lower or 'buzzer' in name_lower:
+                outputs[name] = 1.0 if overall_min < OBSTACLE_THRESHOLD else 0.0
+            else:
+                outputs[name] = 0.5
+        
+        return outputs
+
+    @staticmethod
+    def _line_following_rules(sensor_data: dict, input_values: list,
+                               input_mapping: dict, output_mapping: dict,
+                               description: str) -> dict:
+        """
+        Line following: follow the line based on sensor values.
+        
+        Sensors: IR/reflectance sensors (0.0 = on line/dark, 1.0 = off line/light)
+        Outputs: motor_left, motor_right (0.0 = stopped, 1.0 = full speed)
+        """
+        input_names = list(input_mapping.keys())
+        output_names = list(output_mapping.keys())
+        
+        sensor_vals = {}
+        for name, idx in input_mapping.items():
+            if idx < len(input_values):
+                sensor_vals[name] = input_values[idx]
+            else:
+                sensor_vals[name] = 0.5
+        
+        # Find left/right/center sensors
+        left_sensors = []
+        right_sensors = []
+        center_sensors = []
+        
+        for name, val in sensor_vals.items():
+            name_lower = name.lower()
+            if any(kw in name_lower for kw in ['left', 'l']):
+                left_sensors.append((name, val))
+            elif any(kw in name_lower for kw in ['right', 'r']):
+                right_sensors.append((name, val))
+            else:
+                center_sensors.append((name, val))
+        
+        # Compute average sensor values (for line: low value = on line)
+        left_avg = sum(v for _, v in left_sensors) / max(len(left_sensors), 1)
+        right_avg = sum(v for _, v in right_sensors) / max(len(right_sensors), 1)
+        center_avg = sum(v for _, v in center_sensors) / max(len(center_sensors), 1)
+        
+        # Determine motor names
+        left_motor_name = None
+        right_motor_name = None
+        for name in output_names:
+            name_lower = name.lower()
+            if any(kw in name_lower for kw in ['left', 'l_']):
+                left_motor_name = name
+            elif any(kw in name_lower for kw in ['right', 'r_']):
+                right_motor_name = name
+        if not left_motor_name or not right_motor_name:
+            if len(output_names) >= 2:
+                left_motor_name = output_names[0]
+                right_motor_name = output_names[1]
+        
+        # Line following logic: on_line = low value (0.0), off_line = high value (1.0)
+        # If line is to the left (left sensor on line): turn left
+        # If line is to the right (right sensor on line): turn right
+        # If line is centered: go straight
+        
+        LINE_THRESHOLD = 0.5
+        
+        left_on_line = left_avg < LINE_THRESHOLD
+        right_on_line = right_avg < LINE_THRESHOLD
+        center_on_line = center_avg < LINE_THRESHOLD
+        
+        if center_on_line or (not left_on_line and not right_on_line):
+            # Go straight
+            left_speed = 0.8
+            right_speed = 0.8
+        elif left_on_line and not right_on_line:
+            # Line to the left: turn left
+            left_speed = 0.4
+            right_speed = 0.8
+        elif right_on_line and not left_on_line:
+            # Line to the right: turn right
+            left_speed = 0.8
+            right_speed = 0.4
+        else:
+            # Both sensors on line: go straight
+            left_speed = 0.7
+            right_speed = 0.7
+        
+        outputs = {}
+        if left_motor_name:
+            outputs[left_motor_name] = max(0.0, min(1.0, left_speed))
+        if right_motor_name:
+            outputs[right_motor_name] = max(0.0, min(1.0, right_speed))
+        
+        # Other outputs
+        other_names = [n for n in output_names if n not in outputs]
+        for name in other_names:
+            outputs[name] = 0.5
+        
+        return outputs
+
+    @staticmethod
+    def _generic_rules(sensor_data: dict, input_values: list,
+                        input_mapping: dict, output_mapping: dict,
+                        description: str) -> dict:
+        """
+        Generic robot: react to sensor inputs with proportional responses.
+        Higher input -> higher output for corresponding actuator.
+        """
+        input_names = list(input_mapping.keys())
+        output_names = list(output_mapping.keys())
+        
+        sensor_vals = [input_values[idx] if idx < len(input_values) else 0.5 
+                       for idx in range(len(input_names))]
+        
+        outputs = {}
+        for i, name in enumerate(output_names):
+            # Map corresponding input to output (or average if inputs < outputs)
+            if i < len(sensor_vals):
+                outputs[name] = 1.0 - sensor_vals[i]  # Inverse: close obstacle -> fast motor
+            else:
+                avg = sum(sensor_vals) / max(len(sensor_vals), 1)
+                outputs[name] = 1.0 - avg
+            outputs[name] = max(0.0, min(1.0, outputs[name]))
+        
+        return outputs
+
+    @staticmethod
+    def generate_training_scenarios(config: dict) -> list:
+        """
+        Generate rule-based training scenarios for a robot config.
+        Produces 50+ diverse scenarios with strong input-output correlations.
+        """
+        input_mapping = config.get('input_mapping', {})
+        output_mapping = config.get('output_mapping', {})
+        description = config.get('description', '')
+        input_names = list(input_mapping.keys())
+        output_names = list(output_mapping.keys())
+        
+        robot_type = RuleBasedProcessor.detect_robot_type(input_names, output_names, description)
+        scenarios = []
+        
+        if robot_type == 'obstacle_avoidance':
+            scenarios = RuleBasedProcessor._obstacle_training_scenarios(
+                input_names, output_names
+            )
+        elif robot_type == 'line_following':
+            scenarios = RuleBasedProcessor._line_training_scenarios(
+                input_names, output_names
+            )
+        else:
+            scenarios = RuleBasedProcessor._generic_training_scenarios(
+                input_names, output_names
+            )
+        
+        return scenarios
+
+    @staticmethod
+    def _obstacle_training_scenarios(input_names: list, output_names: list) -> list:
+        """Generate obstacle avoidance training scenarios with strong signals."""
+        scenarios = []
+        
+        # Find motor output names
+        left_motor = None
+        right_motor = None
+        for name in output_names:
+            nl = name.lower()
+            if any(kw in nl for kw in ['left', 'l_']):
+                left_motor = name
+            elif any(kw in nl for kw in ['right', 'r_']):
+                right_motor = name
+        if not left_motor or not right_motor:
+            left_motor = output_names[0] if len(output_names) > 0 else None
+            right_motor = output_names[1] if len(output_names) > 1 else None
+        
+        # Scenario 1: Clear path - all sensors high (far from obstacles)
+        # Both motors: full speed
+        for _ in range(8):
+            inputs = {n: round(random.uniform(0.8, 1.0), 3) for n in input_names}
+            expected = {left_motor: round(random.uniform(0.85, 1.0), 3),
+                       right_motor: round(random.uniform(0.85, 1.0), 3)} if left_motor and right_motor else {}
+            scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+        
+        # Scenario 2: Obstacle on left - turn right
+        # Left sensors low, right sensors high
+        left_input_names = [n for n in input_names if any(kw in n.lower() for kw in ['left', 'l'])]
+        right_input_names = [n for n in input_names if any(kw in n.lower() for kw in ['right', 'r'])]
+        other_input_names = [n for n in input_names if n not in left_input_names and n not in right_input_names]
+        
+        if not left_input_names and not right_input_names:
+            half = len(input_names) // 2
+            left_input_names = input_names[:half]
+            right_input_names = input_names[half:]
+        
+        for _ in range(8):
+            inputs = {}
+            for n in left_input_names:
+                inputs[n] = round(random.uniform(0.0, 0.3), 3)
+            for n in right_input_names:
+                inputs[n] = round(random.uniform(0.6, 1.0), 3)
+            for n in other_input_names:
+                inputs[n] = round(random.uniform(0.4, 0.7), 3)
+            # Obstacle left: left motor fast, right motor slow
+            expected = {left_motor: round(random.uniform(0.8, 1.0), 3),
+                       right_motor: round(random.uniform(0.1, 0.3), 3)} if left_motor and right_motor else {}
+            scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+        
+        # Scenario 3: Obstacle on right - turn left
+        for _ in range(8):
+            inputs = {}
+            for n in left_input_names:
+                inputs[n] = round(random.uniform(0.6, 1.0), 3)
+            for n in right_input_names:
+                inputs[n] = round(random.uniform(0.0, 0.3), 3)
+            for n in other_input_names:
+                inputs[n] = round(random.uniform(0.4, 0.7), 3)
+            expected = {left_motor: round(random.uniform(0.1, 0.3), 3),
+                       right_motor: round(random.uniform(0.8, 1.0), 3)} if left_motor and right_motor else {}
+            scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+        
+        # Scenario 4: Obstacle in front (all sensors low) - sharp turn
+        for _ in range(6):
+            inputs = {n: round(random.uniform(0.0, 0.25), 3) for n in input_names}
+            # Sharp right turn to escape
+            expected = {left_motor: round(random.uniform(0.7, 0.9), 3),
+                       right_motor: round(random.uniform(0.0, 0.15), 3)} if left_motor and right_motor else {}
+            scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+        
+        # Scenario 5: Obstacle approaching (medium range)
+        for _ in range(6):
+            inputs = {n: round(random.uniform(0.3, 0.6), 3) for n in input_names}
+            # Moderate speed
+            expected = {left_motor: round(random.uniform(0.4, 0.6), 3),
+                       right_motor: round(random.uniform(0.4, 0.6), 3)} if left_motor and right_motor else {}
+            scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+        
+        # Scenario 6: Obstacle very close left only
+        for _ in range(5):
+            inputs = {}
+            for n in left_input_names:
+                inputs[n] = round(random.uniform(0.0, 0.15), 3)
+            for n in right_input_names:
+                inputs[n] = round(random.uniform(0.9, 1.0), 3)
+            for n in other_input_names:
+                inputs[n] = round(random.uniform(0.7, 1.0), 3)
+            expected = {left_motor: round(random.uniform(0.9, 1.0), 3),
+                       right_motor: round(random.uniform(0.0, 0.1), 3)} if left_motor and right_motor else {}
+            scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+        
+        # Scenario 7: Obstacle very close right only
+        for _ in range(5):
+            inputs = {}
+            for n in left_input_names:
+                inputs[n] = round(random.uniform(0.9, 1.0), 3)
+            for n in right_input_names:
+                inputs[n] = round(random.uniform(0.0, 0.15), 3)
+            for n in other_input_names:
+                inputs[n] = round(random.uniform(0.7, 1.0), 3)
+            expected = {left_motor: round(random.uniform(0.0, 0.1), 3),
+                       right_motor: round(random.uniform(0.9, 1.0), 3)} if left_motor and right_motor else {}
+            scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+        
+        # Add remaining output names to scenarios
+        for s in scenarios:
+            for name in output_names:
+                if name not in s['expected_outputs']:
+                    s['expected_outputs'][name] = 0.5
+        
+        return scenarios
+
+    @staticmethod
+    def _line_training_scenarios(input_names: list, output_names: list) -> list:
+        """Generate line following training scenarios."""
+        scenarios = []
+        
+        left_motor = output_names[0] if len(output_names) > 0 else None
+        right_motor = output_names[1] if len(output_names) > 1 else None
+        
+        # Line centered
+        for _ in range(10):
+            inputs = {n: round(random.uniform(0.0, 0.3), 3) for n in input_names}
+            expected = {left_motor: 0.8, right_motor: 0.8} if left_motor and right_motor else {}
+            scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+        
+        # Line to the left
+        left_inputs = [n for n in input_names if 'left' in n.lower() or 'l' in n.lower()]
+        right_inputs = [n for n in input_names if 'right' in n.lower() or 'r' in n.lower()]
+        other_inputs = [n for n in input_names if n not in left_inputs and n not in right_inputs]
+        
+        for _ in range(8):
+            inputs = {}
+            for n in left_inputs: inputs[n] = round(random.uniform(0.0, 0.2), 3)
+            for n in right_inputs: inputs[n] = round(random.uniform(0.7, 1.0), 3)
+            for n in other_inputs: inputs[n] = round(random.uniform(0.3, 0.6), 3)
+            expected = {left_motor: round(random.uniform(0.3, 0.5), 3),
+                       right_motor: round(random.uniform(0.7, 0.9), 3)} if left_motor and right_motor else {}
+            scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+        
+        # Line to the right
+        for _ in range(8):
+            inputs = {}
+            for n in left_inputs: inputs[n] = round(random.uniform(0.7, 1.0), 3)
+            for n in right_inputs: inputs[n] = round(random.uniform(0.0, 0.2), 3)
+            for n in other_inputs: inputs[n] = round(random.uniform(0.3, 0.6), 3)
+            expected = {left_motor: round(random.uniform(0.7, 0.9), 3),
+                       right_motor: round(random.uniform(0.3, 0.5), 3)} if left_motor and right_motor else {}
+            scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+        
+        # No line (all sensors high)
+        for _ in range(5):
+            inputs = {n: round(random.uniform(0.8, 1.0), 3) for n in input_names}
+            expected = {left_motor: 0.5, right_motor: 0.5} if left_motor and right_motor else {}
+            scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+        
+        for s in scenarios:
+            for name in output_names:
+                if name not in s['expected_outputs']:
+                    s['expected_outputs'][name] = 0.5
+        
+        return scenarios
+
+    @staticmethod
+    def _generic_training_scenarios(input_names: list, output_names: list) -> list:
+        """Generate generic inverse-response training scenarios."""
+        scenarios = []
+        for _ in range(50):
+            inputs = {}
+            for n in input_names:
+                inputs[n] = round(random.random(), 3)
+            expected = {}
+            for i, name in enumerate(output_names):
+                if i < len(input_names):
+                    expected[name] = round(1.0 - inputs[input_names[i]], 3)
+                else:
+                    avg = sum(inputs.values()) / len(inputs)
+                    expected[name] = round(1.0 - avg, 3)
+            scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+        return scenarios
 
 
 # ─── In-Memory Store ────────────────────────────────────────────────────────
@@ -727,6 +1361,14 @@ async def load_model_from_env():
                 logger.info(f"Loaded LNN from MODEL_CONFIG: {ENV_MODEL_ID} "
                            f"({config.get('input_size')} inputs -> {config.get('output_size')} outputs)")
                 logger.info(f"Brain mode: Robot '{robot_name}' ready for WebSocket connections")
+                # Check training accuracy and warn if low
+                trained_acc = config.get('training_accuracy')
+                if trained_acc is not None and trained_acc < 0.6:
+                    logger.warning(f"Robot '{robot_name}' LNN accuracy={trained_acc:.2%} < 60%: "
+                                   f"rule-based fallback will be used for inference")
+                elif trained_acc is None:
+                    logger.warning(f"Robot '{robot_name}' LNN is not trained: "
+                                   f"rule-based fallback will be used for inference")
             else:
                 # Multi-model format: {"robot-name": {...config...}, ...}
                 for rname, rconfig in config.items():
@@ -739,6 +1381,17 @@ async def load_model_from_env():
                         logger.info(f"Loaded multi-model: {mid} for robot '{rname}' "
                                    f"({rconfig.get('input_size')} inputs -> {rconfig.get('output_size')} outputs)")
                 logger.info(f"Brain mode: {len(ROBOT_MODEL_MAP)} robot(s) loaded: {list(ROBOT_MODEL_MAP.keys())}")
+                # Check training accuracy for all loaded models
+                for rname, mid in ROBOT_MODEL_MAP.items():
+                    m = store.get_model(mid)
+                    if m:
+                        acc = m['config'].get('training_accuracy')
+                        if acc is not None and acc < 0.6:
+                            logger.warning(f"Robot '{rname}' LNN accuracy={acc:.2%} < 60%: "
+                                           f"rule-based fallback will be used")
+                        elif acc is None:
+                            logger.warning(f"Robot '{rname}' LNN is not trained: "
+                                           f"rule-based fallback will be used")
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse MODEL_CONFIG: {e}")
 
@@ -834,13 +1487,21 @@ async def brain_websocket(websocket: WebSocket):
     logger.info(f"Robot connected to brain: {connected_robot_name} (model: {model_id})")
 
     # Send welcome message
+    accuracy_info = ""
+    if lnn.training_accuracy is not None and lnn.training_accuracy < 0.6:
+        accuracy_info = " (rule-based fallback active: LNN accuracy too low)"
     await websocket.send_text(json.dumps({
         "status": "connected",
         "robot_name": connected_robot_name,
         "model_id": model_id,
         "input_sensors": list(lnn.input_mapping.keys()),
         "output_actuators": list(lnn.output_mapping.keys()),
+        "training_accuracy": lnn.training_accuracy,
+        "processing_mode": "rule_based_fallback" if (lnn.training_accuracy is not None and lnn.training_accuracy < 0.6) else "lnn",
+        "info": accuracy_info,
     }))
+    if lnn.training_accuracy is not None and lnn.training_accuracy < 0.6:
+        logger.warning(f"LNN accuracy {lnn.training_accuracy:.2%} < 60%, using rule-based fallback for {connected_robot_name}")
 
     command_counter = 0
 
@@ -901,6 +1562,7 @@ async def brain_websocket(websocket: WebSocket):
                         "robot_name": ROBOT_NAME,
                         "inputs_processed": len(sensor_data),
                         "outputs_generated": len(commands),
+                        "processing_mode": "rule_based_fallback" if (lnn.training_accuracy is not None and lnn.training_accuracy < 0.6) else "lnn",
                         "hidden_state_norm": round(
                             sum(h*h for h in lnn.hidden_state) ** 0.5, 4
                         ),
@@ -929,70 +1591,114 @@ async def brain_websocket(websocket: WebSocket):
 
 # ─── Kimi K2.6 API with Retry Logic ─────────────────────────────────────────
 
-async def call_kimi_api(system_prompt: str, user_prompt: str) -> str:
+async def call_kimi_api(system_prompt: str, user_prompt: str,
+                       max_tokens: int = 2048) -> str:
     """
-    Call NVIDIA Kimi K2.6 API with retry logic and exponential backoff.
+    Call NVIDIA Kimi K2.6 API with streaming support, retry logic,
+    and fallback to Llama 3.1 8B if Kimi times out.
 
-    Retries up to KIMI_MAX_RETRIES times with exponential backoff
-    (2s, 4s, 8s) on transient failures (timeouts, connection errors,
-    429 rate limits, 5xx server errors).
+    Features:
+    - Streaming: Uses stream=true to avoid timeout on long responses
+    - Retry with exponential backoff on transient failures
+    - Fallback: If Kimi K2.6 fails, tries meta/llama-3.1-8b-instruct
+
+    Args:
+        system_prompt: System message for the LLM
+        user_prompt: User message for the LLM
+        max_tokens: Maximum tokens to generate (default 2048)
 
     Raises:
-        Exception: If all retries are exhausted.
+        Exception: If all retries and fallbacks are exhausted.
+    """
+    # Try Kimi K2.6 first with streaming
+    try:
+        result = await _call_nvidia_api_streaming(
+            NVIDIA_MODEL, system_prompt, user_prompt, max_tokens
+        )
+        return result
+    except Exception as e:
+        logger.warning(f"Kimi K2.6 failed: {e}. Trying Llama 3.1 8B fallback...")
+
+    # Fallback to Llama 3.1 8B Instruct (faster, more available)
+    try:
+        result = await _call_nvidia_api_streaming(
+            "meta/llama-3.1-8b-instruct", system_prompt, user_prompt, max_tokens
+        )
+        logger.info("Llama 3.1 8B fallback succeeded")
+        return result
+    except Exception as e2:
+        logger.error(f"Llama fallback also failed: {e2}")
+        raise Exception(f"Both Kimi K2.6 and Llama fallback failed: {e2}")
+
+
+async def _call_nvidia_api_streaming(model: str, system_prompt: str,
+                                      user_prompt: str, max_tokens: int) -> str:
+    """
+    Call NVIDIA API with streaming support.
+    Collects chunks to avoid timeout on long responses.
     """
     headers = {
         "Authorization": f"Bearer {NVIDIA_API_KEY}",
-        "Accept": "application/json",
         "Content-Type": "application/json",
     }
 
     payload = {
-        "model": NVIDIA_MODEL,
+        "model": model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "max_tokens": 4096,
+        "max_tokens": max_tokens,
         "temperature": 0.7,
         "top_p": 1.0,
-        "stream": False,
+        "stream": True,
     }
 
     last_error = None
 
     for attempt in range(1, KIMI_MAX_RETRIES + 1):
-        logger.info(f"Calling Kimi K2.6 API (attempt {attempt}/{KIMI_MAX_RETRIES})...")
+        logger.info(f"Calling {model} API (attempt {attempt}/{KIMI_MAX_RETRIES}, streaming)...")
 
         try:
+            # Use streaming to collect response incrementally
+            collected_content = []
             async with httpx.AsyncClient(timeout=KIMI_TIMEOUT) as client:
-                response = await client.post(NVIDIA_API_URL, headers=headers, json=payload)
-
-                if response.status_code == 200:
-                    result = response.json()
-                    content = result['choices'][0]['message']['content']
-                    logger.info(f"Kimi response received: {len(content)} chars")
-                    return content
-
-                # Retryable status codes
-                if response.status_code in (429, 500, 502, 503, 504):
-                    error_detail = response.text[:300]
-                    last_error = Exception(
-                        f"Kimi API error (retryable): {response.status_code} - {error_detail}"
-                    )
-                    logger.warning(f"Kimi API returned {response.status_code}, "
-                                   f"will retry (attempt {attempt}/{KIMI_MAX_RETRIES})")
-                else:
-                    # Non-retryable error (e.g., 401, 403, 400)
-                    error_detail = response.text[:500]
-                    logger.error(f"Kimi API error (non-retryable): "
-                                 f"{response.status_code} - {error_detail}")
-                    raise Exception(
-                        f"Kimi API error: {response.status_code} - {error_detail}"
-                    )
+                async with client.stream("POST", NVIDIA_API_URL, headers=headers, json=payload) as response:
+                    if response.status_code == 200:
+                        async for line in response.aiter_lines():
+                            if line.startswith("data: "):
+                                data_str = line[6:].strip()
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    chunk = json.loads(data_str)
+                                    delta = chunk.get('choices', [{}])[0].get('delta', {})
+                                    content_piece = delta.get('content', '')
+                                    if content_piece:
+                                        collected_content.append(content_piece)
+                                except json.JSONDecodeError:
+                                    continue
+                        full_content = ''.join(collected_content)
+                        if full_content:
+                            logger.info(f"{model} streaming response received: {len(full_content)} chars")
+                            return full_content
+                        else:
+                            logger.warning(f"{model} returned empty streaming response")
+                            last_error = Exception("Empty streaming response")
+                    elif response.status_code in (429, 500, 502, 503, 504):
+                        error_body = await response.aread()
+                        error_detail = error_body.decode()[:300]
+                        last_error = Exception(f"API error (retryable): {response.status_code} - {error_detail}")
+                        logger.warning(f"{model} returned {response.status_code}, retrying...")
+                    else:
+                        error_body = await response.aread()
+                        error_detail = error_body.decode()[:500]
+                        logger.error(f"{model} API error (non-retryable): {response.status_code} - {error_detail}")
+                        raise Exception(f"API error: {response.status_code} - {error_detail}")
 
         except (httpx.TimeoutException, httpx.ConnectError) as e:
             last_error = e
-            logger.warning(f"Kimi API timeout/connection error on attempt "
+            logger.warning(f"{model} timeout/connection error on attempt "
                            f"{attempt}/{KIMI_MAX_RETRIES}: {e}")
 
         # Exponential backoff before next retry
@@ -1002,9 +1708,7 @@ async def call_kimi_api(system_prompt: str, user_prompt: str) -> str:
             await asyncio.sleep(backoff)
 
     # All retries exhausted
-    raise Exception(
-        f"Kimi API unavailable after {KIMI_MAX_RETRIES} retries: {last_error}"
-    )
+    raise Exception(f"{model} unavailable after {KIMI_MAX_RETRIES} retries: {last_error}")
 
 
 # ─── LNN Config Extraction ──────────────────────────────────────────────────
@@ -1188,8 +1892,8 @@ Return ONLY a JSON object with a "scenarios" array of at least 30 scenarios."""
                 pass  # Use synthetic data only
 
         # Train using evolutionary strategy
-        train_result = lnn.train(training_data, iterations=50, population=20,
-                                  sigma=0.15, learning_rate=0.05)
+        train_result = lnn.train(training_data, iterations=300, population=30,
+                                  sigma=0.15, learning_rate=0.04)
         training_accuracy = train_result.get('accuracy', 0.0)
         training_loss = train_result.get('best_loss')
         training_iterations = train_result.get('iterations', 0)
@@ -1433,7 +2137,7 @@ sensor/actuator names to normalized float values in [0.0, 1.0]."""
             pass
 
     # Start training in a thread (since it's CPU-bound)
-    training_iterations = 150
+    training_iterations = 300
 
     async def run_training():
         """Run ES training and send progress events."""
@@ -1444,7 +2148,7 @@ sensor/actuator names to normalized float values in [0.0, 1.0]."""
                 training_data,
                 iterations=training_iterations,
                 population=30,
-                sigma=0.12,
+                sigma=0.15,
                 learning_rate=0.04,
                 progress_callback=on_training_progress,
             )
@@ -1651,53 +2355,86 @@ def extract_training_data_from_kimi_response(response_text: str) -> list:
 def generate_synthetic_training_data(config: dict) -> list:
     """
     Generate synthetic training scenarios as fallback when Kimi is unavailable.
-    Creates scenarios with random sensor values and heuristic output rules.
+    Uses RuleBasedProcessor to generate scenarios with strong input-output
+    correlations for the detected robot type. Falls back to generic data
+    if rule-based generation doesn't apply.
     """
     input_mapping = config.get('input_mapping', {})
     output_mapping = config.get('output_mapping', {})
     input_names = list(input_mapping.keys())
     output_names = list(output_mapping.keys())
+    description = config.get('description', '')
 
     if not input_names or not output_names:
         return []
 
+    # Try rule-based training data generation first
+    rule_scenarios = RuleBasedProcessor.generate_training_scenarios(config)
+    if rule_scenarios and len(rule_scenarios) >= 20:
+        logger.info(f"Generated {len(rule_scenarios)} rule-based training scenarios "
+                    f"for detected robot type")
+        return rule_scenarios
+
+    # Fallback: generate basic scenarios with inverse correlation
+    # (high sensor = far from obstacle = go fast; low sensor = close = slow/turn)
     scenarios = []
     num_scenarios = 60
 
     for i in range(num_scenarios):
-        # Generate random input values
         inputs = {}
         for name in input_names:
             inputs[name] = round(random.random(), 3)
 
-        # Generate expected outputs based on simple heuristic rules
-        # This is a basic fallback; real training data from Kimi is preferred
+        # Generate expected outputs with inverse correlation to inputs
         expected = {}
-        for name in output_names:
-            # Simple heuristic: average of inputs as base, with some variation
-            avg_input = sum(inputs.values()) / len(inputs) if inputs else 0.5
-            # Add some noise for diversity
-            noise = random.gauss(0, 0.1)
-            val = max(0.0, min(1.0, avg_input + noise))
-            expected[name] = round(val, 3)
+        for j, name in enumerate(output_names):
+            if j < len(input_names):
+                # Inverse: when sensor reads high (far), output high (go)
+                # when sensor reads low (close), output low (stop/turn)
+                base = 1.0 - inputs[input_names[j]]
+                noise = random.gauss(0, 0.08)
+                val = max(0.0, min(1.0, base + noise))
+                expected[name] = round(val, 3)
+            else:
+                avg_input = sum(inputs.values()) / len(inputs) if inputs else 0.5
+                noise = random.gauss(0, 0.08)
+                val = max(0.0, min(1.0, 1.0 - avg_input + noise))
+                expected[name] = round(val, 3)
 
         scenarios.append({
             'inputs': inputs,
             'expected_outputs': expected,
         })
 
-    # Add some structured scenarios
-    # All sensors high (clear path)
+    # Add structured scenarios with strong signals
+    # All sensors high (clear path) -> motors fast
     for _ in range(5):
-        inputs = {name: round(random.uniform(0.8, 1.0), 3) for name in input_names}
-        expected = {name: round(random.uniform(0.7, 1.0), 3) for name in output_names}
+        inputs = {name: round(random.uniform(0.85, 1.0), 3) for name in input_names}
+        expected = {name: round(random.uniform(0.8, 1.0), 3) for name in output_names}
         scenarios.append({'inputs': inputs, 'expected_outputs': expected})
 
-    # All sensors low (obstacle)
+    # All sensors low (obstacle very close) -> stop/turn
     for _ in range(5):
-        inputs = {name: round(random.uniform(0.0, 0.2), 3) for name in input_names}
-        expected = {name: round(random.uniform(0.0, 0.3), 3) for name in output_names}
+        inputs = {name: round(random.uniform(0.0, 0.15), 3) for name in input_names}
+        expected = {name: round(random.uniform(0.0, 0.2), 3) for name in output_names}
         scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+
+    # Obstacle left (left sensors low, right high) -> turn right
+    left_names = [n for n in input_names if any(kw in n.lower() for kw in ['left', 'l'])]
+    right_names = [n for n in input_names if any(kw in n.lower() for kw in ['right', 'r'])]
+    if left_names and right_names:
+        for _ in range(5):
+            inputs = {}
+            for n in left_names: inputs[n] = round(random.uniform(0.0, 0.2), 3)
+            for n in right_names: inputs[n] = round(random.uniform(0.8, 1.0), 3)
+            expected = {}
+            left_motor = [n for n in output_names if any(kw in n.lower() for kw in ['left', 'l'])]
+            right_motor = [n for n in output_names if any(kw in n.lower() for kw in ['right', 'r'])]
+            if left_motor: expected[left_motor[0]] = round(random.uniform(0.8, 1.0), 3)
+            if right_motor: expected[right_motor[0]] = round(random.uniform(0.0, 0.2), 3)
+            for n in output_names:
+                if n not in expected: expected[n] = 0.5
+            scenarios.append({'inputs': inputs, 'expected_outputs': expected})
 
     logger.info(f"Generated {len(scenarios)} synthetic training scenarios")
     return scenarios
@@ -1946,7 +2683,10 @@ async def deploy_to_existing_brain(req: DeployBrainRequest, config: dict, brain_
     }
 
     # Update MODEL_CONFIG env var
-    model_config_json = json.dumps(config)
+    # Convert to multi-model format for proper routing
+    multi_model_config = {req.robot_name: config}
+    model_config_json = json.dumps(multi_model_config)
+    logger.info(f"Setting MODEL_CONFIG in multi-model format for robot: {req.robot_name}")
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         # Set MODEL_CONFIG env var
