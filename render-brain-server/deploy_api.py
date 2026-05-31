@@ -154,9 +154,10 @@ class LiquidNeuralNetwork:
 
         # Training metadata
         self.trained = config.get('trained', False)
-        self.training_accuracy = config.get('training_accuracy', None)
-        self.training_iterations = config.get('training_iterations', None)
-        self.training_loss = config.get('training_loss', None)
+        # Support both top-level and training_info.accuracy formats
+        self.training_accuracy = config.get('training_accuracy') or (config.get('training_info') or {}).get('accuracy')
+        self.training_iterations = config.get('training_iterations') or (config.get('training_info') or {}).get('epochs')
+        self.training_loss = config.get('training_loss') or (config.get('training_info') or {}).get('loss')
 
         logger.info(f"LNN initialized: {self.input_size} inputs -> "
                     f"{self.hidden_units} hidden -> {self.output_size} outputs")
@@ -1362,7 +1363,7 @@ async def load_model_from_env():
                            f"({config.get('input_size')} inputs -> {config.get('output_size')} outputs)")
                 logger.info(f"Brain mode: Robot '{robot_name}' ready for WebSocket connections")
                 # Check training accuracy and warn if low
-                trained_acc = config.get('training_accuracy')
+                trained_acc = config.get('training_accuracy') or (config.get('training_info') or {}).get('accuracy')
                 if trained_acc is None or trained_acc < 0.85:
                     logger.warning(f"Robot '{robot_name}' LNN accuracy={trained_acc:.2%} < 85%: "
                                    f"rule-based fallback will be used for inference")
@@ -1385,7 +1386,7 @@ async def load_model_from_env():
                 for rname, mid in ROBOT_MODEL_MAP.items():
                     m = store.get_model(mid)
                     if m:
-                        acc = m['config'].get('training_accuracy')
+                        acc = m['config'].get('training_accuracy') or (m['config'].get('training_info') or {}).get('accuracy')
                         if acc is None or acc < 0.85:
                             logger.warning(f"Robot '{rname}' LNN accuracy={acc:.2%} < 85%: "
                                            f"rule-based fallback will be used")
