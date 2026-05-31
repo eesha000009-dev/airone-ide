@@ -657,10 +657,35 @@ class LiquidNeuralNetwork:
             angle = max(0, min(180, angle))
             return {"action": "servo", "angle": angle}
 
+    def simple_forward(self, input_values: list) -> list:
+        """Simple forward pass matching nvidia-client.js training architecture.
+        Used when trained weights are from the Electron app's training pipeline.
+        
+        Architecture: hidden = tanh(W_in * x + b_in), output = sigmoid(W_out * h + b_out)
+        """
+        # Hidden layer: h = tanh(W_in * x + b_in)
+        hidden = [0.0] * self.hidden_units
+        for h in range(self.hidden_units):
+            total = self.bias_input[h]
+            for i in range(min(len(input_values), self.input_size)):
+                total += self.weights_input[h][i] * input_values[i]
+            hidden[h] = math.tanh(total)
+        
+        # Output layer: y = sigmoid(W_out * h + b_out)
+        outputs = [0.0] * self.output_size
+        for o in range(self.output_size):
+            total = self.bias_output[o]
+            for h in range(self.hidden_units):
+                total += self.weights_output[o][h] * hidden[h]
+            outputs[o] = self._sigmoid(total)
+        
+        return outputs
+
     def process_sensor_data(self, sensor_data: dict, output_modules: list) -> dict:
         """Process sensor data and generate commands.
         
-        If LNN training accuracy < 85%, falls back to rule-based processing.
+        If LNN training accuracy < 50%, falls back to rule-based processing.
+        When trained weights are loaded, uses simple_forward for compatibility.
         """
         # Default output_modules to all output mapping keys if empty
         if not output_modules:
@@ -689,7 +714,12 @@ class LiquidNeuralNetwork:
                         pass
 
         # Run LNN forward pass
-        raw_outputs = self.forward(input_values)
+        # Use simple_forward when trained weights are loaded (matches nvidia-client.js training)
+        has_trained_weights = hasattr(self, 'bias_input') and any(b != 0 for b in self.bias_input)
+        if self.trained and has_trained_weights:
+            raw_outputs = self.simple_forward(input_values)
+        else:
+            raw_outputs = self.forward(input_values)
 
         # Check if LNN accuracy is too low — use rule-based fallback
         if self.training_accuracy is None or self.training_accuracy < 0.5:
