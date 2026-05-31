@@ -1579,7 +1579,15 @@ async def brain_websocket(websocket: WebSocket):
                     pass
 
                 if parsed and isinstance(parsed, dict):
-                    sensor_data = parsed.get('input_sensors_read', {})
+                    # Support both formats:
+                    # 1. {"input_sensors_read": {...}, "output_modules_available": [...]}
+                    # 2. {"ultrasonic_front": 0.9, ...} (direct sensor data)
+                    sensor_data = parsed.get('input_sensors_read', None)
+                    if sensor_data is None:
+                        # Direct format - use the entire dict as sensor data
+                        # but exclude known non-sensor keys
+                        exclude_keys = {'output_modules_available', 'robot_id', 'robot_name', 'input_sensors_read'}
+                        sensor_data = {k: v for k, v in parsed.items() if k not in exclude_keys}
                     output_modules = parsed.get('output_modules_available', list(lnn.output_mapping.keys()))
                 else:
                     # Natural language format from ESP32
@@ -2846,7 +2854,15 @@ async def websocket_inference(websocket: WebSocket, model_id: str):
                     pass
 
                 if parsed and isinstance(parsed, dict):
-                    sensor_data = parsed.get('input_sensors_read', {})
+                    # Support both formats:
+                    # 1. {"input_sensors_read": {...}, "output_modules_available": [...]}
+                    # 2. {"ultrasonic_front": 0.9, ...} (direct sensor data)
+                    sensor_data = parsed.get('input_sensors_read', None)
+                    if sensor_data is None:
+                        # Direct format - use the entire dict as sensor data
+                        # but exclude known non-sensor keys
+                        exclude_keys = {'output_modules_available', 'robot_id', 'robot_name', 'input_sensors_read'}
+                        sensor_data = {k: v for k, v in parsed.items() if k not in exclude_keys}
                     output_modules = parsed.get('output_modules_available', list(lnn.output_mapping.keys()))
                 else:
                     # Natural language format
