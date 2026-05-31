@@ -70,7 +70,8 @@ RENDER_API_KEY = os.environ.get('RENDER_API_KEY', '')
 NVIDIA_API_KEY = os.environ.get('NVIDIA_API_KEY', '')
 RENDER_API_URL = "https://api.render.com/v1"
 NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
-NVIDIA_MODEL = "moonshotai/kimi-k2.6"
+NVIDIA_MODEL = "meta/llama-3.1-8b-instruct"  # Fast primary model (~0.3s response)
+KIMI_MODEL = "moonshotai/kimi-k2.6"  # Quality fallback (60-120s response, use sparingly)
 BRAIN_REPO = "https://github.com/eesha000009-dev/airone-ide"
 BRAIN_BRANCH = "main"
 BRAIN_ROOT_DIR = "render-brain-server"
@@ -78,9 +79,10 @@ RENDER_OWNER_ID = "tea-d8dh89s2m8qs7388ajb0"
 BRAIN_TEMPLATE_ID = "srv-d8dh9esm0tmc73duts10"
 
 # Kimi API settings
-KIMI_TIMEOUT = 120.0       # seconds per attempt (increased for Kimi K2.6)
+KIMI_TIMEOUT = 180.0       # seconds per attempt (increased for slow models)
 KIMI_MAX_RETRIES = 2       # Retry once on failure
 KIMI_BACKOFF_BASE = 2.0    # exponential backoff base
+TRAINING_DATA_TIMEOUT = 120.0  # Timeout for training data generation
 
 # Detect brain-template mode
 MODEL_CONFIG_RAW = os.environ.get('MODEL_CONFIG', '')
@@ -1663,43 +1665,54 @@ async def brain_websocket(websocket: WebSocket):
 # ─── Kimi K2.6 API with Retry Logic ─────────────────────────────────────────
 
 async def call_kimi_api(system_prompt: str, user_prompt: str,
-                       max_tokens: int = 2048) -> str:
+                       max_tokens: int = 2048, prefer_quality: bool = False) -> str:
     """
-    Call NVIDIA Kimi K2.6 API with streaming support, retry logic,
-    and fallback to Llama 3.1 8B if Kimi times out.
+    Call NVIDIA API with streaming support, retry logic, and fallback.
+
+    Strategy (speed-first):
+    1. Try Llama 3.1 8B first (0.3s response, reliable)
+    2. If prefer_quality=True and Llama fails, try Kimi K2.6 (60-120s, higher quality)
+    3. If both fail, raise exception
 
     Features:
     - Streaming: Uses stream=true to avoid timeout on long responses
     - Retry with exponential backoff on transient failures
-    - Fallback: If Kimi K2.6 fails, tries meta/llama-3.1-8b-instruct
+    - Speed-first: Defaults to fast Llama model, Kimi only for quality needs
 
     Args:
         system_prompt: System message for the LLM
         user_prompt: User message for the LLM
         max_tokens: Maximum tokens to generate (default 2048)
+        prefer_quality: If True, try Kimi K2.6 when Llama fails (default False)
 
     Raises:
         Exception: If all retries and fallbacks are exhausted.
     """
-    # Try Kimi K2.6 first with streaming
+    # Try fast model first (Llama 3.1 8B: ~0.3s response)
     try:
         result = await _call_nvidia_api_streaming(
             NVIDIA_MODEL, system_prompt, user_prompt, max_tokens
         )
         return result
     except Exception as e:
-        logger.warning(f"Kimi K2.6 failed: {e}. Trying Llama 3.1 8B fallback...")
+        logger.warning(f"Fast model ({NVIDIA_MODEL}) failed: {e}")
+        if not prefer_quality:
+            raise
 
-    # Fallback to Llama 3.1 8B Instruct (faster, more available)
-    try:
-        result = await _call_nvidia_api_streaming(
-            "meta/llama-3.1-8b-instruct", system_prompt, user_prompt, max_tokens
-        )
-        logger.info("Llama 3.1 8B fallback succeeded")
-        return result
-    except Exception as e2:
-        logger.error(f"Llama fallback also failed: {e2}")
-        raise Exception(f"Both Kimi K2.6 and Llama fallback failed: {e2}")
+    # Quality fallback: Kimi K2.6 (60-120s, higher quality)
+    if prefer_quality:
+        try:
+            logger.info("Trying Kimi K2.6 quality fallback...")
+            result = await _call_nvidia_api_streaming(
+                KIMI_MODEL, system_prompt, user_prompt, max_tokens
+            )
+            logger.info("Kimi K2.6 quality fallback succeeded")
+            return result
+        except Exception as e2:
+            logger.error(f"Kimi K2.6 quality fallback also failed: {e2}")
+            raise Exception(f"Both fast model and Kimi K2.6 failed: {e2}")
+
+    raise Exception(f"Fast model ({NVIDIA_MODEL}) failed and prefer_quality=False")
 
 
 async def _call_nvidia_api_streaming(model: str, system_prompt: str,
@@ -1845,20 +1858,54 @@ def extract_lnn_config_from_kimi_response(response_text: str, request: GenerateL
         config.setdefault('input_mapping', input_mapping)
         config.setdefault('output_mapping', output_mapping)
         config.setdefault('description', request.description)
-        config.setdefault('neuron_params', {'vt': 0.1, 'dt': 0.01, 'sensitivity': 0.5})
+        config.setdefault('neuron_params', {'tau': 0.1, 'vt': 0.1, 'dt': 0.01, 'sensitivity': 0.5})
+        config.setdefault('behavior_rules', [])
+        # Build output_types from pin_definitions if not provided by AI
+        if 'output_types' not in config and request.pin_definitions:
+            output_types = {}
+            outputs = request.pin_definitions.get('outputs', [])
+            for pin in outputs:
+                name = pin if isinstance(pin, str) else pin.get('name', '')
+                pin_type = pin.get('type', '') if isinstance(pin, dict) else ''
+                if 'pwm' in pin_type.lower() or 'motor' in name.lower():
+                    output_types[name] = 'pwm'
+                elif 'servo' in pin_type.lower() or 'servo' in name.lower():
+                    output_types[name] = 'servo'
+                elif 'digital' in pin_type.lower():
+                    output_types[name] = 'digital'
+                else:
+                    output_types[name] = 'pwm'  # Default for unknown
+            config['output_types'] = output_types
     else:
-        # Construct config from request parameters + Kimi description
+        # Construct config from request parameters + AI description
+        # Build output_types from pin_definitions
+        output_types = {}
+        if request.pin_definitions:
+            for pin in request.pin_definitions.get('outputs', []):
+                name = pin if isinstance(pin, str) else pin.get('name', '')
+                pin_type = pin.get('type', '') if isinstance(pin, dict) else ''
+                if 'pwm' in pin_type.lower() or 'motor' in name.lower():
+                    output_types[name] = 'pwm'
+                elif 'servo' in pin_type.lower() or 'servo' in name.lower():
+                    output_types[name] = 'servo'
+                elif 'digital' in pin_type.lower():
+                    output_types[name] = 'digital'
+                else:
+                    output_types[name] = 'pwm'
+
         config = {
             'input_size': len(input_mapping) or request.sensor_count,
             'output_size': len(output_mapping) or request.actuator_count,
             'hidden_units': max(16, (len(input_mapping) + len(output_mapping)) * 4),
             'time_steps': 1,
-            'neuron_params': {'vt': 0.1, 'dt': 0.01, 'sensitivity': 0.5},
+            'neuron_params': {'tau': 0.1, 'vt': 0.1, 'dt': 0.01, 'sensitivity': 0.5},
             'input_mapping': input_mapping,
             'output_mapping': output_mapping,
+            'output_types': output_types,
+            'behavior_rules': [],
             'description': request.description,
-            'kimi_response': response_text[:2000],
         }
+        # Don't store kimi_response in config - it's debug info, not model config
 
     # Always include pin_definitions for output type info
     if request.pin_definitions:
@@ -1884,32 +1931,32 @@ Pin Definitions:
 
     system_prompt = """You are an expert in Liquid Neural Networks (LNNs) and robotics. You design LNN model configurations for robots.
 
-A Liquid Neural Network (LNN) uses continuous-time dynamics with ODE-inspired neuron updates:
-  dh/dt = (activation - h) / tau
-where tau is a time constant modulated by input.
+You must output ONLY valid JSON with no additional text, explanation, or markdown formatting.
 
-You must return a JSON configuration with these fields:
+The JSON must have exactly this structure:
 {
-  "input_size": <number of sensor inputs>,
-  "output_size": <number of actuator outputs>,
-  "hidden_units": <number of hidden units (typically 4-8x total IO)>,
-  "neuron_params": {
-    "vt": <time constant base, typically 0.05-0.2>,
-    "dt": <time step, typically 0.01>,
-    "sensitivity": <input sensitivity, typically 0.3-0.8>
-  },
-  "input_mapping": {"sensor_name": index, ...},
-  "output_mapping": {"actuator_name": index, ...},
-  "description": "<brief description of the robot behavior>",
-  "behavior_notes": "<notes about expected behavior>"
+  "input_size": <number>,
+  "output_size": <number>,
+  "hidden_units": <16-32 based on complexity>,
+  "time_steps": 1,
+  "neuron_params": { "tau": <0.05-0.5 based on response speed needed>, "dt": 0.01, "sensitivity": 0.5 },
+  "input_mapping": { "pin_name": index },
+  "output_mapping": { "pin_name": index },
+  "output_types": { "pin_name": "pwm"|"servo"|"digital" },
+  "behavior_rules": [
+    { "condition": "when sensor X is Y", "action": "set output Z to W", "priority": 1 }
+  ],
+  "description": "Brief description of model behavior"
 }
 
-The neuron_params should be tuned for the robot's task:
-- Fast-reacting robots (obstacle avoidance): lower vt (0.05), higher sensitivity (0.7)
-- Smooth control (arm movement): higher vt (0.15), lower sensitivity (0.4)
-- Balancing robots: medium vt (0.1), medium sensitivity (0.5)
-
-Return ONLY the JSON configuration, no extra text."""
+Rules:
+- input_size MUST equal the number of input pins
+- output_size MUST equal the number of output pins
+- hidden_units: 16 for simple robots, 24 for medium, 32 for complex
+- tau: lower = faster response (0.05 for reflexes, 0.5 for smooth movements)
+- output_types: "pwm" for motors, "servo" for servos/arms, "digital" for LEDs/relays
+- behavior_rules: describe the robot's expected behaviors as condition-action pairs
+- Output ONLY the JSON object, nothing else"""
 
     user_prompt = f"""Design an LNN model configuration for this robot:
 
@@ -1954,7 +2001,7 @@ Return ONLY a JSON object with a "scenarios" array of at least 30 scenarios."""
                 training_user_prompt = f"""Robot: {req.robot_name}\nDescription: {req.description}\nSensors: {list(config.get('input_mapping', {}).keys())}\nActuators: {list(config.get('output_mapping', {}).keys())}"""
                 training_response = await asyncio.wait_for(
                     call_kimi_api(training_system_prompt, training_user_prompt),
-                    timeout=30.0
+                    timeout=TRAINING_DATA_TIMEOUT
                 )
                 kimi_data = extract_training_data_from_kimi_response(training_response)
                 if kimi_data:
@@ -2013,7 +2060,7 @@ async def generate_lnn_stream(req: GenerateLNNRequest) -> AsyncGenerator[str, No
         "step": "generating",
         "step_number": 1,
         "total_steps": total_steps,
-        "message": "Generating LNN architecture with Kimi K2.6...",
+        "message": "Generating LNN architecture with AI...",
         "progress": 16,
     })
 
@@ -2028,32 +2075,32 @@ Pin Definitions:
 
     system_prompt_config = """You are an expert in Liquid Neural Networks (LNNs) and robotics. You design LNN model configurations for robots.
 
-A Liquid Neural Network (LNN) uses continuous-time dynamics with ODE-inspired neuron updates:
-  dh/dt = (activation - h) / tau
-where tau is a time constant modulated by input.
+You must output ONLY valid JSON with no additional text, explanation, or markdown formatting.
 
-You must return a JSON configuration with these fields:
+The JSON must have exactly this structure:
 {
-  "input_size": <number of sensor inputs>,
-  "output_size": <number of actuator outputs>,
-  "hidden_units": <number of hidden units (typically 4-8x total IO)>,
-  "neuron_params": {
-    "vt": <time constant base, typically 0.05-0.2>,
-    "dt": <time step, typically 0.01>,
-    "sensitivity": <input sensitivity, typically 0.3-0.8>
-  },
-  "input_mapping": {"sensor_name": index, ...},
-  "output_mapping": {"actuator_name": index, ...},
-  "description": "<brief description of the robot behavior>",
-  "behavior_notes": "<notes about expected behavior>"
+  "input_size": <number>,
+  "output_size": <number>,
+  "hidden_units": <16-32 based on complexity>,
+  "time_steps": 1,
+  "neuron_params": { "tau": <0.05-0.5 based on response speed needed>, "dt": 0.01, "sensitivity": 0.5 },
+  "input_mapping": { "pin_name": index },
+  "output_mapping": { "pin_name": index },
+  "output_types": { "pin_name": "pwm"|"servo"|"digital" },
+  "behavior_rules": [
+    { "condition": "when sensor X is Y", "action": "set output Z to W", "priority": 1 }
+  ],
+  "description": "Brief description of model behavior"
 }
 
-The neuron_params should be tuned for the robot's task:
-- Fast-reacting robots (obstacle avoidance): lower vt (0.05), higher sensitivity (0.7)
-- Smooth control (arm movement): higher vt (0.15), lower sensitivity (0.4)
-- Balancing robots: medium vt (0.1), medium sensitivity (0.5)
-
-Return ONLY the JSON configuration, no extra text."""
+Rules:
+- input_size MUST equal the number of input pins
+- output_size MUST equal the number of output pins
+- hidden_units: 16 for simple robots, 24 for medium, 32 for complex
+- tau: lower = faster response (0.05 for reflexes, 0.5 for smooth movements)
+- output_types: "pwm" for motors, "servo" for servos/arms, "digital" for LEDs/relays
+- behavior_rules: describe the robot's expected behaviors as condition-action pairs
+- Output ONLY the JSON object, nothing else"""
 
     user_prompt_config = f"""Design an LNN model configuration for this robot:
 
@@ -2068,17 +2115,17 @@ Return the JSON configuration."""
     kimi_response = ""
     if NVIDIA_API_KEY:
         try:
-            # Use shorter timeout in SSE context to avoid hanging the stream
+            # Use streaming with reasonable timeout (fast model ~0.3s, Kimi ~120s)
             kimi_response = await asyncio.wait_for(
                 call_kimi_api(system_prompt_config, user_prompt_config),
-                timeout=60.0
+                timeout=TRAINING_DATA_TIMEOUT
             )
             kimi_used = True
             yield sse_event("progress", {
                 "step": "generating",
                 "step_number": 1,
                 "total_steps": total_steps,
-                "message": "LNN architecture generated by Kimi K2.6",
+                "message": "LNN architecture generated by AI",
                 "progress": 16,
                 "detail": "Kimi config received successfully",
             })
@@ -2107,7 +2154,7 @@ Return the JSON configuration."""
         "step": "creating_data",
         "step_number": 2,
         "total_steps": total_steps,
-        "message": "Creating training data with Kimi K2.6...",
+        "message": "Creating training data with AI...",
         "progress": 33,
     })
 
