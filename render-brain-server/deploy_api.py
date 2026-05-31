@@ -2029,7 +2029,9 @@ Return ONLY a JSON object with a "scenarios" array of at least 30 scenarios."""
                 pass  # Use synthetic data only
 
         # Train using evolutionary strategy
-        train_result = lnn.train(training_data, iterations=300, population=30,
+        # Reduced iterations for faster deployment on cloud (was 300/30)
+        # More iterations = better accuracy but slower. 150/20 is a good balance.
+        train_result = lnn.train(training_data, iterations=150, population=20,
                                   sigma=0.15, learning_rate=0.04)
         training_accuracy = train_result.get('accuracy', 0.0)
         training_loss = train_result.get('best_loss')
@@ -2274,7 +2276,7 @@ sensor/actuator names to normalized float values in [0.0, 1.0]."""
             pass
 
     # Start training in a thread (since it's CPU-bound)
-    training_iterations = 300
+    training_iterations = 150  # Reduced from 300 for faster cloud deployment
 
     async def run_training():
         """Run ES training and send progress events."""
@@ -2284,7 +2286,7 @@ sensor/actuator names to normalized float values in [0.0, 1.0]."""
             return lnn.train(
                 training_data,
                 iterations=training_iterations,
-                population=30,
+                population=20,  # Reduced from 30 for faster cloud deployment
                 sigma=0.15,
                 learning_rate=0.04,
                 progress_callback=on_training_progress,
