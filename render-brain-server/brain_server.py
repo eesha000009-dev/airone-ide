@@ -198,17 +198,32 @@ async def handle_robot(websocket, path):
             pass
 
 # ============ SELF-PING (Keep Render awake) ============
+# Render free tier sleeps after 15 min of NO EXTERNAL traffic.
+# Localhost pings do NOT count — must ping the external URL.
+RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
+SELF_PING_INTERVAL = 540  # 9 minutes (safely under 15 min threshold)
+
 async def self_ping():
-    """Send HTTP request to self every 10 minutes to keep Render alive."""
+    """Ping the external Render URL every 9 minutes to prevent sleeping."""
     import aiohttp
+
+    if not RENDER_EXTERNAL_URL:
+        print("WARNING: RENDER_EXTERNAL_URL not set. Self-ping disabled.")
+        print("Set RENDER_EXTERNAL_URL env var or use cron-job.org to keep service awake.")
+        return
+
+    ping_url = f"{RENDER_EXTERNAL_URL}/health"
+    print(f"Self-ping enabled: {ping_url} every {SELF_PING_INTERVAL}s")
+
+    # Ping immediately on startup, then on interval
     while True:
-        await asyncio.sleep(600)  # 10 minutes
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(f"http://localhost:{PORT}/health") as resp:
-                    print(f"Self-ping: {resp.status}")
+                async with session.get(ping_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    print(f"Self-ping: {resp.status} from {ping_url}")
         except Exception as e:
             print(f"Self-ping failed: {e}")
+        await asyncio.sleep(SELF_PING_INTERVAL)
 
 # ============ GRACEFUL SHUTDOWN ============
 stop_event = asyncio.Event()
