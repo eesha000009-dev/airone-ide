@@ -123,20 +123,39 @@ class LiquidNeuralNetwork:
         # Pin definitions for output type info
         self.pin_definitions = config.get('pin_definitions', {})
 
-        # Xavier initialization
-        limit_in = math.sqrt(6.0 / (self.input_size + self.hidden_units))
-        limit_out = math.sqrt(6.0 / (self.hidden_units + self.output_size))
+        # Load trained weights from config if available, otherwise Xavier initialization
+        trained_weights = config.get('weights', {})
+        
+        if trained_weights and trained_weights.get('W_in'):
+            # Load trained weights from nvidia-client.js format
+            self.weights_input = trained_weights['W_in']
+            self.weights_recurrent = trained_weights.get('W_rec', [[random.uniform(-0.5, 0.5)
+                                               for _ in range(self.hidden_units)]
+                                              for _ in range(self.hidden_units)])
+            self.weights_output = trained_weights['W_out']
+            # Load biases if available
+            self.bias_input = trained_weights.get('b_in', [0.0] * self.hidden_units)
+            self.bias_output = trained_weights.get('b_out', [0.0] * self.output_size)
+            logger.info(f"Loaded TRAINED weights: W_in={len(self.weights_input)}x{len(self.weights_input[0])}, "
+                       f"W_out={len(self.weights_output)}x{len(self.weights_output[0])}")
+        else:
+            # Xavier initialization (untrained)
+            limit_in = math.sqrt(6.0 / (self.input_size + self.hidden_units))
+            limit_out = math.sqrt(6.0 / (self.hidden_units + self.output_size))
 
-        random.seed(42)
-        self.weights_input = [[random.uniform(-limit_in, limit_in)
-                               for _ in range(self.input_size)]
-                              for _ in range(self.hidden_units)]
-        self.weights_recurrent = [[random.uniform(-0.5, 0.5)
-                                   for _ in range(self.hidden_units)]
+            random.seed(42)
+            self.weights_input = [[random.uniform(-limit_in, limit_in)
+                                   for _ in range(self.input_size)]
                                   for _ in range(self.hidden_units)]
-        self.weights_output = [[random.uniform(-limit_out, limit_out)
-                                for _ in range(self.hidden_units)]
-                               for _ in range(self.output_size)]
+            self.weights_recurrent = [[random.uniform(-0.5, 0.5)
+                                       for _ in range(self.hidden_units)]
+                                      for _ in range(self.hidden_units)]
+            self.weights_output = [[random.uniform(-limit_out, limit_out)
+                                    for _ in range(self.hidden_units)]
+                                   for _ in range(self.output_size)]
+            self.bias_input = [0.0] * self.hidden_units
+            self.bias_output = [0.0] * self.output_size
+            logger.info("No trained weights found, using Xavier initialization")
 
         self.hidden_state = [0.0] * self.hidden_units
 
