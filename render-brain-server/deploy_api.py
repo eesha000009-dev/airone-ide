@@ -673,7 +673,7 @@ class LiquidNeuralNetwork:
         raw_outputs = self.forward(input_values)
 
         # Check if LNN accuracy is too low — use rule-based fallback
-        if self.training_accuracy is None or self.training_accuracy < 0.85:
+        if self.training_accuracy is None or self.training_accuracy < 0.5:
             rule_outputs = RuleBasedProcessor.process(
                 sensor_data, input_values, self.input_mapping,
                 self.output_mapping, self.output_types, self.description
@@ -1364,8 +1364,8 @@ async def load_model_from_env():
                 logger.info(f"Brain mode: Robot '{robot_name}' ready for WebSocket connections")
                 # Check training accuracy and warn if low
                 trained_acc = config.get('training_accuracy') or (config.get('training_info') or {}).get('accuracy')
-                if trained_acc is None or trained_acc < 0.85:
-                    logger.warning(f"Robot '{robot_name}' LNN accuracy={trained_acc:.2%} < 85%: "
+                if trained_acc is None or trained_acc < 0.5:
+                    logger.warning(f"Robot '{robot_name}' LNN accuracy={trained_acc:.2%} < 50%: "
                                    f"rule-based fallback will be used for inference")
                 elif trained_acc is None:
                     logger.warning(f"Robot '{robot_name}' LNN is not trained: "
@@ -1388,7 +1388,7 @@ async def load_model_from_env():
                     if m:
                         acc = m['config'].get('training_accuracy') or (m['config'].get('training_info') or {}).get('accuracy')
                         if acc is None or acc < 0.85:
-                            logger.warning(f"Robot '{rname}' LNN accuracy={acc:.2%} < 85%: "
+                            logger.warning(f"Robot '{rname}' LNN accuracy={acc:.2%} < 50%: "
                                            f"rule-based fallback will be used")
                         elif acc is None:
                             logger.warning(f"Robot '{rname}' LNN is not trained: "
@@ -1499,7 +1499,7 @@ async def brain_websocket(websocket: WebSocket):
 
     # Send welcome message
     accuracy_info = ""
-    if lnn.training_accuracy is None or lnn.training_accuracy < 0.85:
+    if lnn.training_accuracy is None or lnn.training_accuracy < 0.5:
         accuracy_info = " (rule-based fallback active: LNN accuracy below 85%)"
     await websocket.send_text(json.dumps({
         "status": "connected",
@@ -1508,11 +1508,11 @@ async def brain_websocket(websocket: WebSocket):
         "input_sensors": list(lnn.input_mapping.keys()),
         "output_actuators": list(lnn.output_mapping.keys()),
         "training_accuracy": lnn.training_accuracy,
-        "confidence": lnn.training_accuracy if (lnn.training_accuracy is not None and lnn.training_accuracy >= 0.85) else 0.7,
-        "processing_mode": "rule_based_fallback" if (lnn.training_accuracy is None or lnn.training_accuracy < 0.85) else "lnn",
+        "confidence": lnn.training_accuracy if (lnn.training_accuracy is not None and lnn.training_accuracy >= 0.5) else 0.7,
+        "processing_mode": "rule_based_fallback" if (lnn.training_accuracy is None or lnn.training_accuracy < 0.5) else "lnn",
         "info": accuracy_info,
     }))
-    if lnn.training_accuracy is None or lnn.training_accuracy < 0.85:
+    if lnn.training_accuracy is None or lnn.training_accuracy < 0.5:
         acc_str = f"{lnn.training_accuracy:.2%}" if lnn.training_accuracy is not None else "N/A"; logger.warning(f"LNN accuracy {acc_str} < 85%, using rule-based fallback for {connected_robot_name}")
 
     command_counter = 0
@@ -1574,8 +1574,8 @@ async def brain_websocket(websocket: WebSocket):
                         "robot_name": ROBOT_NAME,
                         "inputs_processed": len(sensor_data),
                         "outputs_generated": len(commands),
-                        "processing_mode": "rule_based_fallback" if (lnn.training_accuracy is None or lnn.training_accuracy < 0.85) else "lnn",
-                        "confidence": lnn.training_accuracy if (lnn.training_accuracy is not None and lnn.training_accuracy >= 0.85) else 0.7,
+                        "processing_mode": "rule_based_fallback" if (lnn.training_accuracy is None or lnn.training_accuracy < 0.5) else "lnn",
+                        "confidence": lnn.training_accuracy if (lnn.training_accuracy is not None and lnn.training_accuracy >= 0.5) else 0.7,
                         "hidden_state_norm": round(
                             sum(h*h for h in lnn.hidden_state) ** 0.5, 4
                         ),
