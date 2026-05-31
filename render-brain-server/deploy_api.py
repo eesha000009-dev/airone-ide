@@ -1756,10 +1756,12 @@ async def _call_nvidia_api_streaming(model: str, system_prompt: str,
                                     break
                                 try:
                                     chunk = json.loads(data_str)
-                                    delta = chunk.get('choices', [{}])[0].get('delta', {})
-                                    content_piece = delta.get('content', '')
-                                    if content_piece:
-                                        collected_content.append(content_piece)
+                                    choices = chunk.get('choices', [])
+                                    if choices and len(choices) > 0:
+                                        delta = choices[0].get('delta', {})
+                                        content_piece = delta.get('content', '')
+                                        if content_piece:
+                                            collected_content.append(content_piece)
                                 except json.JSONDecodeError:
                                     continue
                         full_content = ''.join(collected_content)
@@ -1784,6 +1786,23 @@ async def _call_nvidia_api_streaming(model: str, system_prompt: str,
             last_error = e
             logger.warning(f"{model} timeout/connection error on attempt "
                            f"{attempt}/{KIMI_MAX_RETRIES}: {e}")
+        except IndexError as e:
+            # Streaming parsing error - try non-streaming fallback
+            logger.warning(f"{model} streaming parse error: {e}. Trying non-streaming...")
+            try:
+                payload_no_stream = payload.copy()
+                payload_no_stream['stream'] = False
+                async with httpx.AsyncClient(timeout=KIMI_TIMEOUT) as client:
+                    response = await client.post(NVIDIA_API_URL, headers=headers, json=payload_no_stream)
+                    if response.status_code == 200:
+                        result = response.json()
+                        content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+                        if content:
+                            logger.info(f"{model} non-streaming response: {len(content)} chars")
+                            return content
+                    last_error = Exception(f"Non-streaming fallback failed: {response.status_code}")
+            except Exception as fallback_err:
+                last_error = fallback_err
 
         # Exponential backoff before next retry
         if attempt < KIMI_MAX_RETRIES:
