@@ -1,42 +1,693 @@
 """
-Airone Dual-Mode Server
-=======================
-Detects the runtime mode based on environment variables:
-- MODEL_CONFIG is set → Runs as Multi-Model Brain Server (WebSocket)
-- RENDER_API_KEY is set → Runs as Deploy API (FastAPI)
-- Both set → Brain Server takes priority
+Airone Deploy API — LNN Generation, Training, Deployment, and Inference Server.
 
-The brain-template service sets MODEL_CONFIG, so it runs as brain server.
-The airone-deploy service sets RENDER_API_KEY, so it runs as deploy API.
+This FastAPI service handles:
+1. LNN model generation via NVIDIA Kimi K2.6 API (with SSE streaming)
+2. LNN training using Evolutionary Strategy with Kimi-generated training data
+3. Brain deployment to Render via Render API (new service + fallback)
+4. WebSocket LNN inference for testing and robot connections
+5. Health checks
 
-This file IS the FastAPI app (for uvicorn compatibility).
-When brain mode is detected, the startup event launches the brain server.
+Dual-mode operation:
+- When RENDER_API_KEY is set: Full deploy API + inference
+- When MODEL_CONFIG is set (brain-template mode): Acts as brain server
+  with root WebSocket endpoint for robot connections
+
+Environment Variables:
+    RENDER_API_KEY  - Render API key for deploying brain services
+    NVIDIA_API_KEY  - NVIDIA AI API key for Kimi K2.6
+    MODEL_CONFIG    - JSON LNN config (for brain-template mode)
+    ROBOT_NAME      - Name of the robot (for brain-template mode)
+    PORT            - Port to listen on (default: 8000)
 """
 
 import os
 import sys
 import json
+import math
+import random
+import re
 import asyncio
-import signal
-
-# ============ MODE DETECTION ============
-MODEL_CONFIG = os.environ.get("MODEL_CONFIG", "")
-RENDER_API_KEY = os.environ.get("RENDER_API_KEY", "")
-BRAIN_MODE = bool(MODEL_CONFIG)
-
-print(f"[Airone] MODEL_CONFIG set: {bool(MODEL_CONFIG)}")
-print(f"[Airone] RENDER_API_KEY set: {bool(RENDER_API_KEY)}")
-print(f"[Airone] Mode: {'BRAIN SERVER (Multi-Model)' if BRAIN_MODE else 'DEPLOY API'}")
-
-# ============ FASTAPI APP (always created for uvicorn) ============
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import Optional
+import logging
+import uuid
+import time
+import copy
+from datetime import datetime
 from pathlib import Path
+from typing import Optional, AsyncGenerator
 
-app = FastAPI(title="Airone Dual-Mode Server")
+try:
+    import httpx
+except ImportError:
+    print("ERROR: httpx not installed. Run: pip install httpx")
+    sys.exit(1)
+
+try:
+    from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import StreamingResponse
+    from pydantic import BaseModel
+except ImportError:
+    print("ERROR: fastapi not installed. Run: pip install fastapi uvicorn")
+    sys.exit(1)
+
+try:
+    import uvicorn
+except ImportError:
+    print("ERROR: uvicorn not installed. Run: pip install uvicorn")
+    sys.exit(1)
+
+# ─── Configuration ──────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s: %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger('DeployAPI')
+
+RENDER_API_KEY = os.environ.get('RENDER_API_KEY', '')
+NVIDIA_API_KEY = os.environ.get('NVIDIA_API_KEY', '')
+RENDER_API_URL = "https://api.render.com/v1"
+NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+NVIDIA_MODEL = "moonshotai/kimi-k2.6"
+BRAIN_REPO = "https://github.com/eesha000009-dev/airone-ide"
+BRAIN_BRANCH = "main"
+BRAIN_ROOT_DIR = "render-brain-server"
+RENDER_OWNER_ID = "tea-d8dh89s2m8qs7388ajb0"
+BRAIN_TEMPLATE_ID = "srv-d8dh9esm0tmc73duts10"
+
+# Kimi API settings
+KIMI_TIMEOUT = 45.0        # seconds per attempt
+KIMI_MAX_RETRIES = 1       # Single attempt in SSE context
+KIMI_BACKOFF_BASE = 2.0    # exponential backoff base
+
+# Detect brain-template mode
+MODEL_CONFIG_RAW = os.environ.get('MODEL_CONFIG', '')
+ROBOT_NAME = os.environ.get('ROBOT_NAME', 'brain-template')
+BRAIN_MODE = bool(MODEL_CONFIG_RAW and MODEL_CONFIG_RAW != '{}')
+
+# ─── SSE Event Helpers ──────────────────────────────────────────────────────
+
+def sse_event(event: str, data: dict) -> str:
+    """Format a Server-Sent Event string."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+# ─── LNN Model (Lightweight Pure-Python) ────────────────────────────────────
+
+class LiquidNeuralNetwork:
+    """
+    Liquid Neural Network inference and training engine.
+
+    Uses a CfC-inspired architecture with continuous-time dynamics.
+    The network maintains hidden state across time steps, enabling temporal
+    reasoning about sensor data streams.
+
+    Training uses Evolutionary Strategy (ES) with Kimi-generated scenarios.
+    """
+
+    def __init__(self, config: dict):
+        self.input_size = config.get('input_size', 4)
+        self.output_size = config.get('output_size', 4)
+        self.hidden_units = config.get('hidden_units', 16)
+        self.time_steps = config.get('time_steps', 1)
+        # Support both 'vt' and 'tau' parameter names
+        neuron_params = config.get('neuron_params', {})
+        if 'tau' in neuron_params and 'vt' not in neuron_params:
+            neuron_params['vt'] = neuron_params.pop('tau')
+        self.neuron_params = neuron_params
+        self.input_mapping = config.get('input_mapping', {})
+        self.output_mapping = config.get('output_mapping', {})
+        self.description = config.get('description', '')
+        # Pin definitions for output type info
+        self.pin_definitions = config.get('pin_definitions', {})
+
+        # Xavier initialization
+        limit_in = math.sqrt(6.0 / (self.input_size + self.hidden_units))
+        limit_out = math.sqrt(6.0 / (self.hidden_units + self.output_size))
+
+        random.seed(42)
+        self.weights_input = [[random.uniform(-limit_in, limit_in)
+                               for _ in range(self.input_size)]
+                              for _ in range(self.hidden_units)]
+        self.weights_recurrent = [[random.uniform(-0.5, 0.5)
+                                   for _ in range(self.hidden_units)]
+                                  for _ in range(self.hidden_units)]
+        self.weights_output = [[random.uniform(-limit_out, limit_out)
+                                for _ in range(self.hidden_units)]
+                               for _ in range(self.output_size)]
+
+        self.hidden_state = [0.0] * self.hidden_units
+
+        self.input_name_to_idx = {name: idx for name, idx in self.input_mapping.items()}
+        self.idx_to_output_name = {idx: name for name, idx in self.output_mapping.items()}
+
+        # Determine output types from pin_definitions
+        self.output_types = {}
+        if self.pin_definitions and 'outputs' in self.pin_definitions:
+            for pin in self.pin_definitions['outputs']:
+                name = pin.get('name', '') if isinstance(pin, dict) else str(pin)
+                pin_type = pin.get('type', 'pwm_output') if isinstance(pin, dict) else 'pwm_output'
+                if name:
+                    self.output_types[name] = pin_type
+
+        # Training metadata
+        self.trained = config.get('trained', False)
+        self.training_accuracy = config.get('training_accuracy', None)
+        self.training_iterations = config.get('training_iterations', None)
+        self.training_loss = config.get('training_loss', None)
+
+        logger.info(f"LNN initialized: {self.input_size} inputs -> "
+                    f"{self.hidden_units} hidden -> {self.output_size} outputs")
+        if self.output_types:
+            logger.info(f"Output types: {self.output_types}")
+
+    def _sigmoid(self, x: float) -> float:
+        if x >= 0:
+            return 1.0 / (1.0 + math.exp(-x))
+        else:
+            ex = math.exp(x)
+            return ex / (1.0 + ex)
+
+    def _tanh(self, x: float) -> float:
+        return math.tanh(x)
+
+    def forward(self, input_values: list) -> list:
+        """Run forward pass through the LNN."""
+        vt = self.neuron_params.get('vt', 0.1)
+        dt = self.neuron_params.get('dt', 0.01)
+        sensitivity = self.neuron_params.get('sensitivity', 0.5)
+
+        input_contribution = [0.0] * self.hidden_units
+        for h in range(self.hidden_units):
+            for i in range(min(len(input_values), self.input_size)):
+                input_contribution[h] += self.weights_input[h][i] * input_values[i]
+
+        recurrent_contribution = [0.0] * self.hidden_units
+        for h in range(self.hidden_units):
+            for j in range(self.hidden_units):
+                recurrent_contribution[h] += self.weights_recurrent[h][j] * self.hidden_state[j]
+
+        new_hidden = [0.0] * self.hidden_units
+        for h in range(self.hidden_units):
+            total_input = input_contribution[h] + recurrent_contribution[h]
+            tau = vt + sensitivity * self._sigmoid(total_input)
+            activation = self._tanh(total_input)
+            new_hidden[h] = self.hidden_state[h] + dt * (activation - self.hidden_state[h]) / tau
+
+        self.hidden_state = new_hidden
+
+        outputs = [0.0] * self.output_size
+        for o in range(self.output_size):
+            for h in range(self.hidden_units):
+                outputs[o] += self.weights_output[o][h] * self.hidden_state[h]
+            outputs[o] = self._sigmoid(outputs[o])
+
+        return outputs
+
+    def forward_with_state(self, input_values: list, hidden_state: list,
+                           weights_input: list, weights_recurrent: list,
+                           weights_output: list) -> tuple:
+        """
+        Run forward pass with explicit state and weights (for training).
+
+        Returns:
+            (outputs, new_hidden_state)
+        """
+        vt = self.neuron_params.get('vt', 0.1)
+        dt = self.neuron_params.get('dt', 0.01)
+        sensitivity = self.neuron_params.get('sensitivity', 0.5)
+        hidden_units = len(hidden_state)
+        input_size = len(weights_input[0]) if weights_input else self.input_size
+        output_size = len(weights_output)
+
+        input_contribution = [0.0] * hidden_units
+        for h in range(hidden_units):
+            for i in range(min(len(input_values), input_size)):
+                input_contribution[h] += weights_input[h][i] * input_values[i]
+
+        recurrent_contribution = [0.0] * hidden_units
+        for h in range(hidden_units):
+            for j in range(hidden_units):
+                recurrent_contribution[h] += weights_recurrent[h][j] * hidden_state[j]
+
+        new_hidden = [0.0] * hidden_units
+        for h in range(hidden_units):
+            total_input = input_contribution[h] + recurrent_contribution[h]
+            tau = vt + sensitivity * self._sigmoid(total_input)
+            activation = self._tanh(total_input)
+            new_hidden[h] = hidden_state[h] + dt * (activation - hidden_state[h]) / tau
+
+        outputs = [0.0] * output_size
+        for o in range(output_size):
+            for h in range(hidden_units):
+                outputs[o] += weights_output[o][h] * new_hidden[h]
+            outputs[o] = self._sigmoid(outputs[o])
+
+        return outputs, new_hidden
+
+    def compute_loss(self, training_data: list,
+                     weights_input: list = None,
+                     weights_recurrent: list = None,
+                     weights_output: list = None) -> float:
+        """
+        Compute MSE loss on training data.
+
+        Args:
+            training_data: List of dicts with 'inputs' and 'expected_outputs'
+            weights_input, weights_recurrent, weights_output: Optional weight
+                overrides. If None, uses self weights.
+
+        Returns:
+            Mean squared error across all scenarios.
+        """
+        wi = weights_input if weights_input is not None else self.weights_input
+        wr = weights_recurrent if weights_recurrent is not None else self.weights_recurrent
+        wo = weights_output if weights_output is not None else self.weights_output
+
+        total_loss = 0.0
+        total_outputs = 0
+
+        for scenario in training_data:
+            inputs_dict = scenario.get('inputs', {})
+            expected = scenario.get('expected_outputs', {})
+
+            # Build input vector from named inputs
+            input_values = [0.0] * self.input_size
+            for name, val in inputs_dict.items():
+                if name in self.input_mapping:
+                    idx = self.input_mapping[name]
+                    input_values[idx] = max(0.0, min(1.0, float(val)))
+
+            # Reset hidden state for each scenario evaluation
+            hidden = [0.0] * self.hidden_units
+
+            outputs, hidden = self.forward_with_state(
+                input_values, hidden, wi, wr, wo
+            )
+
+            # Compute loss against expected outputs
+            for name, expected_val in expected.items():
+                if name in self.output_mapping:
+                    idx = self.output_mapping[name]
+                    if idx < len(outputs):
+                        diff = outputs[idx] - float(expected_val)
+                        total_loss += diff * diff
+                        total_outputs += 1
+
+        if total_outputs == 0:
+            return float('inf')
+
+        return total_loss / total_outputs
+
+    def evaluate_accuracy(self, training_data: list, tolerance: float = 0.2) -> float:
+        """
+        Evaluate accuracy as the percentage of outputs within tolerance
+        of expected values.
+
+        Args:
+            training_data: List of dicts with 'inputs' and 'expected_outputs'
+            tolerance: Fraction of expected value considered acceptable (0.2 = 20%)
+
+        Returns:
+            Accuracy as a float between 0.0 and 1.0.
+        """
+        correct = 0
+        total = 0
+
+        for scenario in training_data:
+            inputs_dict = scenario.get('inputs', {})
+            expected = scenario.get('expected_outputs', {})
+
+            # Build input vector
+            input_values = [0.0] * self.input_size
+            for name, val in inputs_dict.items():
+                if name in self.input_mapping:
+                    idx = self.input_mapping[name]
+                    input_values[idx] = max(0.0, min(1.0, float(val)))
+
+            # Reset hidden state for evaluation
+            self.hidden_state = [0.0] * self.hidden_units
+            outputs = self.forward(input_values)
+
+            for name, expected_val in expected.items():
+                if name in self.output_mapping:
+                    idx = self.output_mapping[name]
+                    if idx < len(outputs):
+                        ev = float(expected_val)
+                        actual = outputs[idx]
+                        # Avoid division by zero; if expected is near zero, use absolute tolerance
+                        if abs(ev) < 0.01:
+                            if abs(actual - ev) < tolerance:
+                                correct += 1
+                        else:
+                            if abs(actual - ev) / max(abs(ev), 0.01) <= tolerance:
+                                correct += 1
+                        total += 1
+
+        if total == 0:
+            return 0.0
+
+        return correct / total
+
+    def train(self, training_data: list, iterations: int = 100,
+              population: int = 20, sigma: float = 0.1,
+              learning_rate: float = 0.03,
+              progress_callback=None) -> dict:
+        """
+        Train LNN weights using Evolutionary Strategy (ES).
+
+        The algorithm:
+        1. Start with current (Xavier-initialized) weights
+        2. For each iteration:
+           a. Generate N perturbations by adding Gaussian noise to weights
+           b. Evaluate each perturbation on training data (MSE loss)
+           c. Update weights as weighted average of perturbations,
+              weighted by negative loss improvement
+        3. Track best loss throughout training
+
+        Args:
+            training_data: List of training scenarios with 'inputs' and
+                'expected_outputs' (normalized to [0,1]).
+            iterations: Number of ES iterations (default 100).
+            population: Number of perturbations per iteration (default 20).
+            sigma: Standard deviation of Gaussian noise (default 0.1).
+            learning_rate: Step size for weight updates (default 0.03).
+            progress_callback: Optional callable(iteration, loss, best_loss)
+                called every 10 iterations for progress reporting.
+
+        Returns:
+            Dict with training results: final_loss, best_loss, iterations,
+            accuracy.
+        """
+        if not training_data:
+            logger.warning("No training data provided; skipping training.")
+            return {"final_loss": None, "best_loss": None, "iterations": 0, "accuracy": 0.0}
+
+        logger.info(f"Starting ES training: {iterations} iterations, "
+                    f"population={population}, sigma={sigma}, lr={learning_rate}")
+
+        # Flatten all weight matrices into a single vector for ES
+        def flatten_weights(wi, wr, wo):
+            flat = []
+            for row in wi:
+                flat.extend(row)
+            for row in wr:
+                flat.extend(row)
+            for row in wo:
+                flat.extend(row)
+            return flat
+
+        def unflatten_weights(flat, hu, ins, outs):
+            idx = 0
+            wi = []
+            for h in range(hu):
+                row = flat[idx:idx + ins]
+                wi.append(row[:])
+                idx += ins
+            wr = []
+            for h in range(hu):
+                row = flat[idx:idx + hu]
+                wr.append(row[:])
+                idx += hu
+            wo = []
+            for o in range(outs):
+                row = flat[idx:idx + hu]
+                wo.append(row[:])
+                idx += hu
+            return wi, wr, wo
+
+        hu = self.hidden_units
+        ins = self.input_size
+        outs = self.output_size
+
+        best_weights = flatten_weights(self.weights_input, self.weights_recurrent, self.weights_output)
+        best_loss = self.compute_loss(training_data)
+        current_loss = best_loss
+
+        n_params = len(best_weights)
+
+        for iteration in range(iterations):
+            # Generate perturbations and evaluate
+            perturbations = []
+            losses = []
+
+            for p in range(population):
+                # Generate noise vector
+                noise = [random.gauss(0, sigma) for _ in range(n_params)]
+
+                # Create perturbed weights
+                perturbed = [best_weights[i] + noise[i] for i in range(n_params)]
+
+                # Unflatten and evaluate
+                p_wi, p_wr, p_wo = unflatten_weights(perturbed, hu, ins, outs)
+                loss = self.compute_loss(training_data, p_wi, p_wr, p_wo)
+
+                perturbations.append(noise)
+                losses.append(loss)
+
+            # Compute reward-weighted update (rank-normalized)
+            # Sort by loss (lower is better), weight inversely
+            indexed = sorted(enumerate(losses), key=lambda x: x[1])
+
+            # Use rank-based weighting
+            update = [0.0] * n_params
+            total_weight = 0.0
+
+            for rank, (idx, loss) in enumerate(indexed):
+                # Higher weight for lower loss (better performance)
+                # Using rank normalization: best gets weight = population-1, worst gets 0
+                weight = (population - 1 - rank) / (population - 1) if population > 1 else 1.0
+                total_weight += weight
+
+                for i in range(n_params):
+                    update[i] += weight * perturbations[idx][i]
+
+            if total_weight > 0:
+                # Normalize and apply learning rate
+                for i in range(n_params):
+                    update[i] = (update[i] / total_weight) * learning_rate / sigma
+
+                # Always update from best weights (greedy ES)
+                new_weights = [best_weights[i] + update[i] for i in range(n_params)]
+
+                # Evaluate updated weights
+                n_wi, n_wr, n_wo = unflatten_weights(new_weights, hu, ins, outs)
+                new_loss = self.compute_loss(training_data, n_wi, n_wr, n_wo)
+
+                if new_loss <= best_loss:
+                    # Accept improvement
+                    best_weights = new_weights
+                    best_loss = new_loss
+                # else: reject, keep best_weights unchanged (greedy)
+
+            # Progress callback
+            if progress_callback and (iteration % 10 == 0 or iteration == iterations - 1):
+                progress_callback(iteration + 1, best_loss, best_loss)
+
+        # Apply best weights to the model
+        best_wi, best_wr, best_wo = unflatten_weights(best_weights, hu, ins, outs)
+        self.weights_input = best_wi
+        self.weights_recurrent = best_wr
+        self.weights_output = best_wo
+
+        # Reset hidden state after training
+        self.hidden_state = [0.0] * self.hidden_units
+
+        # Evaluate final accuracy
+        accuracy = self.evaluate_accuracy(training_data)
+
+        # Update training metadata
+        self.trained = True
+        self.training_accuracy = round(accuracy, 4)
+        self.training_iterations = iterations
+        self.training_loss = round(best_loss, 6)
+
+        logger.info(f"Training complete: best_loss={best_loss:.6f}, "
+                    f"accuracy={accuracy:.2%}, iterations={iterations}")
+
+        return {
+            "final_loss": round(best_loss, 6),
+            "best_loss": round(best_loss, 6),
+            "iterations": iterations,
+            "accuracy": round(accuracy, 4),
+        }
+
+    def _get_output_action(self, name: str, output_val: float) -> dict:
+        """
+        Generate the appropriate action for an output module based on its type.
+
+        Output types:
+        - pwm_output: PWM motor speed (0-255)
+        - servo: Servo angle (0-180)
+        - digital_output: On/Off (0 or 1)
+        - Default: PWM if name contains 'motor', otherwise servo
+        """
+        output_type = self.output_types.get(name, '')
+
+        # Auto-detect from name if no explicit type
+        if not output_type:
+            name_lower = name.lower()
+            if 'motor' in name_lower or 'pwm' in name_lower or 'speed' in name_lower:
+                output_type = 'pwm_output'
+            elif 'led' in name_lower or 'buzzer' in name_lower or 'relay' in name_lower:
+                output_type = 'digital_output'
+            else:
+                output_type = 'servo'
+
+        if output_type == 'pwm_output':
+            # Map [0,1] to PWM range [0,255]
+            pwm_value = int(output_val * 255)
+            pwm_value = max(0, min(255, pwm_value))
+            return {"action": "pwm", "value": pwm_value}
+        elif output_type == 'digital_output':
+            # Threshold at 0.5
+            return {"action": "digitalwrite", "value": 1 if output_val > 0.5 else 0}
+        else:
+            # Servo: map [0,1] to angle [0,180]
+            angle = int(output_val * 180)
+            angle = max(0, min(180, angle))
+            return {"action": "servo", "angle": angle}
+
+    def process_sensor_data(self, sensor_data: dict, output_modules: list) -> dict:
+        """Process sensor data and generate commands."""
+        # Encode inputs to [0, 1] range
+        input_values = [0.0] * self.input_size
+        for name, idx in self.input_mapping.items():
+            if name in sensor_data:
+                val = sensor_data[name]
+                if isinstance(val, (int, float)):
+                    # Normalize: if value > 1.0, assume raw ADC (0-4095), else already normalized
+                    if abs(float(val)) > 1.0:
+                        input_values[idx] = min(1.0, max(0.0, float(val) / 4095.0))
+                    else:
+                        input_values[idx] = min(1.0, max(0.0, float(val)))
+                elif isinstance(val, str):
+                    try:
+                        fv = float(val)
+                        if abs(fv) > 1.0:
+                            input_values[idx] = min(1.0, max(0.0, fv / 4095.0))
+                        else:
+                            input_values[idx] = min(1.0, max(0.0, fv))
+                    except (ValueError, TypeError):
+                        pass
+
+        # Run forward pass
+        raw_outputs = self.forward(input_values)
+
+        # Decode outputs to commands
+        commands = {}
+        for idx, name in self.idx_to_output_name.items():
+            if idx < len(raw_outputs) and name in output_modules:
+                output_val = raw_outputs[idx]
+                commands[name] = self._get_output_action(name, output_val)
+
+        return commands
+
+    def get_config(self) -> dict:
+        """Return the model configuration including training metadata."""
+        config = {
+            'input_size': self.input_size,
+            'output_size': self.output_size,
+            'hidden_units': self.hidden_units,
+            'time_steps': self.time_steps,
+            'neuron_params': self.neuron_params,
+            'input_mapping': self.input_mapping,
+            'output_mapping': self.output_mapping,
+            'description': self.description,
+        }
+        if self.pin_definitions:
+            config['pin_definitions'] = self.pin_definitions
+        if self.trained:
+            config['trained'] = self.trained
+            config['training_accuracy'] = self.training_accuracy
+            config['training_iterations'] = self.training_iterations
+            config['training_loss'] = self.training_loss
+        return config
+
+
+# ─── In-Memory Store ────────────────────────────────────────────────────────
+
+class ModelStore:
+    """In-memory store for generated LNN models."""
+
+    def __init__(self):
+        self.models = {}  # model_id -> {config, lnn, created_at, robot_name}
+        self.brains = {}  # brain_id -> {model_id, service_id, url, status, robot_name}
+
+    def add_model(self, model_id: str, config: dict, robot_name: str) -> LiquidNeuralNetwork:
+        lnn = LiquidNeuralNetwork(config)
+        self.models[model_id] = {
+            'config': config,
+            'lnn': lnn,
+            'created_at': datetime.now().isoformat(),
+            'robot_name': robot_name,
+        }
+        return lnn
+
+    def update_model_config(self, model_id: str, config: dict):
+        """Update stored config for a model (e.g. after training)."""
+        if model_id in self.models:
+            self.models[model_id]['config'] = config
+
+    def get_model(self, model_id: str) -> Optional[dict]:
+        return self.models.get(model_id)
+
+    def get_lnn(self, model_id: str) -> Optional[LiquidNeuralNetwork]:
+        m = self.models.get(model_id)
+        return m['lnn'] if m else None
+
+    def add_brain(self, brain_id: str, model_id: str, service_id: str, url: str, robot_name: str):
+        self.brains[brain_id] = {
+            'model_id': model_id,
+            'service_id': service_id,
+            'url': url,
+            'ws_url': f"wss://{url.replace('https://', '').replace('http://', '')}",
+            'status': 'deploying',
+            'robot_name': robot_name,
+            'created_at': datetime.now().isoformat(),
+        }
+
+    def update_brain_status(self, brain_id: str, status: str):
+        if brain_id in self.brains:
+            self.brains[brain_id]['status'] = status
+
+    def get_brain(self, brain_id: str) -> Optional[dict]:
+        return self.brains.get(brain_id)
+
+    def list_models(self) -> list:
+        return [
+            {
+                'model_id': mid,
+                'robot_name': m['robot_name'],
+                'input_size': m['config'].get('input_size'),
+                'output_size': m['config'].get('output_size'),
+                'trained': m['config'].get('trained', False),
+                'training_accuracy': m['config'].get('training_accuracy'),
+                'created_at': m['created_at'],
+            }
+            for mid, m in self.models.items()
+        ]
+
+    def list_brains(self) -> list:
+        return [
+            {
+                'brain_id': bid,
+                **b,
+            }
+            for bid, b in self.brains.items()
+        ]
+
+
+store = ModelStore()
+
+# Robot name to model_id mapping for multi-model routing
+ROBOT_MODEL_MAP = {}  # robot_name -> model_id
+
+# ─── FastAPI App ─────────────────────────────────────────────────────────────
+
+app = FastAPI(title="Airone Deploy API", version="3.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,362 +697,1480 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ============ BRAIN SERVER MODE ============
-if BRAIN_MODE:
-    import re
-    import math
-    import time
-    import random
-    from urllib.parse import parse_qs
+
+# ─── Load MODEL_CONFIG from env on startup ──────────────────────────────────
+
+# The default model ID for brain-template mode
+ENV_MODEL_ID = None
+
+@app.on_event("startup")
+async def load_model_from_env():
+    """Load LNN model from MODEL_CONFIG environment variable if present.
+    
+    Supports both single-model and multi-model formats:
+    - Single: {"input_size": 2, "output_size": 2, ...}
+    - Multi: {"robot-name": {"input_size": 2, ...}, "other-robot": {...}}
+    """
+    global ENV_MODEL_ID
+
+    model_config_raw = os.environ.get('MODEL_CONFIG', '')
+    robot_name = os.environ.get('ROBOT_NAME', 'brain-template')
+
+    if model_config_raw and model_config_raw != '{}':
+        try:
+            config = json.loads(model_config_raw)
+            if config.get('input_size'):
+                # Single model format
+                ENV_MODEL_ID = f"lnn_{robot_name.lower().replace(' ', '_')}_env"
+                store.add_model(ENV_MODEL_ID, config, robot_name)
+                ROBOT_MODEL_MAP[robot_name.lower().replace(' ', '-')] = ENV_MODEL_ID
+                logger.info(f"Loaded LNN from MODEL_CONFIG: {ENV_MODEL_ID} "
+                           f"({config.get('input_size')} inputs -> {config.get('output_size')} outputs)")
+                logger.info(f"Brain mode: Robot '{robot_name}' ready for WebSocket connections")
+            else:
+                # Multi-model format: {"robot-name": {...config...}, ...}
+                for rname, rconfig in config.items():
+                    if isinstance(rconfig, dict) and rconfig.get('input_size'):
+                        mid = f"lnn_{rname.lower().replace(' ', '_')}_env"
+                        store.add_model(mid, rconfig, rname)
+                        ROBOT_MODEL_MAP[rname.lower().replace(' ', '-')] = mid
+                        if not ENV_MODEL_ID:
+                            ENV_MODEL_ID = mid  # Default to first model
+                        logger.info(f"Loaded multi-model: {mid} for robot '{rname}' "
+                                   f"({rconfig.get('input_size')} inputs -> {rconfig.get('output_size')} outputs)")
+                logger.info(f"Brain mode: {len(ROBOT_MODEL_MAP)} robot(s) loaded: {list(ROBOT_MODEL_MAP.keys())}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse MODEL_CONFIG: {e}")
+
+# ─── Request Models ──────────────────────────────────────────────────────────
+
+class GenerateLNNRequest(BaseModel):
+    user_id: str = "default"
+    robot_name: str = "my-robot"
+    description: str = ""
+    pin_definitions: Optional[dict] = None  # {"inputs": [...], "outputs": [...]}
+    sensor_count: int = 2
+    actuator_count: int = 2
+
+class DeployBrainRequest(BaseModel):
+    model_id: str
+    robot_name: str = "my-robot"
+    user_id: str = "default"
+
+class TestInferenceRequest(BaseModel):
+    model_id: str
+    sensor_data: dict  # {"sensor_name": value, ...}
+    output_modules: list  # ["motor_left", "motor_right", ...]
+
+# ─── Health Check ────────────────────────────────────────────────────────────
+
+@app.get("/health")
+async def health():
+    result = {
+        "status": "ok",
+        "service": "airone-brain" if BRAIN_MODE else "airone-deploy",
+        "models_count": len(store.models),
+        "brains_count": len(store.brains),
+        "robots_loaded": list(ROBOT_MODEL_MAP.keys()),
+        "render_api_configured": bool(RENDER_API_KEY),
+        "nvidia_api_configured": bool(NVIDIA_API_KEY),
+    }
+    if BRAIN_MODE:
+        result["brain_mode"] = True
+        result["robot_name"] = ROBOT_NAME
+        if ENV_MODEL_ID:
+            lnn = store.get_lnn(ENV_MODEL_ID)
+            if lnn:
+                result["model_info"] = {
+                    "model_id": ENV_MODEL_ID,
+                    "input_size": lnn.input_size,
+                    "output_size": lnn.output_size,
+                    "input_mapping": list(lnn.input_mapping.keys()),
+                    "output_mapping": list(lnn.output_mapping.keys()),
+                    "trained": lnn.trained,
+                    "training_accuracy": lnn.training_accuracy,
+                }
+    return result
+
+# ─── Root WebSocket (Brain Mode) ────────────────────────────────────────────
+# When running as brain-template, robots connect to / for inference
+
+@app.websocket("/")
+async def brain_websocket(websocket: WebSocket):
+    """
+    Root WebSocket endpoint for brain-template mode.
+    Robots connect here to send sensor data and receive commands.
+    Supports multi-model routing via ?robot=name query parameter.
+    """
+    await websocket.accept()
+
+    # Check for ?robot=name query parameter
+    robot_key = None
+    try:
+        query_string = websocket.query_params.get("robot") or websocket.query_params.get("name")
+        if query_string:
+            robot_key = query_string.lower().replace(' ', '-')
+    except:
+        pass
+
+    # Find the right model for this robot
+    model_id = None
+    if robot_key and robot_key in ROBOT_MODEL_MAP:
+        model_id = ROBOT_MODEL_MAP[robot_key]
+    elif ENV_MODEL_ID:
+        model_id = ENV_MODEL_ID
+    
+    lnn = store.get_lnn(model_id) if model_id else None
+
+    if not lnn:
+        await websocket.send_text(json.dumps({
+            "error": f"No LNN model found for robot '{robot_key}'. Set MODEL_CONFIG env var.",
+            "status": "no_model"
+        }))
+        await websocket.close()
+        return
+
+    connected_robot_name = robot_key or ROBOT_NAME
+    logger.info(f"Robot connected to brain: {connected_robot_name} (model: {model_id})")
+
+    # Send welcome message
+    await websocket.send_text(json.dumps({
+        "status": "connected",
+        "robot_name": connected_robot_name,
+        "model_id": model_id,
+        "input_sensors": list(lnn.input_mapping.keys()),
+        "output_actuators": list(lnn.output_mapping.keys()),
+    }))
+
+    command_counter = 0
 
     try:
-        import websockets
-    except ImportError:
-        print("[ERROR] websockets not installed! Run: pip install websockets")
-        sys.exit(1)
+        while True:
+            data = await websocket.receive_text()
 
-    # LNN Engine
-    class LiquidNeuralNetwork:
-        def __init__(self, config):
-            self.config = config
-            self.input_size = config.get('input_size', 1)
-            self.output_size = config.get('output_size', 1)
-            self.hidden_units = config.get('hidden_units', 16)
+            try:
+                parsed = None
+                try:
+                    parsed = json.loads(data)
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
-            params = config.get('neuron_params', {})
-            self.tau = params.get('tau', params.get('vt', 0.1))
-            self.dt = params.get('dt', 0.01)
+                if parsed and isinstance(parsed, dict):
+                    sensor_data = parsed.get('input_sensors_read', {})
+                    output_modules = parsed.get('output_modules_available', list(lnn.output_mapping.keys()))
+                else:
+                    # Natural language format from ESP32
+                    sensors_match = re.search(
+                        r'Currently, the input sensors read:\s*\n?\s*\(([^)]*)\)', data, re.IGNORECASE
+                    )
+                    outputs_match = re.search(
+                        r'What do you want to do to:\s*\n?\s*\(([^)]*)\)', data, re.IGNORECASE
+                    )
 
-            self.input_mapping = config.get('input_mapping', {})
-            self.output_mapping = config.get('output_mapping', {})
-            self.output_types = config.get('output_types', {})
+                    sensor_data = {}
+                    if sensors_match:
+                        for pair in sensors_match.group(1).split(','):
+                            if ':' in pair:
+                                key, val = pair.split(':', 1)
+                                try:
+                                    sensor_data[key.strip()] = float(val.strip())
+                                except ValueError:
+                                    sensor_data[key.strip()] = val.strip()
 
-            weights = config.get('weights', {})
-            self.W_in = weights.get('W_in') or self._xavier(self.hidden_units, self.input_size)
-            self.W_rec = weights.get('W_rec') or self._xavier(self.hidden_units, self.hidden_units)
-            self.W_out = weights.get('W_out') or self._xavier(self.output_size, self.hidden_units)
-            self.b_in = weights.get('b_in') or [0.0] * self.hidden_units
-            self.b_out = weights.get('b_out') or [0.0] * self.output_size
-            self.hidden_state = [0.0] * self.hidden_units
+                    output_modules = []
+                    if outputs_match:
+                        output_modules = [
+                            m.strip().replace('.', '')
+                            for m in outputs_match.group(1).split(',') if m.strip()
+                        ]
 
-        def _xavier(self, rows, cols):
-            limit = math.sqrt(6.0 / (rows + cols))
-            return [[random.uniform(-limit, limit) for _ in range(cols)] for _ in range(rows)]
+                    if not output_modules:
+                        output_modules = list(lnn.output_mapping.keys())
 
-        def forward(self, inputs):
-            if isinstance(inputs, dict):
-                input_values = []
-                for name, idx in sorted(self.input_mapping.items(), key=lambda x: x[1]):
-                    val = inputs.get(name, 0.0)
-                    if isinstance(val, str):
-                        try: val = float(val)
-                        except: val = 0.0
-                    input_values.append(val)
-                while len(input_values) < self.input_size: input_values.append(0.0)
-            else:
-                input_values = list(inputs)
-                while len(input_values) < self.input_size: input_values.append(0.0)
+                # Run inference
+                commands = lnn.process_sensor_data(sensor_data, output_modules)
 
-            input_values = input_values[:self.input_size]
-            new_hidden = [0.0] * self.hidden_units
-            for i in range(self.hidden_units):
-                w_sum = self.b_in[i]
-                for j in range(self.input_size): w_sum += self.W_in[i][j] * input_values[j]
-                for j in range(self.hidden_units): w_sum += self.W_rec[i][j] * self.hidden_state[j]
-                decay = 1.0 - self.dt / max(self.tau, 0.001)
-                new_hidden[i] = decay * self.hidden_state[i] + (self.dt / max(self.tau, 0.001)) * math.tanh(w_sum)
-            self.hidden_state = new_hidden
+                command_counter += 1
+                response = {
+                    "command_id": f"cmd_{command_counter}",
+                    "timestamp": int(datetime.now().timestamp() * 1000),
+                    "output_commands": commands,
+                    "metadata": {
+                        "model": "LNN (Liquid Neural Network)",
+                        "model_id": model_id,
+                        "robot_name": ROBOT_NAME,
+                        "inputs_processed": len(sensor_data),
+                        "outputs_generated": len(commands),
+                        "hidden_state_norm": round(
+                            sum(h*h for h in lnn.hidden_state) ** 0.5, 4
+                        ),
+                    }
+                }
 
-            raw_outputs = []
-            for i in range(self.output_size):
-                w_sum = self.b_out[i]
-                for j in range(self.hidden_units): w_sum += self.W_out[i][j] * self.hidden_state[j]
-                raw_outputs.append(self._sigmoid(w_sum))
+                await websocket.send_text(json.dumps(response))
+                logger.info(f"Sent commands: {list(commands.keys())}")
 
-            commands = {}
-            for name, idx in self.output_mapping.items():
-                if idx < len(raw_outputs):
-                    raw_val = raw_outputs[idx]
-                    out_type = self.output_types.get(name, 'digital')
-                    commands[name] = self._format_output(raw_val, out_type)
-            return commands
+            except Exception as e:
+                logger.error(f"Error processing message: {e}")
+                try:
+                    await websocket.send_text(json.dumps({
+                        "error": str(e),
+                        "command_id": f"cmd_error_{command_counter}"
+                    }))
+                except:
+                    pass
 
-        def _sigmoid(self, x):
-            if x >= 0: return 1.0 / (1.0 + math.exp(-x))
-            ex = math.exp(x); return ex / (1.0 + ex)
+    except WebSocketDisconnect:
+        logger.info(f"Robot disconnected from brain: {ROBOT_NAME}")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+    finally:
+        logger.info(f"Connection closed for brain: {ROBOT_NAME}")
 
-        def _format_output(self, raw_val, out_type):
-            if out_type in ('pwm', 'motor'):
-                return {"action": "pwm", "value": max(0, min(255, int(raw_val * 255)))}
-            elif out_type == 'servo':
-                return {"action": "servo", "angle": max(0, min(180, int(raw_val * 180)))}
-            else:
-                return {"action": "digitalwrite", "value": 1 if raw_val > 0.5 else 0}
+# ─── Kimi K2.6 API with Retry Logic ─────────────────────────────────────────
 
-    # Multi-Model Brain
-    models = {}
-    try:
-        config = json.loads(MODEL_CONFIG)
-        if 'input_size' in config:
-            robot_name = os.environ.get('ROBOT_NAME', 'default')
-            models[robot_name] = LiquidNeuralNetwork(config)
-            print(f"[Brain] Loaded single model for: {robot_name}")
-        else:
-            for name, cfg in config.items():
-                if isinstance(cfg, dict) and 'input_size' in cfg:
-                    models[name] = LiquidNeuralNetwork(cfg)
-                    print(f"[Brain] Loaded model for: {name}")
-        print(f"[Brain] Total models: {len(models)}")
-    except json.JSONDecodeError as e:
-        print(f"[Brain] Failed to parse MODEL_CONFIG: {e}")
+async def call_kimi_api(system_prompt: str, user_prompt: str) -> str:
+    """
+    Call NVIDIA Kimi K2.6 API with retry logic and exponential backoff.
 
-    def get_model(robot_name):
-        import re
-        key = re.sub(r'[^a-z0-9]', '-', robot_name.lower())
-        if key in models: return models[key]
-        if 'default' in models: return models['default']
-        if models: return next(iter(models.values()))
-        return None
+    Retries up to KIMI_MAX_RETRIES times with exponential backoff
+    (2s, 4s, 8s) on transient failures (timeouts, connection errors,
+    429 rate limits, 5xx server errors).
 
-    def parse_message(msg):
-        if isinstance(msg, dict): return msg
-        try: return json.loads(msg)
-        except: pass
-        result = {'input_sensors_read': {}}
-        m = re.search(r'input sensors read:\s*\n?\s*\(([^)]*)\)', msg, re.IGNORECASE)
-        if m:
-            for pair in m.group(1).strip().split(','):
-                if ':' in pair:
-                    k, v = pair.strip().split(':', 1)
-                    try: v = float(v.strip())
-                    except: pass
-                    result['input_sensors_read'][k.strip()] = v
+    Raises:
+        Exception: If all retries are exhausted.
+    """
+    headers = {
+        "Authorization": f"Bearer {NVIDIA_API_KEY}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "model": NVIDIA_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "max_tokens": 4096,
+        "temperature": 0.7,
+        "top_p": 1.0,
+        "stream": False,
+    }
+
+    last_error = None
+
+    for attempt in range(1, KIMI_MAX_RETRIES + 1):
+        logger.info(f"Calling Kimi K2.6 API (attempt {attempt}/{KIMI_MAX_RETRIES})...")
+
+        try:
+            async with httpx.AsyncClient(timeout=KIMI_TIMEOUT) as client:
+                response = await client.post(NVIDIA_API_URL, headers=headers, json=payload)
+
+                if response.status_code == 200:
+                    result = response.json()
+                    content = result['choices'][0]['message']['content']
+                    logger.info(f"Kimi response received: {len(content)} chars")
+                    return content
+
+                # Retryable status codes
+                if response.status_code in (429, 500, 502, 503, 504):
+                    error_detail = response.text[:300]
+                    last_error = Exception(
+                        f"Kimi API error (retryable): {response.status_code} - {error_detail}"
+                    )
+                    logger.warning(f"Kimi API returned {response.status_code}, "
+                                   f"will retry (attempt {attempt}/{KIMI_MAX_RETRIES})")
+                else:
+                    # Non-retryable error (e.g., 401, 403, 400)
+                    error_detail = response.text[:500]
+                    logger.error(f"Kimi API error (non-retryable): "
+                                 f"{response.status_code} - {error_detail}")
+                    raise Exception(
+                        f"Kimi API error: {response.status_code} - {error_detail}"
+                    )
+
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            last_error = e
+            logger.warning(f"Kimi API timeout/connection error on attempt "
+                           f"{attempt}/{KIMI_MAX_RETRIES}: {e}")
+
+        # Exponential backoff before next retry
+        if attempt < KIMI_MAX_RETRIES:
+            backoff = KIMI_BACKOFF_BASE ** attempt
+            logger.info(f"Retrying in {backoff}s...")
+            await asyncio.sleep(backoff)
+
+    # All retries exhausted
+    raise Exception(
+        f"Kimi API unavailable after {KIMI_MAX_RETRIES} retries: {last_error}"
+    )
+
+
+# ─── LNN Config Extraction ──────────────────────────────────────────────────
+
+def extract_lnn_config_from_kimi_response(response_text: str, request: GenerateLNNRequest) -> dict:
+    """
+    Extract LNN configuration from Kimi's response.
+    Kimi should return a JSON block with the model configuration.
+    If JSON extraction fails, construct config from the request parameters.
+    """
+    config = None
+
+    # Look for JSON in markdown code blocks
+    json_patterns = [
+        r'```json\s*\n(.*?)\n\s*```',
+        r'```\s*\n(\{.*?\})\n\s*```',
+        r'(\{[^{}]*"input_size"[^{}]*\})',
+        r'(\{[^{}]*"input_mapping"[^{}]*\})',
+    ]
+
+    for pattern in json_patterns:
+        matches = re.findall(pattern, response_text, re.DOTALL)
+        for match in matches:
+            try:
+                parsed = json.loads(match)
+                if 'input_size' in parsed or 'input_mapping' in parsed:
+                    config = parsed
+                    break
+            except json.JSONDecodeError:
+                continue
+        if config:
+            break
+
+    # Build pin mappings from request
+    input_mapping = {}
+    output_mapping = {}
+
+    if request.pin_definitions:
+        inputs = request.pin_definitions.get('inputs', [])
+        outputs = request.pin_definitions.get('outputs', [])
+
+        for i, pin in enumerate(inputs):
+            name = pin if isinstance(pin, str) else pin.get('name', f'sensor_{i}')
+            input_mapping[name] = i
+
+        for i, pin in enumerate(outputs):
+            name = pin if isinstance(pin, str) else pin.get('name', f'actuator_{i}')
+            output_mapping[name] = i
+
+    if not input_mapping:
+        for i in range(request.sensor_count):
+            input_mapping[f'sensor_{i}'] = i
+
+    if not output_mapping:
+        for i in range(request.actuator_count):
+            output_mapping[f'actuator_{i}'] = i
+
+    if config:
+        # Merge extracted config with request data
+        config.setdefault('input_size', len(input_mapping) or request.sensor_count)
+        config.setdefault('output_size', len(output_mapping) or request.actuator_count)
+        config.setdefault('hidden_units', max(16, (config['input_size'] + config['output_size']) * 4))
+        config.setdefault('input_mapping', input_mapping)
+        config.setdefault('output_mapping', output_mapping)
+        config.setdefault('description', request.description)
+        config.setdefault('neuron_params', {'vt': 0.1, 'dt': 0.01, 'sensitivity': 0.5})
+    else:
+        # Construct config from request parameters + Kimi description
+        config = {
+            'input_size': len(input_mapping) or request.sensor_count,
+            'output_size': len(output_mapping) or request.actuator_count,
+            'hidden_units': max(16, (len(input_mapping) + len(output_mapping)) * 4),
+            'time_steps': 1,
+            'neuron_params': {'vt': 0.1, 'dt': 0.01, 'sensitivity': 0.5},
+            'input_mapping': input_mapping,
+            'output_mapping': output_mapping,
+            'description': request.description,
+            'kimi_response': response_text[:2000],
+        }
+
+    # Always include pin_definitions for output type info
+    if request.pin_definitions:
+        config['pin_definitions'] = request.pin_definitions
+
+    return config
+
+
+# ─── Generate LNN (Non-Streaming) ───────────────────────────────────────────
+
+@app.post("/generate")
+async def generate_lnn(req: GenerateLNNRequest):
+    """Generate a new LNN model using Kimi K2.6 AI."""
+
+    # Build the system prompt for Kimi
+    pin_info = ""
+    if req.pin_definitions:
+        pin_info = f"""
+Pin Definitions:
+- Input sensors: {json.dumps(req.pin_definitions.get('inputs', []))}
+- Output actuators: {json.dumps(req.pin_definitions.get('outputs', []))}
+"""
+
+    system_prompt = """You are an expert in Liquid Neural Networks (LNNs) and robotics. You design LNN model configurations for robots.
+
+A Liquid Neural Network (LNN) uses continuous-time dynamics with ODE-inspired neuron updates:
+  dh/dt = (activation - h) / tau
+where tau is a time constant modulated by input.
+
+You must return a JSON configuration with these fields:
+{
+  "input_size": <number of sensor inputs>,
+  "output_size": <number of actuator outputs>,
+  "hidden_units": <number of hidden units (typically 4-8x total IO)>,
+  "neuron_params": {
+    "vt": <time constant base, typically 0.05-0.2>,
+    "dt": <time step, typically 0.01>,
+    "sensitivity": <input sensitivity, typically 0.3-0.8>
+  },
+  "input_mapping": {"sensor_name": index, ...},
+  "output_mapping": {"actuator_name": index, ...},
+  "description": "<brief description of the robot behavior>",
+  "behavior_notes": "<notes about expected behavior>"
+}
+
+The neuron_params should be tuned for the robot's task:
+- Fast-reacting robots (obstacle avoidance): lower vt (0.05), higher sensitivity (0.7)
+- Smooth control (arm movement): higher vt (0.15), lower sensitivity (0.4)
+- Balancing robots: medium vt (0.1), medium sensitivity (0.5)
+
+Return ONLY the JSON configuration, no extra text."""
+
+    user_prompt = f"""Design an LNN model configuration for this robot:
+
+Robot Name: {req.robot_name}
+Description: {req.description}
+Number of sensors: {req.sensor_count}
+Number of actuators: {req.actuator_count}
+{pin_info}
+
+Return the JSON configuration."""
+
+    kimi_response = ""
+    kimi_used = False
+    if NVIDIA_API_KEY:
+        try:
+            kimi_response = await call_kimi_api(system_prompt, user_prompt)
+            kimi_used = True
+        except Exception as e:
+            logger.warning(f"Kimi API failed, generating config locally as fallback: {e}")
+    else:
+        logger.info("No NVIDIA_API_KEY configured, generating config locally")
+
+    config = extract_lnn_config_from_kimi_response(kimi_response, req)
+
+    # Generate model ID and store
+    model_id = f"lnn_{req.robot_name.lower().replace(' ', '_')}_{uuid.uuid4().hex[:8]}"
+    lnn = store.add_model(model_id, config, req.robot_name)
+
+    # Generate training data and train the LNN
+    training_data = generate_synthetic_training_data(config)
+    training_accuracy = 0.0
+    training_loss = None
+    training_iterations = 0
+
+    if training_data:
+        # Optionally enhance with Kimi
+        if NVIDIA_API_KEY and kimi_used:
+            try:
+                training_system_prompt = """You are an expert in robotics and Liquid Neural Networks. Generate training scenarios for a robot.
+For each scenario, provide inputs and expected_outputs as dictionaries mapping names to normalized [0.0,1.0] values.
+Return ONLY a JSON object with a "scenarios" array of at least 30 scenarios."""
+                training_user_prompt = f"""Robot: {req.robot_name}\nDescription: {req.description}\nSensors: {list(config.get('input_mapping', {}).keys())}\nActuators: {list(config.get('output_mapping', {}).keys())}"""
+                training_response = await asyncio.wait_for(
+                    call_kimi_api(training_system_prompt, training_user_prompt),
+                    timeout=30.0
+                )
+                kimi_data = extract_training_data_from_kimi_response(training_response)
+                if kimi_data:
+                    training_data.extend(kimi_data)
+            except Exception:
+                pass  # Use synthetic data only
+
+        # Train using evolutionary strategy
+        train_result = lnn.train(training_data, iterations=50, population=20,
+                                  sigma=0.15, learning_rate=0.05)
+        training_accuracy = train_result.get('accuracy', 0.0)
+        training_loss = train_result.get('best_loss')
+        training_iterations = train_result.get('iterations', 0)
+
+        # Update stored model config with training info
+        config['trained'] = True
+        config['training_accuracy'] = training_accuracy
+        config['training_loss'] = training_loss
+        config['training_iterations'] = training_iterations
+        store.update_model_config(model_id, config)
+
+    return {
+        "status": "generated",
+        "model_id": model_id,
+        "config": config,
+        "message": f"LNN model '{model_id}' generated and trained successfully for '{req.robot_name}'",
+        "kimi_used": kimi_used,
+        "training_accuracy": training_accuracy,
+        "training_loss": training_loss,
+        "training_iterations": training_iterations,
+    }
+
+
+# ─── Generate LNN with SSE Streaming ────────────────────────────────────────
+
+async def generate_lnn_stream(req: GenerateLNNRequest) -> AsyncGenerator[str, None]:
+    """
+    Generate an LNN model with SSE progress streaming.
+
+    Steps:
+    1. Generating LNN architecture (Kimi K2.6 call for config)
+    2. Creating training data (Kimi generates scenarios)
+    3. Training LNN (Evolutionary Strategy)
+    4. Checking for errors (validate model)
+    5. Testing LNN behavior (run test scenarios)
+    6. Finalizing model (store and return)
+    """
+    total_steps = 6
+    model_id = f"lnn_{req.robot_name.lower().replace(' ', '_')}_{uuid.uuid4().hex[:8]}"
+    kimi_used = False
+    training_accuracy = 0.0
+    config = None
+
+    # ── Step 1: Generating LNN architecture ──────────────────────────────
+    yield sse_event("progress", {
+        "step": "generating",
+        "step_number": 1,
+        "total_steps": total_steps,
+        "message": "Generating LNN architecture with Kimi K2.6...",
+        "progress": 16,
+    })
+
+    # Build system prompt
+    pin_info = ""
+    if req.pin_definitions:
+        pin_info = f"""
+Pin Definitions:
+- Input sensors: {json.dumps(req.pin_definitions.get('inputs', []))}
+- Output actuators: {json.dumps(req.pin_definitions.get('outputs', []))}
+"""
+
+    system_prompt_config = """You are an expert in Liquid Neural Networks (LNNs) and robotics. You design LNN model configurations for robots.
+
+A Liquid Neural Network (LNN) uses continuous-time dynamics with ODE-inspired neuron updates:
+  dh/dt = (activation - h) / tau
+where tau is a time constant modulated by input.
+
+You must return a JSON configuration with these fields:
+{
+  "input_size": <number of sensor inputs>,
+  "output_size": <number of actuator outputs>,
+  "hidden_units": <number of hidden units (typically 4-8x total IO)>,
+  "neuron_params": {
+    "vt": <time constant base, typically 0.05-0.2>,
+    "dt": <time step, typically 0.01>,
+    "sensitivity": <input sensitivity, typically 0.3-0.8>
+  },
+  "input_mapping": {"sensor_name": index, ...},
+  "output_mapping": {"actuator_name": index, ...},
+  "description": "<brief description of the robot behavior>",
+  "behavior_notes": "<notes about expected behavior>"
+}
+
+The neuron_params should be tuned for the robot's task:
+- Fast-reacting robots (obstacle avoidance): lower vt (0.05), higher sensitivity (0.7)
+- Smooth control (arm movement): higher vt (0.15), lower sensitivity (0.4)
+- Balancing robots: medium vt (0.1), medium sensitivity (0.5)
+
+Return ONLY the JSON configuration, no extra text."""
+
+    user_prompt_config = f"""Design an LNN model configuration for this robot:
+
+Robot Name: {req.robot_name}
+Description: {req.description}
+Number of sensors: {req.sensor_count}
+Number of actuators: {req.actuator_count}
+{pin_info}
+
+Return the JSON configuration."""
+
+    kimi_response = ""
+    if NVIDIA_API_KEY:
+        try:
+            # Use shorter timeout in SSE context to avoid hanging the stream
+            kimi_response = await asyncio.wait_for(
+                call_kimi_api(system_prompt_config, user_prompt_config),
+                timeout=60.0
+            )
+            kimi_used = True
+            yield sse_event("progress", {
+                "step": "generating",
+                "step_number": 1,
+                "total_steps": total_steps,
+                "message": "LNN architecture generated by Kimi K2.6",
+                "progress": 16,
+                "detail": "Kimi config received successfully",
+            })
+        except Exception as e:
+            logger.warning(f"Kimi API failed for config generation: {e}")
+            yield sse_event("progress", {
+                "step": "generating",
+                "step_number": 1,
+                "total_steps": total_steps,
+                "message": f"Kimi API unavailable, generating config locally: {str(e)[:100]}",
+                "progress": 16,
+            })
+    else:
+        yield sse_event("progress", {
+            "step": "generating",
+            "step_number": 1,
+            "total_steps": total_steps,
+            "message": "No NVIDIA_API_KEY configured, generating config locally",
+            "progress": 16,
+        })
+
+    config = extract_lnn_config_from_kimi_response(kimi_response, req)
+
+    # ── Step 2: Creating training data ───────────────────────────────────
+    yield sse_event("progress", {
+        "step": "creating_data",
+        "step_number": 2,
+        "total_steps": total_steps,
+        "message": "Creating training data with Kimi K2.6...",
+        "progress": 33,
+    })
+
+    training_data = []
+
+    training_system_prompt = """You are an expert in robotics and Liquid Neural Networks. Generate training scenarios for a robot.
+
+For each scenario, provide:
+- inputs: Dictionary mapping sensor names to NORMALIZED values (0.0 = minimum reading, 1.0 = maximum reading)
+  For proximity sensors: 0.0 = very close/obstacle, 1.0 = far/clear
+  For IR line sensors: 0.0 = on line (black), 1.0 = off line (white)
+- expected_outputs: Dictionary mapping actuator names to NORMALIZED values (0.0 = off/minimum, 1.0 = full speed/maximum)
+  For motors: 0.0 = stopped, 1.0 = full speed forward
+  For LEDs: 0.0 = off, 1.0 = on
+
+Generate at least 50 diverse scenarios covering:
+1. Normal operation (no obstacles, following line)
+2. Edge cases (obstacle very close, sharp turns)
+3. Gradual transitions (obstacle approaching, line curving)
+4. Extreme scenarios (all sensors triggered, no sensors triggered)
+
+Return ONLY a JSON object with a "scenarios" array."""
+
+    input_names = list(config.get('input_mapping', {}).keys())
+    output_names = list(config.get('output_mapping', {}).keys())
+
+    training_user_prompt = f"""Generate training scenarios for this robot:
+
+Robot Name: {req.robot_name}
+Description: {req.description}
+Input sensors: {json.dumps(input_names)}
+Output actuators: {json.dumps(output_names)}
+
+Return ONLY a JSON object with a "scenarios" array containing at least 50 scenarios.
+Each scenario must have "inputs" and "expected_outputs" dictionaries mapping
+sensor/actuator names to normalized float values in [0.0, 1.0]."""
+
+    # Generate synthetic data first (fast, reliable) then optionally enhance with Kimi
+    training_data = generate_synthetic_training_data(config)
+    yield sse_event("progress", {
+        "step": "creating_data",
+        "step_number": 2,
+        "total_steps": total_steps,
+        "message": f"Generated {len(training_data)} base training scenarios",
+        "progress": 33,
+        "detail": f"synthetic scenarios: {len(training_data)}",
+    })
+
+    # Optionally enhance with Kimi-generated scenarios (non-blocking, with timeout)
+    if NVIDIA_API_KEY:
+        try:
+            training_response = await asyncio.wait_for(
+                call_kimi_api(training_system_prompt, training_user_prompt),
+                timeout=45.0  # Short timeout to avoid blocking
+            )
+            kimi_data = extract_training_data_from_kimi_response(training_response)
+            if kimi_data:
+                training_data.extend(kimi_data)
+                yield sse_event("progress", {
+                    "step": "creating_data",
+                    "step_number": 2,
+                    "total_steps": total_steps,
+                    "message": f"Enhanced with {len(kimi_data)} Kimi scenarios (total: {len(training_data)})",
+                    "progress": 33,
+                    "detail": f"kimi_scenarios: {len(kimi_data)}, total: {len(training_data)}",
+                })
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"Kimi API skipped for training data: {e}")
+            yield sse_event("progress", {
+                "step": "creating_data",
+                "step_number": 2,
+                "total_steps": total_steps,
+                "message": f"Using {len(training_data)} synthetic scenarios (Kimi timed out)",
+                "progress": 33,
+                "detail": f"fallback: synthetic only, scenarios: {len(training_data)}",
+            })
+
+    # Store the model now so we can train it
+    lnn = store.add_model(model_id, config, req.robot_name)
+
+    # ── Step 3: Training LNN ─────────────────────────────────────────────
+    yield sse_event("progress", {
+        "step": "training",
+        "step_number": 3,
+        "total_steps": total_steps,
+        "message": "Training LNN (Evolutionary Strategy)...",
+        "progress": 50,
+    })
+
+    # Create a queue for training progress events
+    training_progress_queue = asyncio.Queue()
+
+    def on_training_progress(iteration: int, current_loss: float, best_loss: float):
+        """Callback for training progress updates."""
+        try:
+            training_progress_queue.put_nowait((iteration, current_loss, best_loss))
+        except Exception:
+            pass
+
+    # Start training in a thread (since it's CPU-bound)
+    training_iterations = 150
+
+    async def run_training():
+        """Run ES training and send progress events."""
+        loop = asyncio.get_event_loop()
+
+        def _train():
+            return lnn.train(
+                training_data,
+                iterations=training_iterations,
+                population=30,
+                sigma=0.12,
+                learning_rate=0.04,
+                progress_callback=on_training_progress,
+            )
+
+        result = await loop.run_in_executor(None, _train)
         return result
 
-    # Brain WebSocket handler
-    async def brain_ws_handler(websocket):
-        robot_name = 'default'
-        try:
-            path = websocket.request.path if hasattr(websocket.request, 'path') else '/'
-            if '?' in path:
-                params = parse_qs(path.split('?', 1)[1])
-                robot_name = params.get('robot', params.get('name', ['default']))[0]
-        except: pass
+    # Run training and stream progress concurrently
+    training_task = asyncio.create_task(run_training())
+    last_progress_sent = 0
 
-        print(f"[Brain] WebSocket connected for robot: {robot_name}")
-        model = get_model(robot_name)
-
+    while not training_task.done():
         try:
-            async for raw_msg in websocket:
+            # Check for progress updates with timeout
+            iteration, current_loss, best_loss = await asyncio.wait_for(
+                training_progress_queue.get(), timeout=2.0
+            )
+            progress_pct = int(50 + (iteration / training_iterations) * 16)
+            yield sse_event("progress", {
+                "step": "training",
+                "step_number": 3,
+                "total_steps": total_steps,
+                "message": f"Training LNN (iteration {iteration}/{training_iterations})...",
+                "progress": progress_pct,
+                "detail": f"current_loss: {current_loss:.6f}, best_loss: {best_loss:.6f}",
+            })
+            last_progress_sent = iteration
+        except asyncio.TimeoutError:
+            # No progress update received; check if training is still running
+            if training_task.done():
+                break
+            # Send a keepalive progress event
+            yield sse_event("progress", {
+                "step": "training",
+                "step_number": 3,
+                "total_steps": total_steps,
+                "message": "Training LNN (still running)...",
+                "progress": 50,
+            })
+
+    # Get training result
+    try:
+        training_result = training_task.result()
+    except Exception as e:
+        logger.error(f"Training failed: {e}")
+        training_result = {
+            "final_loss": None,
+            "best_loss": None,
+            "iterations": 0,
+            "accuracy": 0.0,
+        }
+
+    training_accuracy = training_result.get('accuracy', 0.0)
+
+    yield sse_event("progress", {
+        "step": "training",
+        "step_number": 3,
+        "total_steps": total_steps,
+        "message": f"Training complete: accuracy={training_accuracy:.2%}, "
+                   f"best_loss={training_result.get('best_loss', 'N/A')}",
+        "progress": 66,
+        "detail": training_result,
+    })
+
+    # Update stored config with training results
+    updated_config = lnn.get_config()
+    store.update_model_config(model_id, updated_config)
+
+    # ── Step 4: Checking for errors ──────────────────────────────────────
+    yield sse_event("progress", {
+        "step": "checking",
+        "step_number": 4,
+        "total_steps": total_steps,
+        "message": "Checking for errors in trained model...",
+        "progress": 72,
+    })
+
+    # Validate the model
+    errors = validate_lnn_model(lnn, config)
+    if errors:
+        yield sse_event("progress", {
+            "step": "checking",
+            "step_number": 4,
+            "total_steps": total_steps,
+            "message": f"Found {len(errors)} issues (non-critical): {'; '.join(errors[:3])}",
+            "progress": 72,
+            "warnings": errors,
+        })
+    else:
+        yield sse_event("progress", {
+            "step": "checking",
+            "step_number": 4,
+            "total_steps": total_steps,
+            "message": "Model validation passed - no errors found",
+            "progress": 72,
+        })
+
+    # ── Step 5: Testing LNN behavior ─────────────────────────────────────
+    yield sse_event("progress", {
+        "step": "testing",
+        "step_number": 5,
+        "total_steps": total_steps,
+        "message": "Testing LNN behavior with test scenarios...",
+        "progress": 85,
+    })
+
+    # Run test scenarios through the LNN
+    test_results = test_lnn_behavior(lnn, config, training_data)
+
+    yield sse_event("progress", {
+        "step": "testing",
+        "step_number": 5,
+        "total_steps": total_steps,
+        "message": f"Testing complete: {test_results['passed']}/{test_results['total']} scenarios passed",
+        "progress": 90,
+        "detail": test_results,
+    })
+
+    # ── Step 6: Finalizing model ─────────────────────────────────────────
+    yield sse_event("progress", {
+        "step": "finalizing",
+        "step_number": 6,
+        "total_steps": total_steps,
+        "message": "Finalizing model and storing results...",
+        "progress": 95,
+    })
+
+    # Final config update
+    final_config = lnn.get_config()
+    store.update_model_config(model_id, final_config)
+
+    yield sse_event("complete", {
+        "step": "complete",
+        "model_id": model_id,
+        "config": final_config,
+        "kimi_used": kimi_used,
+        "training_accuracy": training_accuracy,
+        "training_loss": training_result.get('best_loss'),
+        "training_iterations": training_result.get('iterations'),
+        "test_results": test_results,
+        "validation_errors": errors,
+    })
+
+
+def extract_training_data_from_kimi_response(response_text: str) -> list:
+    """
+    Extract training scenarios from Kimi's response.
+    Expected format: {"scenarios": [{"inputs": {...}, "expected_outputs": {...}}, ...]}
+    """
+    # Try to find JSON in the response
+    json_patterns = [
+        r'```json\s*\n(.*?)\n\s*```',
+        r'```\s*\n(\{.*?\})\n\s*```',
+        r'(\{[^{}]*"scenarios"\s*:\s*\[.*?\][^{}]*\})',
+    ]
+
+    for pattern in json_patterns:
+        matches = re.findall(pattern, response_text, re.DOTALL)
+        for match in matches:
+            try:
+                parsed = json.loads(match)
+                if 'scenarios' in parsed:
+                    scenarios = parsed['scenarios']
+                    # Validate and clean scenarios
+                    valid = []
+                    for s in scenarios:
+                        if isinstance(s, dict) and 'inputs' in s and 'expected_outputs' in s:
+                            # Ensure values are floats
+                            clean_inputs = {}
+                            for k, v in s['inputs'].items():
+                                try:
+                                    clean_inputs[k] = max(0.0, min(1.0, float(v)))
+                                except (ValueError, TypeError):
+                                    continue
+                            clean_outputs = {}
+                            for k, v in s['expected_outputs'].items():
+                                try:
+                                    clean_outputs[k] = max(0.0, min(1.0, float(v)))
+                                except (ValueError, TypeError):
+                                    continue
+                            if clean_inputs and clean_outputs:
+                                valid.append({
+                                    'inputs': clean_inputs,
+                                    'expected_outputs': clean_outputs,
+                                })
+                    if valid:
+                        logger.info(f"Extracted {len(valid)} valid training scenarios from Kimi")
+                        return valid
+            except json.JSONDecodeError:
+                continue
+
+    # Fallback: try to parse the entire response as JSON
+    try:
+        parsed = json.loads(response_text)
+        if 'scenarios' in parsed:
+            return parsed['scenarios']
+    except json.JSONDecodeError:
+        pass
+
+    logger.warning("Could not extract training data from Kimi response")
+    return []
+
+
+def generate_synthetic_training_data(config: dict) -> list:
+    """
+    Generate synthetic training scenarios as fallback when Kimi is unavailable.
+    Creates scenarios with random sensor values and heuristic output rules.
+    """
+    input_mapping = config.get('input_mapping', {})
+    output_mapping = config.get('output_mapping', {})
+    input_names = list(input_mapping.keys())
+    output_names = list(output_mapping.keys())
+
+    if not input_names or not output_names:
+        return []
+
+    scenarios = []
+    num_scenarios = 60
+
+    for i in range(num_scenarios):
+        # Generate random input values
+        inputs = {}
+        for name in input_names:
+            inputs[name] = round(random.random(), 3)
+
+        # Generate expected outputs based on simple heuristic rules
+        # This is a basic fallback; real training data from Kimi is preferred
+        expected = {}
+        for name in output_names:
+            # Simple heuristic: average of inputs as base, with some variation
+            avg_input = sum(inputs.values()) / len(inputs) if inputs else 0.5
+            # Add some noise for diversity
+            noise = random.gauss(0, 0.1)
+            val = max(0.0, min(1.0, avg_input + noise))
+            expected[name] = round(val, 3)
+
+        scenarios.append({
+            'inputs': inputs,
+            'expected_outputs': expected,
+        })
+
+    # Add some structured scenarios
+    # All sensors high (clear path)
+    for _ in range(5):
+        inputs = {name: round(random.uniform(0.8, 1.0), 3) for name in input_names}
+        expected = {name: round(random.uniform(0.7, 1.0), 3) for name in output_names}
+        scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+
+    # All sensors low (obstacle)
+    for _ in range(5):
+        inputs = {name: round(random.uniform(0.0, 0.2), 3) for name in input_names}
+        expected = {name: round(random.uniform(0.0, 0.3), 3) for name in output_names}
+        scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+
+    logger.info(f"Generated {len(scenarios)} synthetic training scenarios")
+    return scenarios
+
+
+def validate_lnn_model(lnn: LiquidNeuralNetwork, config: dict) -> list:
+    """
+    Validate the trained LNN model for common issues.
+    Returns a list of error/warning strings (empty if no issues).
+    """
+    errors = []
+
+    # Check for NaN or Inf in weights
+    for weight_matrix_name in ['weights_input', 'weights_recurrent', 'weights_output']:
+        matrix = getattr(lnn, weight_matrix_name)
+        for i, row in enumerate(matrix):
+            for j, val in enumerate(row):
+                if math.isnan(val) or math.isinf(val):
+                    errors.append(f"Invalid weight in {weight_matrix_name}[{i}][{j}]: {val}")
+                    break
+            if len(errors) >= 5:
+                break
+        if len(errors) >= 5:
+            break
+
+    # Check config consistency
+    if lnn.input_size != config.get('input_size', lnn.input_size):
+        errors.append(f"Input size mismatch: LNN={lnn.input_size}, config={config.get('input_size')}")
+    if lnn.output_size != config.get('output_size', lnn.output_size):
+        errors.append(f"Output size mismatch: LNN={lnn.output_size}, config={config.get('output_size')}")
+
+    # Check for dead neurons (all weights near zero)
+    for i, row in enumerate(lnn.weights_input):
+        if all(abs(v) < 1e-6 for v in row):
+            errors.append(f"Hidden neuron {i} has near-zero input weights (may be dead)")
+
+    # Check hidden state stability
+    hidden_norm = sum(h*h for h in lnn.hidden_state) ** 0.5
+    if hidden_norm > 100:
+        errors.append(f"Hidden state norm is very large ({hidden_norm:.2f}), may indicate instability")
+
+    return errors
+
+
+def test_lnn_behavior(lnn: LiquidNeuralNetwork, config: dict, training_data: list) -> dict:
+    """
+    Test the LNN by running through training scenarios and checking outputs.
+    Returns a summary dict with test results.
+    """
+    total = len(training_data)
+    passed = 0
+    failed_scenarios = []
+
+    # Reset hidden state for testing
+    lnn.hidden_state = [0.0] * lnn.hidden_units
+
+    for i, scenario in enumerate(training_data):
+        inputs_dict = scenario.get('inputs', {})
+        expected = scenario.get('expected_outputs', {})
+
+        # Build input vector
+        input_values = [0.0] * lnn.input_size
+        for name, val in inputs_dict.items():
+            if name in lnn.input_mapping:
+                idx = lnn.input_mapping[name]
+                input_values[idx] = max(0.0, min(1.0, float(val)))
+
+        outputs = lnn.forward(input_values)
+
+        # Check each expected output
+        scenario_pass = True
+        for name, expected_val in expected.items():
+            if name in lnn.output_mapping:
+                idx = lnn.output_mapping[name]
+                if idx < len(outputs):
+                    if abs(outputs[idx] - float(expected_val)) > 0.3:
+                        scenario_pass = False
+
+        if scenario_pass:
+            passed += 1
+        elif len(failed_scenarios) < 3:
+            failed_scenarios.append({
+                "scenario_index": i,
+                "inputs": inputs_dict,
+                "expected": expected,
+            })
+
+    accuracy = passed / total if total > 0 else 0.0
+
+    return {
+        "total": total,
+        "passed": passed,
+        "failed": total - passed,
+        "accuracy": round(accuracy, 4),
+        "sample_failures": failed_scenarios,
+    }
+
+
+@app.post("/generate/stream")
+async def generate_lnn_stream_endpoint(req: GenerateLNNRequest):
+    """
+    Generate a new LNN model with SSE progress streaming.
+
+    Streams progress events through 6 steps:
+    1. Generating LNN architecture
+    2. Creating training data
+    3. Training LNN
+    4. Checking for errors
+    5. Testing LNN behavior
+    6. Finalizing model
+
+    Returns text/event-stream with progress and complete events.
+    """
+    return StreamingResponse(
+        generate_lnn_stream(req),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ─── Deploy Brain to Render ─────────────────────────────────────────────────
+
+@app.post("/deploy")
+async def deploy_brain(req: DeployBrainRequest):
+    """
+    Deploy an LNN model as a brain server on Render.
+
+    Tries to create a new Render web service first. If that fails
+    (e.g., payment required, limit reached), falls back to updating
+    the existing brain-template service's env vars and redeploying.
+    """
+
+    if not RENDER_API_KEY:
+        raise HTTPException(500, "RENDER_API_KEY not configured on server")
+
+    model_data = store.get_model(req.model_id)
+    if not model_data:
+        raise HTTPException(404, f"Model '{req.model_id}' not found. Generate it first.")
+
+    config = model_data['config']
+
+    # Create brain ID and service name
+    robot_slug = req.robot_name.lower().replace(' ', '_')
+    brain_id = f"brain-{robot_slug}-{uuid.uuid4().hex[:6]}"
+    service_name = f"airone-brain-{robot_slug}"
+
+    # Prepare env vars for the brain server
+    model_config_json = json.dumps(config)
+    env_vars = [
+        {"key": "MODEL_CONFIG", "value": model_config_json},
+        {"key": "ROBOT_NAME", "value": req.robot_name},
+        {"key": "RENDER_EXTERNAL_URL", "value": f"https://{service_name}.onrender.com"},
+    ]
+
+    # ── Try creating a new Render web service ────────────────────────────
+    create_payload = {
+        "type": "web_service",
+        "name": service_name,
+        "ownerId": RENDER_OWNER_ID,
+        "repo": BRAIN_REPO,
+        "branch": BRAIN_BRANCH,
+        "rootDir": BRAIN_ROOT_DIR,
+        "plan": "free",
+        "region": "oregon",
+        "serviceDetails": {
+            "runtime": "python",
+            "envSpecificDetails": {
+                "buildCommand": "pip install -r requirements.txt",
+                "startCommand": "uvicorn deploy_api:app --host 0.0.0.0 --port $PORT",
+            },
+            "envVars": env_vars,
+            "healthCheckPath": "/health",
+        },
+    }
+
+    headers = {
+        "Authorization": f"Bearer {RENDER_API_KEY}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+    logger.info(f"Creating Render service: {service_name}")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{RENDER_API_URL}/services",
+                headers=headers,
+                json=create_payload,
+            )
+
+            if response.status_code not in (200, 201):
+                error_detail = response.text[:500]
+                logger.error(f"Render API error creating new service: "
+                             f"{response.status_code} - {error_detail}")
+                raise Exception(
+                    f"Render API returned {response.status_code}: {error_detail}"
+                )
+
+        result = response.json()
+        service = result.get('service', result)
+        service_id = service.get('id', '')
+        service_url = service.get('serviceDetails', {}).get(
+            'url', f'https://{service_name}.onrender.com'
+        )
+
+        # Store brain info
+        store.add_brain(brain_id, req.model_id, service_id, service_url, req.robot_name)
+
+        return {
+            "status": "deploying",
+            "brain_id": brain_id,
+            "service_id": service_id,
+            "url": service_url,
+            "ws_url": f"wss://{service_url.replace('https://', '').replace('http://', '')}",
+            "model_id": req.model_id,
+            "message": f"Brain '{brain_id}' is deploying to Render as new service",
+            "deploy_method": "new_service",
+        }
+
+    except Exception as e:
+        logger.warning(f"Failed to create new Render service: {e}")
+        logger.info("Falling back to updating existing brain-template service...")
+        try:
+            return await deploy_to_existing_brain(req, config, brain_id)
+        except Exception as e2:
+            logger.error(f"Fallback deploy also failed: {e2}")
+            raise HTTPException(500, f"Deploy failed (new service + fallback): {str(e2)}")
+
+
+async def deploy_to_existing_brain(req: DeployBrainRequest, config: dict, brain_id: str) -> dict:
+    """
+    Fallback: Update the existing airone-brain-template service's env vars
+    and trigger a redeploy.
+    """
+    BRAIN_TEMPLATE_URL = "https://airone-brain-template.onrender.com"
+
+    headers = {
+        "Authorization": f"Bearer {RENDER_API_KEY}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+    # Update MODEL_CONFIG env var
+    model_config_json = json.dumps(config)
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        # Set MODEL_CONFIG env var
+        env_response = await client.put(
+            f"{RENDER_API_URL}/services/{BRAIN_TEMPLATE_ID}/env-vars/MODEL_CONFIG",
+            headers=headers,
+            json={"value": model_config_json},
+        )
+
+        if env_response.status_code not in (200, 201, 204):
+            # Try creating the env var if it doesn't exist
+            env_response = await client.post(
+                f"{RENDER_API_URL}/services/{BRAIN_TEMPLATE_ID}/env-vars",
+                headers=headers,
+                json={"key": "MODEL_CONFIG", "value": model_config_json},
+            )
+
+        # Set ROBOT_NAME env var
+        await client.put(
+            f"{RENDER_API_URL}/services/{BRAIN_TEMPLATE_ID}/env-vars/ROBOT_NAME",
+            headers=headers,
+            json={"value": req.robot_name},
+        )
+
+        # Trigger a deploy
+        deploy_response = await client.post(
+            f"{RENDER_API_URL}/services/{BRAIN_TEMPLATE_ID}/deploys",
+            headers=headers,
+            json={},
+        )
+
+        deploy_data = deploy_response.json() if deploy_response.status_code in (200, 201) else {}
+
+    # Store brain info
+    store.add_brain(brain_id, req.model_id, BRAIN_TEMPLATE_ID, BRAIN_TEMPLATE_URL, req.robot_name)
+
+    return {
+        "status": "deploying",
+        "brain_id": brain_id,
+        "service_id": BRAIN_TEMPLATE_ID,
+        "url": BRAIN_TEMPLATE_URL,
+        "ws_url": f"wss://airone-brain-template.onrender.com",
+        "model_id": req.model_id,
+        "message": f"Brain '{brain_id}' is redeploying on existing brain-template service",
+        "deploy_method": "brain_template_fallback",
+        "note": "Using existing brain-template service (fallback mode). "
+                "Robots connect via WebSocket to wss://airone-brain-template.onrender.com/",
+    }
+
+# ─── Test Inference ──────────────────────────────────────────────────────────
+
+@app.post("/inference")
+async def test_inference(req: TestInferenceRequest):
+    """Test LNN inference with sensor data (HTTP endpoint for quick testing)."""
+
+    lnn = store.get_lnn(req.model_id)
+    if not lnn:
+        raise HTTPException(404, f"Model '{req.model_id}' not found. Generate it first.")
+
+    commands = lnn.process_sensor_data(req.sensor_data, req.output_modules)
+
+    return {
+        "model_id": req.model_id,
+        "input_sensors_read": req.sensor_data,
+        "output_modules_available": req.output_modules,
+        "output_commands": commands,
+        "hidden_state_norm": round(sum(h*h for h in lnn.hidden_state) ** 0.5, 4),
+    }
+
+# ─── WebSocket Inference (Deploy API mode) ──────────────────────────────────
+
+@app.websocket("/ws/{model_id}")
+async def websocket_inference(websocket: WebSocket, model_id: str):
+    """WebSocket endpoint for real-time LNN inference (deploy API mode)."""
+
+    await websocket.accept()
+    logger.info(f"WebSocket client connected for model: {model_id}")
+
+    lnn = store.get_lnn(model_id)
+    if not lnn:
+        await websocket.send_text(json.dumps({"error": f"Model '{model_id}' not found"}))
+        await websocket.close()
+        return
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+
+            try:
+                parsed = None
                 try:
-                    try:
-                        msg_data = json.loads(raw_msg)
-                        if isinstance(msg_data, dict):
-                            rn = msg_data.get('robot_id') or msg_data.get('robot_name')
-                            if rn and rn in models: robot_name = rn
-                    except: pass
+                    parsed = json.loads(data)
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
-                    if model:
-                        parsed = parse_message(raw_msg)
-                        sensors = parsed.get('input_sensors_read', parsed)
-                        commands = model.forward(sensors)
-                        result = {"output_commands": commands, "robot": robot_name, "timestamp": time.time()}
-                    else:
-                        result = {"error": f"No model for '{robot_name}'", "output_commands": {}}
-                    await websocket.send(json.dumps(result))
-                except Exception as e:
-                    await websocket.send(json.dumps({"error": str(e)}))
-        except websockets.exceptions.ConnectionClosed:
-            print(f"[Brain] WebSocket disconnected: {robot_name}")
+                if parsed and isinstance(parsed, dict):
+                    sensor_data = parsed.get('input_sensors_read', {})
+                    output_modules = parsed.get('output_modules_available', list(lnn.output_mapping.keys()))
+                else:
+                    # Natural language format
+                    sensors_match = re.search(
+                        r'Currently, the input sensors read:\s*\n?\s*\(([^)]*)\)', data, re.IGNORECASE
+                    )
+                    outputs_match = re.search(
+                        r'What do you want to do to:\s*\n?\s*\(([^)]*)\)', data, re.IGNORECASE
+                    )
 
-    # Health check for WebSocket + HTTP
-    async def brain_process_request(path, request_headers):
-        if path in ('/health', '/healthz', '/'):
-            data = {
-                "status": "healthy", "service": "airone-brain-server",
-                "mode": "multi-model", "models_loaded": len(models),
-                "robots": list(models.keys())
-            }
-            body = json.dumps(data, indent=2).encode()
-            return 200, [("Content-Type", "application/json"), ("Content-Length", str(len(body)))], body
-        return None
+                    sensor_data = {}
+                    if sensors_match:
+                        for pair in sensors_match.group(1).split(','):
+                            if ':' in pair:
+                                key, val = pair.split(':', 1)
+                                try:
+                                    sensor_data[key.strip()] = float(val.strip())
+                                except ValueError:
+                                    sensor_data[key.strip()] = val.strip()
 
-    brain_server_instance = None
-    brain_task = None
+                    output_modules = []
+                    if outputs_match:
+                        output_modules = [
+                            m.strip().replace('.', '')
+                            for m in outputs_match.group(1).split(',') if m.strip()
+                        ]
 
-    @app.on_event("startup")
-    async def start_brain_server():
-        global brain_server_instance, brain_task
-        port = int(os.environ.get("PORT", 10000))
-        print(f"[Brain] Starting WebSocket brain server on port {port}")
+                    if not output_modules:
+                        output_modules = list(lnn.output_mapping.keys())
 
-        async def run_ws():
-            global brain_server_instance
-            async with websockets.serve(brain_ws_handler, "0.0.0.0", port,
-                                         process_request=brain_process_request,
-                                         ping_interval=30, ping_timeout=10):
-                print(f"[Brain] WebSocket server listening on ws://0.0.0.0:{port}")
-                await asyncio.Future()  # Run forever
+                # Run inference
+                commands = lnn.process_sensor_data(sensor_data, output_modules)
 
-        brain_task = asyncio.create_task(run_ws())
+                response = {
+                    "command_id": f"cmd_{uuid.uuid4().hex[:8]}",
+                    "timestamp": int(datetime.now().timestamp() * 1000),
+                    "output_commands": commands,
+                    "metadata": {
+                        "model": "LNN (Liquid Neural Network)",
+                        "model_id": model_id,
+                        "inputs_processed": len(sensor_data),
+                        "outputs_generated": len(commands),
+                    }
+                }
 
-    # FastAPI routes for brain mode (supplementary)
-    @app.get("/health")
-    async def brain_health():
-        return {"status": "healthy", "service": "airone-brain-server", "mode": "multi-model",
-                "models_loaded": len(models), "robots": list(models.keys())}
+                await websocket.send_text(json.dumps(response))
 
-    @app.get("/")
-    async def brain_root():
-        return {"service": "airone-brain-server", "mode": "multi-model",
-                "robots": list(models.keys()),
-                "connect": "wss://<this-host>/?robot=<robot-name>"}
+            except Exception as e:
+                import traceback
+                logger.error(f"WebSocket error: {e}")
+                logger.error(traceback.format_exc())
+                try:
+                    await websocket.send_text(json.dumps({"error": str(e)}))
+                except:
+                    pass
 
-# ============ DEPLOY API MODE ============
-else:
-    import uuid
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket client disconnected from model: {model_id}")
+    except Exception as e:
+        logger.error(f"WebSocket connection error: {e}")
 
-    BRAINS_FILE = Path("brains.json")
+# ─── List Models & Brains ───────────────────────────────────────────────────
 
-    def load_brains():
-        if BRAINS_FILE.exists():
-            with open(BRAINS_FILE) as f: return json.load(f)
-        return {}
+@app.get("/models")
+async def list_models():
+    return {"models": store.list_models()}
 
-    def save_brains(brains):
-        with open(BRAINS_FILE, "w") as f: json.dump(brains, f, indent=2)
+@app.get("/brains")
+async def list_brains():
+    return {"brains": store.list_brains()}
 
-    brains = load_brains()
+@app.get("/brain/{brain_id}")
+async def brain_status(brain_id: str):
+    brain = store.get_brain(brain_id)
+    if not brain:
+        raise HTTPException(404, "Brain not found")
+    return brain
 
-    class DeployRequest(BaseModel):
-        user_id: str
-        robot_name: str
-        model_id: Optional[str] = "universal_v1"
-        sensor_count: int = 2
-        actuator_count: int = 2
+@app.get("/model/{model_id}")
+async def model_status(model_id: str):
+    model = store.get_model(model_id)
+    if not model:
+        raise HTTPException(404, "Model not found")
+    return {
+        "model_id": model_id,
+        "config": model['config'],
+        "robot_name": model['robot_name'],
+        "created_at": model['created_at'],
+    }
 
-    class GenerateRequest(BaseModel):
-        user_id: str
-        robot_name: str
-        description: str = ""
-        prompt: str = ""
-        sensor_count: int = 2
-        actuator_count: int = 2
-        pin_definitions: Optional[dict] = None
+# ─── Render Service Status ──────────────────────────────────────────────────
 
-    @app.get("/health")
-    async def health():
-        return {"status": "ok", "service": "airone-deploy",
-                "render_api_key_configured": bool(RENDER_API_KEY)}
+@app.get("/render/services")
+async def list_render_services():
+    """List all Render services (for debugging)."""
+    if not RENDER_API_KEY:
+        raise HTTPException(500, "RENDER_API_KEY not configured")
 
-    @app.get("/")
-    async def root():
-        return {"service": "airone-deploy", "mode": "deploy-api"}
+    headers = {
+        "Authorization": f"Bearer {RENDER_API_KEY}",
+        "Accept": "application/json",
+    }
 
-    @app.post("/generate")
-    async def generate_model(req: GenerateRequest):
-        model_id = f"{req.user_id}_{req.robot_name.lower()}_{uuid.uuid4().hex[:8]}"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(f"{RENDER_API_URL}/services", headers=headers)
 
-        desc = req.description or req.prompt or ""
-        input_count = req.sensor_count
-        output_count = req.actuator_count
+        if response.status_code != 200:
+            raise HTTPException(response.status_code, f"Render API error: {response.text[:300]}")
 
-        pin_defs = req.pin_definitions or {}
-        if pin_defs:
-            input_pins = pin_defs.get('inputs', [])
-            output_pins = pin_defs.get('outputs', [])
-            input_count = len(input_pins) or input_count
-            output_count = len(output_pins) or output_count
-
-        config = {
-            "input_size": input_count,
-            "output_size": output_count,
-            "hidden_units": max(16, (input_count + output_count) * 4),
-            "time_steps": 1,
-            "neuron_params": {"tau": 0.1, "dt": 0.01, "sensitivity": 0.5},
-            "input_mapping": {},
-            "output_mapping": {},
-            "output_types": {},
-            "description": desc or f"LNN model for {req.robot_name}",
-            "robot_name": req.robot_name
-        }
-
-        if pin_defs:
-            for i, pin in enumerate(input_pins):
-                name = pin.get('name', f'sensor_{i}')
-                config['input_mapping'][name] = i
-            for i, pin in enumerate(output_pins):
-                name = pin.get('name', f'actuator_{i}')
-                config['output_mapping'][name] = i
-                pin_type = pin.get('type', 'digital_output')
-                if 'pwm' in pin_type: config['output_types'][name] = 'pwm'
-                elif 'servo' in pin_type: config['output_types'][name] = 'servo'
-                else: config['output_types'][name] = 'digital'
-
+        services = response.json()
         return {
-            "status": "generated", "model_id": model_id,
-            "message": f"Model for '{req.robot_name}' generated",
-            "config": config
-        }
-
-    @app.post("/generate/stream")
-    async def generate_model_stream(req: GenerateRequest):
-        from fastapi.responses import StreamingResponse
-        import time
-
-        async def stream_progress():
-            steps = [
-                ("generating", 10, "Generating LNN architecture..."),
-                ("creating_data", 25, "Creating training data..."),
-                ("training", 45, "Training LNN (epoch 0/100)..."),
-                ("training", 60, "Training LNN (epoch 50/100)...", 0.72),
-                ("training", 75, "Training LNN (epoch 100/100)...", 0.91),
-                ("checking", 82, "Checking for errors..."),
-                ("testing", 90, "Testing LNN behavior..."),
-                ("finalizing", 98, "Finalizing model..."),
-                ("complete", 100, "LNN model ready!"),
+            "services": [
+                {
+                    "id": s['service']['id'],
+                    "name": s['service']['name'],
+                    "url": s['service']['serviceDetails']['url'],
+                    "suspended": s['service']['suspended'],
+                    "type": s['service']['type'],
+                }
+                for s in services
             ]
-
-            for step_data in steps:
-                step, progress, message = step_data[0], step_data[1], step_data[2]
-                accuracy = step_data[3] if len(step_data) > 3 else None
-                data = {"step": step, "progress": progress, "message": message}
-                if accuracy is not None: data["accuracy"] = accuracy
-                yield f"data: {json.dumps(data)}\n\n"
-                await asyncio.sleep(0.3)
-
-            # Generate the final model config
-            result = await generate_model(req)
-            data = {"step": "complete", "progress": 100, "model_id": result["model_id"],
-                    "config": result["config"], "accuracy": 0.91}
-            yield f"data: {json.dumps(data)}\n\n"
-
-        return StreamingResponse(stream_progress(), media_type="text/event-stream")
-
-    @app.post("/deploy")
-    async def deploy_brain(req: DeployRequest):
-        brain_id = f"{req.robot_name.lower()}-{uuid.uuid4().hex[:6]}"
-        brains[brain_id] = {
-            "user_id": req.user_id, "robot_name": req.robot_name,
-            "model_id": req.model_id, "deploy_url": "https://airone-brain-template.onrender.com",
-            "status": "pending"
-        }
-        save_brains(brains)
-        return {
-            "status": "deployed", "brain_id": brain_id,
-            "brain_url": "https://airone-brain-template.onrender.com",
-            "message": "Use ?robot=<robot-name> query param for multi-model routing"
         }
 
-    @app.get("/brain/{brain_id}")
-    async def brain_status(brain_id: str):
-        if brain_id not in brains: raise HTTPException(404, "Brain not found")
-        return brains[brain_id]
-
-    @app.get("/brains")
-    async def list_brains():
-        return {"brains": brains}
+# ─── Main ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get('PORT', 8000))
+    mode = "BRAIN (robot WebSocket server)" if BRAIN_MODE else "DEPLOY API (LNN generation + deploy)"
+    logger.info(f"Starting Airone service on port {port} -- Mode: {mode}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
