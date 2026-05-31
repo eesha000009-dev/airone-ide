@@ -415,3 +415,43 @@ Stage Summary:
 - New Sketch works — replaced broken SingleTextInputDialog with QuickInputService.input()
 - Restart to Update provides better error messages with GitHub releases link
 - All CI/CD builds passing, release available
+
+---
+Task ID: full-improvements
+Agent: Main
+Task: Implement new Render service creation, AI-trained LNN, step-by-step progress UI, and test everything
+
+Work Log:
+- Tested Render API for creating new services: Requires payment info on free plan
+- Implemented service creation with proper serviceDetails format, falls back to brain-template
+- Added LNN training using Evolutionary Strategy (ES) with Kimi-generated training data
+- Added SSE /generate/stream endpoint for step-by-step progress streaming (6 steps)
+- Added training to non-streaming /generate endpoint as well (more reliable on Render)
+- Reduced Kimi API timeout from 90s to 45s, single retry for SSE reliability
+- Updated AI Backbone frontend with step-by-step progress UI (6 generation steps + 3 deploy steps)
+- Updated AI Backbone main.js with SSE streaming IPC handler
+- Updated preload.js with new APIs (generateLnnModelStream, onGenerateProgress)
+- Pushed all changes to both repos (airone-ide + airone-ai-backbone)
+- Tested full SSE streaming: generating → creating_data → training → checking → testing → finalizing
+- SSE stream works but Render drops connections after ~2 minutes
+- Training in /generate endpoint works reliably (50 ES iterations, 20 population)
+- Final end-to-end test PASSED:
+  1. Generated ObstacleAvoidBot LNN with Kimi K2.6 (kimi_used: true)
+  2. Trained with 50 ES iterations (training_accuracy: 30.7%, loss: 0.055521)
+  3. Deployed to brain-template on Render
+  4. Brain URL: https://airone-brain-template.onrender.com
+  5. WebSocket URL: wss://airone-brain-template.onrender.com/
+  6. Tested inference: Differentiated PWM outputs for different sensor inputs
+  7. Tested natural language (ESP32) format: Working
+
+Stage Summary:
+- ✅ New Render service creation implemented (requires payment info for new services)
+- ✅ LNN training with ES + Kimi-generated data working
+- ✅ SSE progress streaming working (6 steps)
+- ✅ Step-by-step progress UI in AI Backbone frontend
+- ✅ Kimi K2.6 API works (~25s response time from Render)
+- ✅ Full end-to-end test PASSED
+- ⚠️ Render free plan requires credit card for creating new services
+- ⚠️ SSE stream drops after ~2min on Render (use /generate for training)
+- ⚠️ Training accuracy at 30.7% with 50 iterations (needs more iterations for better results)
+- Commits: 846ad2b (airone-ide), 74ef9df (airone-ai-backbone)
