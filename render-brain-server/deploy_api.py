@@ -689,7 +689,7 @@ class LiquidNeuralNetwork:
                 commands = {}
                 for name, val in blended.items():
                     commands[name] = self._get_output_action(name, val)
-                logger.info(f"Using rule-based fallback (LNN accuracy={self.training_accuracy:.2%})")
+                acc_str = f"{self.training_accuracy:.2%}" if self.training_accuracy is not None else "untrained"; logger.info(f"Using rule-based fallback (LNN accuracy={acc_str})")
                 return commands
 
         # Decode outputs to commands (normal LNN path)
@@ -809,9 +809,9 @@ class RuleBasedProcessor:
         
         for name, val in sensor_vals.items():
             name_lower = name.lower()
-            if any(kw in name_lower for kw in ['left', 'l']):
+            if any(kw in name_lower for kw in ['left', 'lft']):
                 left_sensors.append((name, val))
-            elif any(kw in name_lower for kw in ['right', 'r']):
+            elif any(kw in name_lower for kw in ['right', 'rgt']):
                 right_sensors.append((name, val))
             else:
                 front_sensors.append((name, val))
@@ -840,9 +840,9 @@ class RuleBasedProcessor:
         
         for name in output_names:
             name_lower = name.lower()
-            if any(kw in name_lower for kw in ['left', 'l_']):
+            if any(kw in name_lower for kw in ['left', 'lft']):
                 left_motor_name = name
-            elif any(kw in name_lower for kw in ['right', 'r_']):
+            elif any(kw in name_lower for kw in ['right', 'rgt']):
                 right_motor_name = name
         
         if not left_motor_name or not right_motor_name:
@@ -935,9 +935,9 @@ class RuleBasedProcessor:
         
         for name, val in sensor_vals.items():
             name_lower = name.lower()
-            if any(kw in name_lower for kw in ['left', 'l']):
+            if any(kw in name_lower for kw in ['left', 'lft']):
                 left_sensors.append((name, val))
-            elif any(kw in name_lower for kw in ['right', 'r']):
+            elif any(kw in name_lower for kw in ['right', 'rgt']):
                 right_sensors.append((name, val))
             else:
                 center_sensors.append((name, val))
@@ -952,9 +952,9 @@ class RuleBasedProcessor:
         right_motor_name = None
         for name in output_names:
             name_lower = name.lower()
-            if any(kw in name_lower for kw in ['left', 'l_']):
+            if any(kw in name_lower for kw in ['left', 'lft']):
                 left_motor_name = name
-            elif any(kw in name_lower for kw in ['right', 'r_']):
+            elif any(kw in name_lower for kw in ['right', 'rgt']):
                 right_motor_name = name
         if not left_motor_name or not right_motor_name:
             if len(output_names) >= 2:
@@ -1501,7 +1501,7 @@ async def brain_websocket(websocket: WebSocket):
         "info": accuracy_info,
     }))
     if lnn.training_accuracy is None or lnn.training_accuracy < 0.6:
-        logger.warning(f"LNN accuracy {lnn.training_accuracy:.2%} < 60%, using rule-based fallback for {connected_robot_name}")
+        acc_str = f"{lnn.training_accuracy:.2%}" if lnn.training_accuracy is not None else "N/A"; logger.warning(f"LNN accuracy {acc_str} < 60%, using rule-based fallback for {connected_robot_name}")
 
     command_counter = 0
 
