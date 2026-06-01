@@ -79,6 +79,15 @@ class AiroParser:
             return self.advance()
         return None
 
+    def expect_terminator(self) -> Token:
+        """Accept either PERIOD or SEMICOLON as statement terminator."""
+        tok = self.current()
+        if tok.kind in ("PERIOD", "SEMICOLON"):
+            return self.advance()
+        raise ParseError(
+            f"Expected '.' or ';' statement terminator, got {tok.kind} ({tok.value!r})", tok
+        )
+
     # ── Top-level ─────────────────────────────────────────────────────
 
     def parse(self) -> Program:
@@ -96,10 +105,10 @@ class AiroParser:
 
     def _recover(self):
         """Skip tokens until we find a likely statement boundary."""
-        while self.current().kind not in ("EOF", "PERIOD", "RBRACE"):
+        while self.current().kind not in ("EOF", "PERIOD", "SEMICOLON", "RBRACE"):
             self.advance()
-        # Consume the boundary token if it's a period
-        if self.current().kind == "PERIOD":
+        # Consume the boundary token if it's a period or semicolon
+        if self.current().kind in ("PERIOD", "SEMICOLON"):
             self.advance()
 
     def _parse_top_level(self, program: Program):
@@ -135,7 +144,7 @@ class AiroParser:
         # Special: call brain_url.
         if self.current().kind == "IDENTIFIER" and self.current().value == "brain_url":
             self.advance()  # consume brain_url
-            self.expect("PERIOD")
+            self.expect_terminator()
             node.module_path = "brain_url"
             return node
 
@@ -152,7 +161,7 @@ class AiroParser:
                 parts.append(".")
                 parts.append(self.expect("IDENTIFIER").value)
 
-        self.expect("PERIOD")
+        self.expect_terminator()
         node.module_path = "".join(parts)
         return node
 
@@ -177,7 +186,7 @@ class AiroParser:
             pin_number = self.expect("NUMBER").value
             self.expect("SEMICOLON")
             mode = self.expect("MODE").value
-            self.expect("PERIOD")
+            self.expect_terminator()
             defs.append(PinDef(
                 line=tok.line, col=tok.col,
                 name=pin_name, number=int(pin_number), mode=mode,
@@ -221,7 +230,7 @@ class AiroParser:
         if self.current().kind == "ASSIGN":
             self.advance()
             value = self._parse_value()
-            self.expect("PERIOD")
+            self.expect_terminator()
 
             if full_name == "brain_url":
                 program.brain_url = value if isinstance(value, str) else str(value)
@@ -313,7 +322,7 @@ class AiroParser:
         sensors: List[str] = []
         while self.current().kind != "RBRACE" and self.current().kind != "EOF":
             sensors.append(self.expect("IDENTIFIER").value)
-            self.expect("PERIOD")
+            self.expect_terminator()
 
         self.expect("RBRACE")
         return ReadForBlock(
@@ -326,7 +335,7 @@ class AiroParser:
         self.expect("LPAREN")
         target = self.expect("IDENTIFIER").value
         self.expect("RPAREN")
-        self.expect("PERIOD")
+        self.expect_terminator()
         return SendDataTo(line=tok.line, col=tok.col, target=target)
 
     def _parse_actfor(self) -> ActForBlock:
@@ -339,7 +348,7 @@ class AiroParser:
         outputs: List[str] = []
         while self.current().kind != "RBRACE" and self.current().kind != "EOF":
             outputs.append(self.expect("IDENTIFIER").value)
-            self.expect("PERIOD")
+            self.expect_terminator()
 
         self.expect("RBRACE")
         return ActForBlock(
@@ -418,7 +427,7 @@ class AiroParser:
                 # Simple read statement
                 self.advance()
                 sensor = self.expect("IDENTIFIER").value
-                self.expect("PERIOD")
+                self.expect_terminator()
                 return ActionStatement(
                     line=tok.line, col=tok.col,
                     function_name="read", args=[sensor],
@@ -455,7 +464,7 @@ class AiroParser:
             if self.current().kind == "COMMA":
                 self.advance()
         self.expect("RPAREN")
-        self.expect("PERIOD")
+        self.expect_terminator()
         return ActionStatement(
             line=tok.line, col=tok.col,
             function_name=name, args=args,
@@ -472,7 +481,7 @@ class AiroParser:
             self.advance()
             context = self._parse_value()
         self.expect("RPAREN")
-        self.expect("PERIOD")
+        self.expect_terminator()
         return AskStatement(
             line=tok.line, col=tok.col,
             question=str(question), context=str(context),
@@ -487,7 +496,7 @@ class AiroParser:
         self.expect("COMMA")
         value = self._parse_value()
         self.expect("RPAREN")
-        self.expect("PERIOD")
+        self.expect_terminator()
         return SaveToStatement(
             line=tok.line, col=tok.col,
             variable=str(variable), value=str(value),

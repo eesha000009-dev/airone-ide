@@ -41,7 +41,7 @@ class BaseCodeGenerator(ABC):
     def _find_template_dir(self) -> Path:
         """Find the templates directory."""
         # Look relative to this file
-        base = Path(__file__).resolve().parent.parent.parent / "templates"
+        base = Path(__file__).resolve().parent.parent / "templates"
         if base.is_dir():
             return base
         # Fallback: relative to cwd

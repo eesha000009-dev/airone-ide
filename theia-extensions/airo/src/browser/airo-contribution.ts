@@ -549,7 +549,17 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         try {
             const activeEditor = this.editorManager.activeEditor;
             if (activeEditor) {
-                airoCode = activeEditor.editor.document.getText();
+                // Try multiple ways to get the editor text
+                const editorWidget = activeEditor.editor;
+                if (editorWidget && editorWidget.document) {
+                    airoCode = editorWidget.document.getText();
+                }
+                if (!airoCode && editorWidget && typeof (editorWidget as any).getModel === 'function') {
+                    const model = (editorWidget as any).getModel();
+                    if (model && typeof model.getValue === 'function') {
+                        airoCode = model.getValue();
+                    }
+                }
             }
         } catch { /* ignore */ }
 
@@ -565,10 +575,25 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             return;
         }
 
+        // Parse pin definitions into structured format
+        const inputs: { name: string; pin: number }[] = [];
+        const outputs: { name: string; pin: number }[] = [];
+        const pinLineRegex = /(\w+)\s*=\s*(\d+)\s*[;,]\s*(input|output|in|out|analog|pwm)\s*[.;]/gi;
+        let pinMatch;
+        while ((pinMatch = pinLineRegex.exec(pinDefiMatch[0])) !== null) {
+            const entry = { name: pinMatch[1], pin: parseInt(pinMatch[2]) };
+            const mode = pinMatch[3].toLowerCase();
+            if (mode === 'input' || mode === 'in' || mode === 'analog') {
+                inputs.push(entry);
+            } else {
+                outputs.push(entry);
+            }
+        }
+
         // Ask for backbone URL
         const backboneUrl = await this.quickInputService.input({
             title: 'Sync to Airone Backbone',
-            prompt: 'Enter the AI Backbone URL',
+            prompt: 'Enter the AI Backbone app URL',
             placeHolder: 'http://localhost:8080',
             value: 'http://localhost:8080'
         });
@@ -586,7 +611,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     robotName: sketchName,
-                    pinDefinitions: pinDefiMatch[0],
+                    pinDefinitions: { inputs, outputs },
                     source: airoCode
                 })
             });
