@@ -78,9 +78,15 @@ RENDER_OWNER_ID = "tea-d8dh89s2m8qs7388ajb0"
 BRAIN_TEMPLATE_ID = "srv-d8dh9esm0tmc73duts10"
 
 # Kimi API settings
-KIMI_TIMEOUT = 45.0        # seconds per attempt
-KIMI_MAX_RETRIES = 1       # Single attempt in SSE context
+KIMI_TIMEOUT = 90.0        # seconds per attempt (increased for large batches)
+KIMI_MAX_RETRIES = 3       # More retries for reliability
 KIMI_BACKOFF_BASE = 2.0    # exponential backoff base
+
+# Training data settings
+TARGET_TRAINING_SAMPLES = 5000   # Minimum target samples for training
+KIMI_TRAINING_BATCHES = 5        # Number of concurrent Kimi API calls for training data
+KIMI_SCENARIOS_PER_BATCH = 100   # Scenarios requested per Kimi call
+AUGMENTATION_FACTOR = 5          # Each base scenario produces this many augmented variants
 
 # Detect brain-template mode
 MODEL_CONFIG_RAW = os.environ.get('MODEL_CONFIG', '')
@@ -912,7 +918,7 @@ async def call_kimi_api(system_prompt: str, user_prompt: str) -> str:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "max_tokens": 4096,
+        "max_tokens": 16384,
         "temperature": 0.7,
         "top_p": 1.0,
         "stream": False,
@@ -1124,32 +1130,85 @@ Return the JSON configuration."""
     lnn = store.add_model(model_id, config, req.robot_name)
 
     # Generate training data and train the LNN
-    training_data = generate_synthetic_training_data(config)
+    # Phase 1: Generate large synthetic base dataset
+    base_synthetic = generate_synthetic_training_data(config, target_count=1000)
+    training_data = list(base_synthetic)
     training_accuracy = 0.0
     training_loss = None
     training_iterations = 0
 
     if training_data:
-        # Optionally enhance with Kimi
-        if NVIDIA_API_KEY and kimi_used:
-            try:
-                training_system_prompt = """You are an expert in robotics and Liquid Neural Networks. Generate training scenarios for a robot.
-For each scenario, provide inputs and expected_outputs as dictionaries mapping names to normalized [0.0,1.0] values.
-Return ONLY a JSON object with a "scenarios" array of at least 30 scenarios."""
-                training_user_prompt = f"""Robot: {req.robot_name}\nDescription: {req.description}\nSensors: {list(config.get('input_mapping', {}).keys())}\nActuators: {list(config.get('output_mapping', {}).keys())}"""
-                training_response = await asyncio.wait_for(
-                    call_kimi_api(training_system_prompt, training_user_prompt),
-                    timeout=30.0
-                )
-                kimi_data = extract_training_data_from_kimi_response(training_response)
-                if kimi_data:
-                    training_data.extend(kimi_data)
-            except Exception:
-                pass  # Use synthetic data only
+        # Phase 2: Enhance with multiple Kimi API calls for diverse expert scenarios
+        if NVIDIA_API_KEY:
+            kimi_training_prompts = [
+                ("obstacle_avoidance", "Focus on obstacle detection and avoidance scenarios. Generate scenarios where the robot encounters obstacles at various distances and angles."),
+                ("edge_cases", "Focus on extreme edge cases: very close obstacles, no obstacles, sensor failures, and sudden changes."),
+                ("smooth_control", "Focus on smooth, gradual transitions. Generate scenarios simulating the robot moving through environments with slowly changing conditions."),
+                ("reactive_behavior", "Focus on quick reactive behaviors: emergency stops, sharp turns, and rapid sensor changes."),
+                ("normal_operation", "Focus on normal everyday operation: moderate speeds, typical sensor ranges, and routine navigation."),
+            ]
 
-        # Train using evolutionary strategy
-        train_result = lnn.train(training_data, iterations=50, population=20,
-                                  sigma=0.15, learning_rate=0.05)
+            async def fetch_kimi_batch(batch_idx: int) -> list:
+                """Fetch one batch of training data from Kimi."""
+                focus_name, focus_desc = kimi_training_prompts[batch_idx % len(kimi_training_prompts)]
+                system_prompt = f"""You are an expert in robotics and Liquid Neural Networks. Generate training scenarios for a robot.
+
+For each scenario, provide:
+- inputs: Dictionary mapping sensor names to NORMALIZED values (0.0 = minimum, 1.0 = maximum)
+- expected_outputs: Dictionary mapping actuator names to NORMALIZED values (0.0 = off/minimum, 1.0 = full speed/maximum)
+
+{focus_desc}
+
+Return ONLY a JSON object with a "scenarios" array containing exactly 100 diverse scenarios."""
+
+                user_prompt = f"""Robot: {req.robot_name}
+Description: {req.description}
+Sensors: {list(config.get('input_mapping', {}).keys())}
+Actuators: {list(config.get('output_mapping', {}).keys())}
+Focus: {focus_name} - {focus_desc}
+
+Generate 100 scenarios for this focus area."""
+
+                try:
+                    response = await asyncio.wait_for(
+                        call_kimi_api(system_prompt, user_prompt),
+                        timeout=KIMI_TIMEOUT
+                    )
+                    return extract_training_data_from_kimi_response(response)
+                except Exception as e:
+                    logger.warning(f"Kimi training batch {batch_idx} ({focus_name}) failed: {e}")
+                    return []
+
+            # Run multiple Kimi batches concurrently
+            try:
+                batch_results = await asyncio.gather(
+                    *[fetch_kimi_batch(i) for i in range(KIMI_TRAINING_BATCHES)],
+                    return_exceptions=True
+                )
+                for result in batch_results:
+                    if isinstance(result, list):
+                        training_data.extend(result)
+                    elif isinstance(result, Exception):
+                        logger.warning(f"Kimi batch failed: {result}")
+            except Exception as e:
+                logger.warning(f"Kimi training data generation failed: {e}")
+
+        # Phase 3: Augment all base data to reach target sample count
+        base_count = len(training_data)
+        # Calculate augmentation factor needed to reach target
+        if base_count > 0 and base_count < TARGET_TRAINING_SAMPLES:
+            needed_factor = max(AUGMENTATION_FACTOR, (TARGET_TRAINING_SAMPLES // base_count) + 1)
+        else:
+            needed_factor = AUGMENTATION_FACTOR
+
+        training_data = augment_training_data(training_data, factor=needed_factor)
+        logger.info(f"Training data pipeline: {base_count} base scenarios -> {len(training_data)} after augmentation")
+
+        # Train using evolutionary strategy (scale iterations with data size)
+        # More data = more iterations needed for convergence
+        scaled_iterations = max(150, min(500, len(training_data) // 10))
+        train_result = lnn.train(training_data, iterations=scaled_iterations,
+                                  population=30, sigma=0.12, learning_rate=0.04)
         training_accuracy = train_result.get('accuracy', 0.0)
         training_loss = train_result.get('best_loss')
         training_iterations = train_result.get('iterations', 0)
@@ -1159,6 +1218,7 @@ Return ONLY a JSON object with a "scenarios" array of at least 30 scenarios."""
         config['training_accuracy'] = training_accuracy
         config['training_loss'] = training_loss
         config['training_iterations'] = training_iterations
+        config['training_samples'] = len(training_data)
         store.update_model_config(model_id, config)
 
     return {
@@ -1170,6 +1230,7 @@ Return ONLY a JSON object with a "scenarios" array of at least 30 scenarios."""
         "training_accuracy": training_accuracy,
         "training_loss": training_loss,
         "training_iterations": training_iterations,
+        "training_samples": len(training_data) if training_data else 0,
     }
 
 
@@ -1292,73 +1353,86 @@ Return the JSON configuration."""
         "step": "creating_data",
         "step_number": 2,
         "total_steps": total_steps,
-        "message": "Creating training data with Kimi K2.6...",
+        "message": "Creating training data (target: 5000+ samples)...",
         "progress": 33,
     })
-
-    training_data = []
-
-    training_system_prompt = """You are an expert in robotics and Liquid Neural Networks. Generate training scenarios for a robot.
-
-For each scenario, provide:
-- inputs: Dictionary mapping sensor names to NORMALIZED values (0.0 = minimum reading, 1.0 = maximum reading)
-  For proximity sensors: 0.0 = very close/obstacle, 1.0 = far/clear
-  For IR line sensors: 0.0 = on line (black), 1.0 = off line (white)
-- expected_outputs: Dictionary mapping actuator names to NORMALIZED values (0.0 = off/minimum, 1.0 = full speed/maximum)
-  For motors: 0.0 = stopped, 1.0 = full speed forward
-  For LEDs: 0.0 = off, 1.0 = on
-
-Generate at least 50 diverse scenarios covering:
-1. Normal operation (no obstacles, following line)
-2. Edge cases (obstacle very close, sharp turns)
-3. Gradual transitions (obstacle approaching, line curving)
-4. Extreme scenarios (all sensors triggered, no sensors triggered)
-
-Return ONLY a JSON object with a "scenarios" array."""
 
     input_names = list(config.get('input_mapping', {}).keys())
     output_names = list(config.get('output_mapping', {}).keys())
 
-    training_user_prompt = f"""Generate training scenarios for this robot:
-
-Robot Name: {req.robot_name}
-Description: {req.description}
-Input sensors: {json.dumps(input_names)}
-Output actuators: {json.dumps(output_names)}
-
-Return ONLY a JSON object with a "scenarios" array containing at least 50 scenarios.
-Each scenario must have "inputs" and "expected_outputs" dictionaries mapping
-sensor/actuator names to normalized float values in [0.0, 1.0]."""
-
-    # Generate synthetic data first (fast, reliable) then optionally enhance with Kimi
-    training_data = generate_synthetic_training_data(config)
+    # Phase 1: Generate large synthetic base dataset
+    training_data = generate_synthetic_training_data(config, target_count=1000)
     yield sse_event("progress", {
         "step": "creating_data",
         "step_number": 2,
         "total_steps": total_steps,
-        "message": f"Generated {len(training_data)} base training scenarios",
+        "message": f"Generated {len(training_data)} synthetic base scenarios",
         "progress": 33,
-        "detail": f"synthetic scenarios: {len(training_data)}",
+        "detail": f"synthetic_base: {len(training_data)}",
     })
 
-    # Optionally enhance with Kimi-generated scenarios (non-blocking, with timeout)
+    # Phase 2: Enhance with multiple concurrent Kimi API calls
     if NVIDIA_API_KEY:
+        kimi_training_prompts = [
+            ("obstacle_avoidance", "Focus on obstacle detection and avoidance scenarios. Generate scenarios where the robot encounters obstacles at various distances and angles."),
+            ("edge_cases", "Focus on extreme edge cases: very close obstacles, no obstacles, sensor failures, and sudden changes."),
+            ("smooth_control", "Focus on smooth, gradual transitions. Generate scenarios simulating the robot moving through environments with slowly changing conditions."),
+            ("reactive_behavior", "Focus on quick reactive behaviors: emergency stops, sharp turns, and rapid sensor changes."),
+            ("normal_operation", "Focus on normal everyday operation: moderate speeds, typical sensor ranges, and routine navigation."),
+        ]
+
+        async def fetch_kimi_batch_stream(batch_idx: int) -> list:
+            """Fetch one batch of training data from Kimi for streaming pipeline."""
+            focus_name, focus_desc = kimi_training_prompts[batch_idx % len(kimi_training_prompts)]
+            system_prompt = f"""You are an expert in robotics and Liquid Neural Networks. Generate training scenarios for a robot.
+
+For each scenario, provide:
+- inputs: Dictionary mapping sensor names to NORMALIZED values (0.0 = minimum, 1.0 = maximum)
+- expected_outputs: Dictionary mapping actuator names to NORMALIZED values (0.0 = off/minimum, 1.0 = full speed/maximum)
+
+{focus_desc}
+
+Return ONLY a JSON object with a "scenarios" array containing exactly 100 diverse scenarios."""
+
+            user_prompt = f"""Robot: {req.robot_name}
+Description: {req.description}
+Input sensors: {json.dumps(input_names)}
+Output actuators: {json.dumps(output_names)}
+Focus: {focus_name} - {focus_desc}
+
+Generate 100 scenarios for this focus area."""
+
+            try:
+                response = await asyncio.wait_for(
+                    call_kimi_api(system_prompt, user_prompt),
+                    timeout=KIMI_TIMEOUT
+                )
+                return extract_training_data_from_kimi_response(response)
+            except Exception as e:
+                logger.warning(f"Kimi training batch {batch_idx} ({focus_name}) failed: {e}")
+                return []
+
         try:
-            training_response = await asyncio.wait_for(
-                call_kimi_api(training_system_prompt, training_user_prompt),
-                timeout=45.0  # Short timeout to avoid blocking
+            batch_results = await asyncio.gather(
+                *[fetch_kimi_batch_stream(i) for i in range(KIMI_TRAINING_BATCHES)],
+                return_exceptions=True
             )
-            kimi_data = extract_training_data_from_kimi_response(training_response)
-            if kimi_data:
-                training_data.extend(kimi_data)
-                yield sse_event("progress", {
-                    "step": "creating_data",
-                    "step_number": 2,
-                    "total_steps": total_steps,
-                    "message": f"Enhanced with {len(kimi_data)} Kimi scenarios (total: {len(training_data)})",
-                    "progress": 33,
-                    "detail": f"kimi_scenarios: {len(kimi_data)}, total: {len(training_data)}",
-                })
+            kimi_total = 0
+            for result in batch_results:
+                if isinstance(result, list):
+                    training_data.extend(result)
+                    kimi_total += len(result)
+                elif isinstance(result, Exception):
+                    logger.warning(f"Kimi batch failed: {result}")
+
+            yield sse_event("progress", {
+                "step": "creating_data",
+                "step_number": 2,
+                "total_steps": total_steps,
+                "message": f"Enhanced with {kimi_total} Kimi scenarios (total base: {len(training_data)})",
+                "progress": 38,
+                "detail": f"kimi_scenarios: {kimi_total}, total_base: {len(training_data)}",
+            })
         except (asyncio.TimeoutError, Exception) as e:
             logger.warning(f"Kimi API skipped for training data: {e}")
             yield sse_event("progress", {
@@ -1366,9 +1440,26 @@ sensor/actuator names to normalized float values in [0.0, 1.0]."""
                 "step_number": 2,
                 "total_steps": total_steps,
                 "message": f"Using {len(training_data)} synthetic scenarios (Kimi timed out)",
-                "progress": 33,
+                "progress": 38,
                 "detail": f"fallback: synthetic only, scenarios: {len(training_data)}",
             })
+
+    # Phase 3: Augment to reach target sample count
+    base_count = len(training_data)
+    if base_count > 0 and base_count < TARGET_TRAINING_SAMPLES:
+        needed_factor = max(AUGMENTATION_FACTOR, (TARGET_TRAINING_SAMPLES // base_count) + 1)
+    else:
+        needed_factor = AUGMENTATION_FACTOR
+
+    training_data = augment_training_data(training_data, factor=needed_factor)
+    yield sse_event("progress", {
+        "step": "creating_data",
+        "step_number": 2,
+        "total_steps": total_steps,
+        "message": f"Training data ready: {len(training_data)} samples (from {base_count} base, x{needed_factor} augmentation)",
+        "progress": 44,
+        "detail": f"base: {base_count}, augmented: {len(training_data)}, factor: {needed_factor}",
+    })
 
     # Store the model now so we can train it
     lnn = store.add_model(model_id, config, req.robot_name)
@@ -1393,7 +1484,8 @@ sensor/actuator names to normalized float values in [0.0, 1.0]."""
             pass
 
     # Start training in a thread (since it's CPU-bound)
-    training_iterations = 150
+    # Scale iterations with data size: more data needs more iterations for convergence
+    training_iterations = max(150, min(500, len(training_data) // 10))
 
     async def run_training():
         """Run ES training and send progress events."""
@@ -1544,6 +1636,7 @@ sensor/actuator names to normalized float values in [0.0, 1.0]."""
         "training_accuracy": training_accuracy,
         "training_loss": training_result.get('best_loss'),
         "training_iterations": training_result.get('iterations'),
+        "training_samples": len(training_data),
         "test_results": test_results,
         "validation_errors": errors,
     })
@@ -1608,59 +1701,286 @@ def extract_training_data_from_kimi_response(response_text: str) -> list:
     return []
 
 
-def generate_synthetic_training_data(config: dict) -> list:
+def generate_synthetic_training_data(config: dict, target_count: int = 1000) -> list:
     """
-    Generate synthetic training scenarios as fallback when Kimi is unavailable.
-    Creates scenarios with random sensor values and heuristic output rules.
+    Generate synthetic training scenarios with robot-aware heuristics.
+
+    Creates diverse scenarios covering:
+    - Random baseline scenarios
+    - Structured edge cases (all high, all low, mixed)
+    - Gradual transition scenarios (simulating sensor sweeps)
+    - Obstacle approach/retreat sequences
+    - Per-sensor trigger scenarios
+    - Interpolated boundary scenarios
+
+    Args:
+        config: LNN config dict with input_mapping, output_mapping, description
+        target_count: Minimum number of scenarios to generate (default 1000)
+
+    Returns:
+        List of training scenario dicts with 'inputs' and 'expected_outputs'
     """
     input_mapping = config.get('input_mapping', {})
     output_mapping = config.get('output_mapping', {})
     input_names = list(input_mapping.keys())
     output_names = list(output_mapping.keys())
+    description = config.get('description', '').lower()
 
     if not input_names or not output_names:
         return []
 
     scenarios = []
-    num_scenarios = 60
 
-    for i in range(num_scenarios):
-        # Generate random input values
-        inputs = {}
-        for name in input_names:
-            inputs[name] = round(random.random(), 3)
+    # --- Determine robot behavior type from description ---
+    is_obstacle_avoidance = any(kw in description for kw in ['obstacle', 'avoid', 'collision', 'distance'])
+    is_line_follower = any(kw in description for kw in ['line', 'follow', 'track', 'ir'])
+    is_arm = any(kw in description for kw in ['arm', 'servo', 'gripper', 'pick'])
+    is_balancing = any(kw in description for kw in ['balance', 'gyro', 'imu', 'stabilize'])
 
-        # Generate expected outputs based on simple heuristic rules
-        # This is a basic fallback; real training data from Kimi is preferred
+    def compute_expected(inputs: dict) -> dict:
+        """Compute expected outputs based on robot type heuristics."""
         expected = {}
-        for name in output_names:
-            # Simple heuristic: average of inputs as base, with some variation
-            avg_input = sum(inputs.values()) / len(inputs) if inputs else 0.5
-            # Add some noise for diversity
-            noise = random.gauss(0, 0.1)
-            val = max(0.0, min(1.0, avg_input + noise))
-            expected[name] = round(val, 3)
+        avg_input = sum(inputs.values()) / len(inputs) if inputs else 0.5
 
-        scenarios.append({
-            'inputs': inputs,
-            'expected_outputs': expected,
-        })
+        if is_obstacle_avoidance:
+            # Obstacle avoidance: if sensors read low (close obstacle), slow down/turn
+            min_sensor = min(inputs.values()) if inputs else 0.5
+            for name in output_names:
+                name_lower = name.lower()
+                if 'left' in name_lower:
+                    # Left motor: speed up when obstacle on right (high right sensor = far = clear)
+                    right_sensors = [v for k, v in inputs.items() if 'right' in k.lower()]
+                    right_avg = sum(right_sensors) / len(right_sensors) if right_sensors else avg_input
+                    expected[name] = round(max(0.0, min(1.0, right_avg * 0.8 + random.gauss(0, 0.05))), 3)
+                elif 'right' in name_lower:
+                    left_sensors = [v for k, v in inputs.items() if 'left' in k.lower()]
+                    left_avg = sum(left_sensors) / len(left_sensors) if left_sensors else avg_input
+                    expected[name] = round(max(0.0, min(1.0, left_avg * 0.8 + random.gauss(0, 0.05))), 3)
+                elif any(kw in name_lower for kw in ['speed', 'forward', 'motor']):
+                    # Forward speed proportional to clearance
+                    expected[name] = round(max(0.0, min(1.0, min_sensor * 0.9 + random.gauss(0, 0.05))), 3)
+                else:
+                    expected[name] = round(max(0.0, min(1.0, avg_input + random.gauss(0, 0.08))), 3)
 
-    # Add some structured scenarios
-    # All sensors high (clear path)
-    for _ in range(5):
-        inputs = {name: round(random.uniform(0.8, 1.0), 3) for name in input_names}
-        expected = {name: round(random.uniform(0.7, 1.0), 3) for name in output_names}
+        elif is_line_follower:
+            # Line following: IR sensors low = on line, motors adjust to keep on line
+            for name in output_names:
+                name_lower = name.lower()
+                if 'left' in name_lower:
+                    left_sensors = [v for k, v in inputs.items() if 'left' in k.lower()]
+                    left_on_line = all(v < 0.3 for v in left_sensors) if left_sensors else avg_input < 0.3
+                    expected[name] = round(max(0.0, min(1.0, (0.7 if left_on_line else 0.3) + random.gauss(0, 0.05))), 3)
+                elif 'right' in name_lower:
+                    right_sensors = [v for k, v in inputs.items() if 'right' in k.lower()]
+                    right_on_line = all(v < 0.3 for v in right_sensors) if right_sensors else avg_input < 0.3
+                    expected[name] = round(max(0.0, min(1.0, (0.7 if right_on_line else 0.3) + random.gauss(0, 0.05))), 3)
+                else:
+                    expected[name] = round(max(0.0, min(1.0, avg_input + random.gauss(0, 0.08))), 3)
+
+        elif is_arm:
+            # Robot arm: output proportional to target position
+            for name in output_names:
+                expected[name] = round(max(0.0, min(1.0, avg_input + random.gauss(0, 0.06))), 3)
+
+        elif is_balancing:
+            # Balancing: counter-steer based on tilt
+            for name in output_names:
+                name_lower = name.lower()
+                if 'left' in name_lower:
+                    right_vals = [v for k, v in inputs.items() if 'right' in k.lower() or 'gyro' in k.lower()]
+                    correction = sum(right_vals) / len(right_vals) if right_vals else 0.5
+                    expected[name] = round(max(0.0, min(1.0, 1.0 - correction + random.gauss(0, 0.04))), 3)
+                elif 'right' in name_lower:
+                    left_vals = [v for k, v in inputs.items() if 'left' in k.lower() or 'gyro' in k.lower()]
+                    correction = sum(left_vals) / len(left_vals) if left_vals else 0.5
+                    expected[name] = round(max(0.0, min(1.0, 1.0 - correction + random.gauss(0, 0.04))), 3)
+                else:
+                    expected[name] = round(max(0.0, min(1.0, 0.5 + random.gauss(0, 0.06))), 3)
+        else:
+            # Generic: output correlates with input average
+            for name in output_names:
+                noise = random.gauss(0, 0.1)
+                val = max(0.0, min(1.0, avg_input + noise))
+                expected[name] = round(val, 3)
+
+        return expected
+
+    # --- Phase 1: Random baseline (40% of target) ---
+    num_random = int(target_count * 0.4)
+    for _ in range(num_random):
+        inputs = {name: round(random.random(), 3) for name in input_names}
+        expected = compute_expected(inputs)
         scenarios.append({'inputs': inputs, 'expected_outputs': expected})
 
-    # All sensors low (obstacle)
-    for _ in range(5):
-        inputs = {name: round(random.uniform(0.0, 0.2), 3) for name in input_names}
-        expected = {name: round(random.uniform(0.0, 0.3), 3) for name in output_names}
+    # --- Phase 2: Edge cases (15% of target) ---
+    num_edge = int(target_count * 0.15)
+    edge_patterns = [
+        # All sensors high (clear path / full signal)
+        lambda: {name: round(random.uniform(0.85, 1.0), 3) for name in input_names},
+        # All sensors low (obstacle close / no signal)
+        lambda: {name: round(random.uniform(0.0, 0.15), 3) for name in input_names},
+        # Half sensors high, half low
+        lambda: {name: round(random.uniform(0.8, 1.0) if i % 2 == 0 else random.uniform(0.0, 0.2), 3)
+                 for i, name in enumerate(input_names)},
+        # All sensors mid-range
+        lambda: {name: round(random.uniform(0.4, 0.6), 3) for name in input_names},
+        # One sensor extreme, rest normal
+        lambda: _one_extreme_rest_normal(input_names),
+    ]
+    for i in range(num_edge):
+        pattern_fn = edge_patterns[i % len(edge_patterns)]
+        inputs = pattern_fn()
+        expected = compute_expected(inputs)
         scenarios.append({'inputs': inputs, 'expected_outputs': expected})
 
-    logger.info(f"Generated {len(scenarios)} synthetic training scenarios")
+    # --- Phase 3: Gradual transitions / sensor sweeps (15% of target) ---
+    num_sweep = int(target_count * 0.15)
+    for _ in range(num_sweep // max(len(input_names), 1)):
+        for sensor_name in input_names:
+            # Sweep one sensor from 0 to 1 in steps
+            steps = max(num_sweep // (max(len(input_names), 1) * 3), 5)
+            for step in range(steps):
+                inputs = {name: round(random.uniform(0.3, 0.7), 3) for name in input_names}
+                inputs[sensor_name] = round(step / max(steps - 1, 1), 3)
+                expected = compute_expected(inputs)
+                scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+
+    # --- Phase 4: Obstacle approach/retreat sequences (10% of target) ---
+    num_approach = int(target_count * 0.1)
+    for _ in range(num_approach // 10):
+        # Simulate an approach: sensors gradually decrease
+        base = {name: round(random.uniform(0.7, 1.0), 3) for name in input_names}
+        for step in range(10):
+            decay = 1.0 - (step * 0.1)
+            inputs = {name: round(max(0.0, min(1.0, base[name] * decay + random.gauss(0, 0.02)), ), 3)
+                      for name in input_names}
+            expected = compute_expected(inputs)
+            scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+
+    # --- Phase 5: Per-sensor trigger scenarios (10% of target) ---
+    num_per_sensor = int(target_count * 0.1)
+    for i in range(num_per_sensor):
+        trigger_idx = i % len(input_names)
+        inputs = {name: round(random.uniform(0.3, 0.5), 3) for name in input_names}
+        # Trigger one sensor to extreme
+        inputs[input_names[trigger_idx]] = round(random.choice([0.0, 1.0]) + random.gauss(0, 0.03), 3)
+        inputs = {k: round(max(0.0, min(1.0, v)), 3) for k, v in inputs.items()}
+        expected = compute_expected(inputs)
+        scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+
+    # --- Phase 6: Boundary / decision boundary scenarios (10% of target) ---
+    num_boundary = int(target_count * 0.1)
+    for _ in range(num_boundary):
+        # Values near decision boundaries (0.4-0.6 range)
+        inputs = {name: round(random.uniform(0.35, 0.65), 3) for name in input_names}
+        expected = compute_expected(inputs)
+        scenarios.append({'inputs': inputs, 'expected_outputs': expected})
+
+    logger.info(f"Generated {len(scenarios)} synthetic training scenarios (target was {target_count})")
     return scenarios
+
+
+def _one_extreme_rest_normal(input_names: list) -> dict:
+    """Helper: one sensor at extreme, rest at normal values."""
+    if not input_names:
+        return {}
+    extreme_idx = random.randint(0, len(input_names) - 1)
+    result = {}
+    for i, name in enumerate(input_names):
+        if i == extreme_idx:
+            result[name] = round(random.choice([0.0, 1.0]) + random.gauss(0, 0.02), 3)
+            result[name] = max(0.0, min(1.0, result[name]))
+        else:
+            result[name] = round(random.uniform(0.3, 0.7), 3)
+    return result
+
+
+def augment_training_data(base_scenarios: list, factor: int = AUGMENTATION_FACTOR) -> list:
+    """
+    Augment training data by creating variations of existing scenarios.
+
+    Augmentation techniques:
+    1. Gaussian noise injection (multiple noise levels)
+    2. Interpolation between random scenario pairs
+    3. Input scaling (slight stretch/compress)
+    4. Output perturbation (small shifts in expected outputs)
+    5. Sensor dropout simulation (random sensor set to 0)
+
+    Args:
+        base_scenarios: List of base training scenarios
+        factor: How many augmented variants to create per base scenario
+
+    Returns:
+        Original scenarios + augmented variants
+    """
+    if not base_scenarios:
+        return []
+
+    augmented = list(base_scenarios)  # Start with originals
+
+    for scenario in base_scenarios:
+        inputs = scenario['inputs']
+        expected = scenario['expected_outputs']
+        input_names = list(inputs.keys())
+        output_names = list(expected.keys())
+
+        for aug_idx in range(factor):
+            aug_type = aug_idx % 5
+
+            if aug_type == 0:
+                # Gaussian noise injection (low noise)
+                aug_inputs = {k: round(max(0.0, min(1.0, v + random.gauss(0, 0.03))), 3)
+                              for k, v in inputs.items()}
+                aug_outputs = {k: round(max(0.0, min(1.0, v + random.gauss(0, 0.02))), 3)
+                               for k, v in expected.items()}
+                augmented.append({'inputs': aug_inputs, 'expected_outputs': aug_outputs})
+
+            elif aug_type == 1:
+                # Gaussian noise injection (medium noise)
+                aug_inputs = {k: round(max(0.0, min(1.0, v + random.gauss(0, 0.08))), 3)
+                              for k, v in inputs.items()}
+                aug_outputs = {k: round(max(0.0, min(1.0, v + random.gauss(0, 0.05))), 3)
+                               for k, v in expected.items()}
+                augmented.append({'inputs': aug_inputs, 'expected_outputs': aug_outputs})
+
+            elif aug_type == 2:
+                # Interpolation with another random scenario
+                other = random.choice(base_scenarios)
+                alpha = random.uniform(0.2, 0.8)
+                aug_inputs = {}
+                for k in input_names:
+                    v1 = inputs.get(k, 0.5)
+                    v2 = other['inputs'].get(k, 0.5)
+                    aug_inputs[k] = round(max(0.0, min(1.0, alpha * v1 + (1 - alpha) * v2)), 3)
+                aug_outputs = {}
+                for k in output_names:
+                    v1 = expected.get(k, 0.5)
+                    v2 = other['expected_outputs'].get(k, 0.5)
+                    aug_outputs[k] = round(max(0.0, min(1.0, alpha * v1 + (1 - alpha) * v2)), 3)
+                augmented.append({'inputs': aug_inputs, 'expected_outputs': aug_outputs})
+
+            elif aug_type == 3:
+                # Input scaling
+                scale = random.uniform(0.85, 1.15)
+                offset = random.uniform(-0.05, 0.05)
+                aug_inputs = {k: round(max(0.0, min(1.0, v * scale + offset)), 3)
+                              for k, v in inputs.items()}
+                aug_outputs = dict(expected)  # Keep expected same
+                augmented.append({'inputs': aug_inputs, 'expected_outputs': aug_outputs})
+
+            elif aug_type == 4:
+                # Sensor dropout simulation (1-2 sensors set to 0)
+                aug_inputs = dict(inputs)
+                num_drop = min(random.randint(1, 2), len(input_names) - 1)
+                drop_sensors = random.sample(input_names, num_drop)
+                for s in drop_sensors:
+                    aug_inputs[s] = 0.0
+                aug_outputs = dict(expected)
+                augmented.append({'inputs': aug_inputs, 'expected_outputs': aug_outputs})
+
+    logger.info(f"Augmented {len(base_scenarios)} base scenarios -> {len(augmented)} total "
+                f"(factor={factor})")
+    return augmented
 
 
 def validate_lnn_model(lnn: LiquidNeuralNetwork, config: dict) -> list:
