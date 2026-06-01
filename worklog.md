@@ -102,3 +102,27 @@ Stage Summary:
 - Found and fixed 1 additional bug: JSON parsing of AI streaming responses
 - Both repos pushed with all fixes
 - Apps ready for architecture: IDE compiles .airo files with semicolons, Backbone generates LNNs with Kimi K2.6
+
+---
+Task ID: 1
+Agent: Main Agent
+Task: Scale training data pipeline from ~120 samples to 5000+ samples
+
+Work Log:
+- Analyzed current training data generation: only 70 synthetic + ~50 Kimi = ~120 total
+- User requested "thousands to millions" of training samples
+- Redesigned generate_synthetic_training_data with robot-aware heuristics (6 phases)
+- Added augment_training_data function with 5 augmentation techniques (noise, interpolation, scaling, dropout)
+- Updated both non-streaming and streaming generate endpoints with 3-phase pipeline
+- Added concurrent Kimi K2.6 API calls (5 batches × 100 scenarios)
+- Scaled ES training iterations with data size (150-500)
+- Increased Kimi API timeout to 90-180s, max_tokens to 16384
+- Applied changes to both airone-ide (deploy_api.py) and airone-ai-backbone (nvidia-client.js)
+- Tested end-to-end: 3,250 base → 19,500 augmented (synthetic only), ~22,500 with Kimi
+- Pushed all changes to both GitHub repos
+
+Stage Summary:
+- Training data now generates 19,500-22,500+ samples per robot (was ~120)
+- Robot-aware heuristics: obstacle avoidance, line following, arm, balancing
+- 5x augmentation with noise variants, interpolation, scaling, sensor dropout
+- Both repos pushed: airone-ide (master), airone-ai-backbone (main)
