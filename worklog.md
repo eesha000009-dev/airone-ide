@@ -79,3 +79,26 @@ Stage Summary:
 - Deploy API: https://airone-deploy.onrender.com
 - IDE builds: Windows 138MB ✅, Linux 266MB ✅, Android 96MB ✅
 - AI Backbone build: Icon fix pushed, next build should succeed
+
+---
+Task ID: T1-T7
+Agent: test-all-fixes
+Task: Test all 8 bug fixes end-to-end and fix any errors found
+
+Work Log:
+- Test T1: Parser with semicolons — compiled user's exact .airo file (6 pins, loop, brain_url) ✅ 6 files generated
+- Test T2: Templates path — resolved correctly in packaged app context ✅
+- Test T3: Sync server — tested all 4 endpoints (health, pins/sync, CORS, 404) ✅ 4/4 passed
+- Test T4: NVIDIA API 404 — confirmed 'kimi-k2.6' gives 404, 'moonshotai/kimi-k2.6' gives non-404 ✅ mapping fix verified
+- Test T5: Pin parsing — tested 9 different .airo format variations ✅ 9/9 passed
+- Test T6: LNN pipeline — tested architecture generation (31s with Kimi streaming), training data (16.5s, 32 AI examples), training (0.2s, 601 epochs)
+- Found bug: JSON parsing of streaming AI responses was failing due to code fences, trailing commas, and boundary issues
+- Added extractJsonFromAiResponse() with 4-stage robust parsing (direct, code fence, balanced braces, regex + fixes)
+- Tested pipeline again after fix: training data now parses correctly (32 examples from AI)
+- Test T7: Sync from IDE — verified structured pin definitions payload format matches sync server expectations
+
+Stage Summary:
+- All 8 original bugs fixed and verified
+- Found and fixed 1 additional bug: JSON parsing of AI streaming responses
+- Both repos pushed with all fixes
+- Apps ready for architecture: IDE compiles .airo files with semicolons, Backbone generates LNNs with Kimi K2.6
