@@ -331,21 +331,30 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
             // Use QuickInputService.input() — rendered inline in Theia's UI,
             // much more reliable than SingleTextInputDialog in Electron.
-            const name = await this.quickInputService.input({
-                title: 'New Sketch',
-                value: defaultName,
-                prompt: 'Enter a name for the new sketch',
-                placeHolder: 'sketch_name',
-                validateInput: async (input: string) => {
-                    if (!input || input.trim().length === 0) {
-                        return 'Sketch name cannot be empty';
+            let name: string | undefined;
+            try {
+                name = await this.quickInputService.input({
+                    title: 'New Sketch',
+                    value: defaultName,
+                    prompt: 'Enter a name for the new sketch',
+                    placeHolder: 'sketch_name',
+                    validateInput: async (input: string) => {
+                        if (!input || input.trim().length === 0) {
+                            return 'Sketch name cannot be empty';
+                        }
+                        if (!/^[a-zA-Z0-9_-]+$/.test(input.trim())) {
+                            return 'Only letters, numbers, underscores, and hyphens allowed';
+                        }
+                        return undefined;
                     }
-                    if (!/^[a-zA-Z0-9_-]+$/.test(input.trim())) {
-                        return 'Only letters, numbers, underscores, and hyphens allowed';
-                    }
-                    return undefined;
-                }
-            });
+                });
+            } catch (inputErr: unknown) {
+                // QuickInputService may fail in some Electron environments
+                // Fallback: use the default name directly
+                const msg = inputErr instanceof Error ? inputErr.message : String(inputErr);
+                console.warn('QuickInputService failed, using default sketch name:', msg);
+                name = defaultName;
+            }
 
             if (!name || name.trim().length === 0) {
                 return;
@@ -359,19 +368,47 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             // Convert filesystem path to proper file:// URI
             const fileUri = toFileUri(sketch.mainFile);
 
-            // Open the newly created file
-            try {
-                const opener = await this.openerService.getOpener(fileUri);
-                await opener.open(fileUri);
-                this.messageService.info(`Created sketch: ${sketch.name}`);
-            } catch {
-                // If opener fails, try using the command service
+            // Open the newly created file — try multiple strategies
+            let opened = false;
+
+            // Strategy 1: OpenerService
+            if (!opened) {
+                try {
+                    const opener = await this.openerService.getOpener(fileUri);
+                    await opener.open(fileUri);
+                    opened = true;
+                    this.messageService.info(`Created sketch: ${sketch.name}`);
+                } catch (e) {
+                    console.warn('OpenerService failed:', e);
+                }
+            }
+
+            // Strategy 2: core.open command
+            if (!opened) {
                 try {
                     await this.commandService.executeCommand('core.open', fileUri);
+                    opened = true;
                     this.messageService.info(`Created sketch: ${sketch.name}`);
-                } catch {
-                    this.messageService.info(`Sketch created at: ${sketch.mainFile}. Open it from the File menu.`);
+                } catch (e) {
+                    console.warn('core.open command failed:', e);
                 }
+            }
+
+            // Strategy 3: Theia's open handler
+            if (!opened) {
+                try {
+                    await this.commandService.executeCommand('theia.open', fileUri.toString());
+                    opened = true;
+                    this.messageService.info(`Created sketch: ${sketch.name}`);
+                } catch (e) {
+                    console.warn('theia.open command failed:', e);
+                }
+            }
+
+            if (!opened) {
+                this.messageService.info(
+                    `Sketch created at: ${sketch.mainFile}. Use File menu to open it.`
+                );
             }
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -632,6 +669,31 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     // ─── Menu Registration ───────────────────────────────────────────────
 
     registerMenus(menus: MenuModelRegistry): void {
+        // ─── Remove Theia built-in File menu items ──────────────────
+        // Airone only wants: New Sketch, Examples, Save, Save As, Auto Save,
+        // Preferences, Close Editor, Close Window. Everything else goes.
+        const unwantedFileCommands = [
+            'workbench.action.files.newUntitledFile', // New Text File
+            'workbench.action.files.newFile',          // New File...
+            'file.newFile',                            // workspace New File
+            'file.newFolder',                          // New Folder
+            'workbench.action.newWindow',              // New Window
+            'workspace:openFile',                      // Open File...
+            'workspace:openFolder',                    // Open Folder...
+            'workspace:openWorkspace',                 // Open Workspace from File...
+            'workspace:openRecent',                    // Open Recent Workspace...
+            'workspace:addFolder',                     // Add Folder to Workspace
+            'workspace:removeFolder',                  // Remove Folder from Workspace
+            'workspace:saveAs',                        // Save Workspace As
+            'workspace:openConfigFile',                // Open Workspace Config File
+            'workspace:manageTrust',                   // Manage Workspace Trust
+        ];
+        for (const cmdId of unwantedFileCommands) {
+            try {
+                menus.unregisterMenuAction(cmdId);
+            } catch { /* command may not be registered in all environments */ }
+        }
+
         // ─── File menu additions ────────────────────────────────────
         menus.registerMenuAction(CommonMenus.FILE, {
             commandId: AIRO_NEW_SKETCH_COMMAND.id,
