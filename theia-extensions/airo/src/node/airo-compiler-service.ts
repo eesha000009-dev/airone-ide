@@ -8,7 +8,7 @@
  ********************************************************************************/
 
 import { injectable, inject } from '@theia/core/shared/inversify';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import { CompileRequest, CompileResult } from '../common/airo-protocol';
@@ -16,23 +16,29 @@ import { AiroBuiltInCompiler } from './airo-built-in-compiler';
 import { AiroTranspiler } from './airo-transpiler';
 
 /**
- * Compiler service that provides three tiers of compilation:
+ * Compiler service that provides a four-step TRUSTED compilation pipeline:
  *
- * 1. **Built-in (TypeScript)**: Fast, no-dependency syntax checking.
+ * **Step 1 – Built-in (TypeScript)**: Fast, no-dependency syntax checking.
  *    This runs immediately in the Node.js process and provides
  *    structural/syntactic validation of .airo files.
  *
- * 2. **Transpiler (TypeScript)**: Converts .airo code to C++ Arduino/ESP32 code.
+ * **Step 2 – Transpiler (TypeScript)**: Converts .airo code to C++ Arduino/ESP32 code.
  *    Generates proper setup(), loop(), WiFi, WebSocket, and sensor/actuator code.
  *    Uses the brain_url from the .airo file for WebSocket communication.
  *    No hardcoding — everything comes from the .airo source.
+ *    Always runs, produces .ino.cpp and .ino files.
  *
- * 3. **Python (airo_compiler)**: Full compilation pipeline using Python.
- *    This is used when Python and airo_compiler are available.
- *    Falls back gracefully when they are not installed.
+ * **Step 3 – Python (airo_compiler)**: Full compilation pipeline using Python.
+ *    Always attempted. Produces refined .ino.cpp and .ino files when available.
+ *    If Python is not installed, the TypeScript transpiler output is used as the
+ *    C++ source (this is fine — it's a valid fallback).
  *
- * The compiled C++ code can then be built using Arduino CLI and flashed
- * to the ESP32 using esptool.py.
+ * **Step 4 – Arduino CLI build**: Compiles the C++ into a .bin firmware file.
+ *    Runs when `arduino-cli` is available in PATH.
+ *    Produces <sketchName>.ino.bin in the build directory.
+ *    If Arduino CLI is not installed, a clear message explains how to install it.
+ *
+ * The resulting .bin can be flashed to the ESP32 using esptool.py.
  */
 @injectable()
 export class AiroCompilerService {
@@ -45,6 +51,7 @@ export class AiroCompilerService {
 
     private pythonPath: string;
     private compilerDir: string;
+    private cachedArduinoCli: string | undefined;
 
     constructor() {
         this.compilerDir = this.resolveCompilerDir();
@@ -85,8 +92,11 @@ export class AiroCompilerService {
     }
 
     /**
-     * Compile a .airo file using the built-in TypeScript verifier first,
-     * then transpile to C++, then attempt Python-based full compilation if requested.
+     * Compile a .airo file through the full TRUSTED pipeline:
+     * Step 1: Built-in syntax check (always, fast)
+     * Step 2: TypeScript transpile → C++ (always, produces .ino.cpp)
+     * Step 3: Python airo_compiler (always attempt, produces .ino.cpp + .ino)
+     * Step 4: Arduino CLI build (if available, produces .bin)
      */
     async compile(request: CompileRequest): Promise<CompileResult> {
         // ─── Step 1: Built-in syntax check (always runs, no dependencies) ──
@@ -101,7 +111,7 @@ export class AiroCompilerService {
             };
         }
 
-        // ─── Step 2: Transpile .airo → C++ ──────────────────────────────
+        // ─── Step 2: Transpile .airo → C++ (always runs) ──────────────
         let airoCode: string;
         const fsPath = request.filePath.startsWith('file://')
             ? this.fsPathFromUri(request.filePath)
@@ -137,53 +147,81 @@ export class AiroCompilerService {
             }
 
             const generatedFiles = [cppPath, inoPath];
+            let combinedOutput = builtInResult.output + '\n' +
+                `✓ Step 2 — Transpiled to C++: ${cppPath}\n` +
+                `  Required libraries: ${transpileResult.requiredLibraries.join(', ') || 'none'}\n` +
+                (transpileResult.errors.length > 0 ? `  Warnings: ${transpileResult.errors.join('; ')}\n` : '');
 
-            // ─── Step 3: Try Python-based full compilation ─────────────
+            // ─── Step 3: Python airo_compiler (always attempt) ────────
             const pythonResult = await this.tryPythonCompile(request);
 
             if (pythonResult) {
                 // Python compilation succeeded or failed with specific errors
                 if (pythonResult.success) {
+                    combinedOutput += '\n✓ Step 3 — Python airo_compiler succeeded.\n' + pythonResult.output;
+                    if (pythonResult.generatedFiles) {
+                        generatedFiles.push(...pythonResult.generatedFiles);
+                    }
+                } else {
+                    // Python compilation failed but transpilation succeeded
+                    combinedOutput +=
+                        '\n⚠ Step 3 — Python airo_compiler failed (using TypeScript transpiler output as fallback):\n' +
+                        `  ${pythonResult.error || pythonResult.output}\n` +
+                        '  The C++ file from Step 2 is ready for Arduino CLI.\n';
+                }
+            } else {
+                // Python not available — TypeScript transpiler result is the C++ output
+                combinedOutput +=
+                    '\n⚠ Step 3 — Python airo_compiler not available.\n' +
+                    '  The TypeScript transpiler C++ output will be used (this is fine).\n' +
+                    '  To enable Python-based compilation: pip install airo-compiler\n';
+            }
+
+            // ─── Step 4: Arduino CLI build (if available) ────────────
+            const fqbn = request.target === 'esp8266'
+                ? 'esp8266:esp8266:generic'
+                : 'esp32:esp32:esp32';
+
+            const arduinoResult = await this.tryArduinoBuild(outputDir, sketchName, fqbn);
+
+            if (arduinoResult) {
+                if (arduinoResult.success) {
+                    combinedOutput += '\n✓ Step 4 — Arduino CLI build succeeded.\n' + arduinoResult.output;
+                    if (arduinoResult.generatedFiles) {
+                        generatedFiles.push(...arduinoResult.generatedFiles);
+                    }
                     return {
                         success: true,
-                        output: builtInResult.output + '\n' +
-                            `✓ Transpiled to C++: ${cppPath}\n` +
-                            `  Required libraries: ${transpileResult.requiredLibraries.join(', ') || 'none'}\n` +
-                            (transpileResult.errors.length > 0 ? `  Warnings: ${transpileResult.errors.join('; ')}\n` : '') +
-                            pythonResult.output,
-                        generatedFiles: [...generatedFiles, ...(pythonResult.generatedFiles || [])],
+                        output: combinedOutput,
+                        generatedFiles,
+                        binaryPath: arduinoResult.binaryPath,
                     };
                 }
-                // Python compilation failed but transpilation succeeded
-                // Return transpilation result + Python errors
+                // Arduino CLI ran but build failed
+                combinedOutput +=
+                    '\n✗ Step 4 — Arduino CLI build failed:\n' +
+                    `  ${arduinoResult.error || arduinoResult.output}\n` +
+                    '  The C++ code is correct but the build did not produce a .bin file.\n' +
+                    '  Check that ESP32 board support is installed:\n' +
+                    '    arduino-cli core install esp32:esp32\n';
                 return {
-                    success: true, // C++ was generated even if Python build failed
-                    output: builtInResult.output + '\n' +
-                        `✓ Transpiled to C++: ${cppPath}\n` +
-                        `  Required libraries: ${transpileResult.requiredLibraries.join(', ') || 'none'}\n` +
-                        (transpileResult.errors.length > 0 ? `  Warnings: ${transpileResult.errors.join('; ')}\n` : '') +
-                        '\n⚠ Arduino compilation requires Arduino CLI or Python airo_compiler.\n' +
-                        `  Install Arduino CLI: https://arduino.github.io/arduino-cli/latest/\n` +
-                        `  Or install airo_compiler: pip install airo-compiler\n` +
-                        `  The C++ file is ready at: ${cppPath}\n`,
+                    success: true, // C++ was generated even if Arduino build failed
+                    output: combinedOutput,
                     generatedFiles,
                 };
             }
 
-            // ─── Step 4: Python not available — return transpilation result ──
+            // Arduino CLI not available
+            combinedOutput +=
+                '\n⚠ Step 4 — Arduino CLI not found. Firmware binary (.bin) not produced.\n' +
+                '  Install Arduino CLI for full compilation: https://arduino.github.io/arduino-cli/latest/\n' +
+                '  Then install ESP32 board support: arduino-cli core install esp32:esp32\n' +
+                `  Then compile: arduino-cli compile --fqbn ${fqbn} ${outputDir}\n` +
+                '  Or use the Upload button which handles compilation + flashing automatically.\n';
+
             return {
                 success: true,
-                output: builtInResult.output +
-                    '\n\n✓ Transpiled to C++ successfully!\n' +
-                    `  Output: ${cppPath}\n` +
-                    `  Required libraries: ${transpileResult.requiredLibraries.join(', ') || 'none'}\n` +
-                    (transpileResult.errors.length > 0 ? `  Warnings: ${transpileResult.errors.join('; ')}\n` : '') +
-                    '\n⚠ Full Arduino compilation requires Arduino CLI or Python + airo_compiler module.\n' +
-                    '  To compile and flash manually:\n' +
-                    '  1. Install Arduino CLI: https://arduino.github.io/arduino-cli/latest/\n' +
-                    '  2. Install ESP32 board support: arduino-cli core install esp32:esp32\n' +
-                    `  3. Compile: arduino-cli compile --fqbn ${request.target === 'esp8266' ? 'esp8266:esp8266:generic' : 'esp32:esp32:esp32'} ${outputDir}\n` +
-                    '  4. Or use the Upload button which handles compilation + flashing automatically.\n',
+                output: combinedOutput,
                 generatedFiles,
             };
         } catch (err: unknown) {
@@ -204,8 +242,141 @@ export class AiroCompilerService {
     }
 
     /**
+     * Check if arduino-cli is available in the system PATH.
+     * Returns the command string if found, or undefined.
+     */
+    findArduinoCli(): string | undefined {
+        if (this.cachedArduinoCli !== undefined) {
+            return this.cachedArduinoCli;
+        }
+
+        try {
+            const isWin = process.platform === 'win32';
+            const checkCmd = isWin ? 'where' : 'which';
+            execSync(`${checkCmd} arduino-cli`, { stdio: 'ignore', timeout: 5000 });
+            this.cachedArduinoCli = 'arduino-cli';
+            return this.cachedArduinoCli;
+        } catch {
+            this.cachedArduinoCli = undefined;
+            return undefined;
+        }
+    }
+
+    /**
+     * Attempt to compile C++ → .bin firmware using Arduino CLI.
+     *
+     * @param outputDir  Directory containing the .ino sketch (also receives the .bin)
+     * @param sketchName Name of the sketch (without extension)
+     * @param fqbn       Fully Qualified Board Name, e.g. 'esp32:esp32:esp32'
+     * @returns CompileResult with binaryPath on success, or undefined if arduino-cli is not installed
+     */
+    async tryArduinoBuild(outputDir: string, sketchName: string, fqbn: string): Promise<CompileResult | undefined> {
+        const arduinoCli = this.findArduinoCli();
+        if (!arduinoCli) {
+            return undefined;
+        }
+
+        return new Promise(resolve => {
+            const args = [
+                'compile',
+                '--fqbn', fqbn,
+                '--output-dir', outputDir,
+                outputDir,
+            ];
+
+            const proc = spawn(arduinoCli, args, {
+                stdio: 'pipe',
+            });
+
+            let stdout = '';
+            let stderr = '';
+
+            proc.stdout.on('data', (data: Buffer) => {
+                stdout += data.toString();
+            });
+
+            proc.stderr.on('data', (data: Buffer) => {
+                stderr += data.toString();
+            });
+
+            proc.on('close', (code: number | null) => {
+                const expectedBinPath = path.join(outputDir, `${sketchName}.ino.bin`);
+                const binExists = fs.existsSync(expectedBinPath);
+
+                if (code === 0 && binExists) {
+                    resolve({
+                        success: true,
+                        output: `  Firmware binary: ${expectedBinPath}`,
+                        generatedFiles: [expectedBinPath],
+                        binaryPath: expectedBinPath,
+                    });
+                } else if (code === 0 && !binExists) {
+                    // Arduino CLI succeeded but we can't find the .bin — search for alternatives
+                    const altBinPath = this.findBinaryInDir(outputDir, sketchName);
+                    if (altBinPath) {
+                        resolve({
+                            success: true,
+                            output: `  Firmware binary: ${altBinPath}`,
+                            generatedFiles: [altBinPath],
+                            binaryPath: altBinPath,
+                        });
+                    } else {
+                        resolve({
+                            success: false,
+                            output: stdout,
+                            error: 'Arduino CLI reported success but no .bin file was found in the output directory.',
+                        });
+                    }
+                } else {
+                    resolve({
+                        success: false,
+                        output: stdout,
+                        error: stderr || `Arduino CLI exited with code ${code}`,
+                    });
+                }
+            });
+
+            proc.on('error', (err: Error) => {
+                // Should not happen since we already checked findArduinoCli(), but be safe
+                resolve(undefined);
+            });
+
+            // 120 second timeout — Arduino CLI builds can be slow on first run
+            setTimeout(() => {
+                proc.kill();
+                resolve({
+                    success: false,
+                    output: stdout,
+                    error: 'Arduino CLI build timed out after 120 seconds.',
+                });
+            }, 120_000);
+        });
+    }
+
+    /**
+     * Search for a .bin file in the output directory if the expected name is not found.
+     */
+    private findBinaryInDir(outputDir: string, sketchName: string): string | undefined {
+        try {
+            const entries = fs.readdirSync(outputDir);
+            // Look for any .bin file, preferring ones with the sketch name
+            const binFiles = entries.filter(e => e.endsWith('.bin'));
+            if (binFiles.length === 0) {
+                return undefined;
+            }
+            // Prefer the one with sketch name
+            const preferred = binFiles.find(b => b.includes(sketchName));
+            return path.join(outputDir, preferred || binFiles[0]);
+        } catch {
+            return undefined;
+        }
+    }
+
+    /**
      * Attempt to compile using the Python-based airo_compiler.
-     * Returns null if Python or the module is not available.
+     * Returns undefined if Python or the module is not available.
+     * Always attempted in the compile pipeline — undefined means Python is not installed,
+     * and the TypeScript transpiler output is used as the C++ source instead.
      */
     protected async tryPythonCompile(request: CompileRequest): Promise<CompileResult | undefined> {
         return new Promise(resolve => {

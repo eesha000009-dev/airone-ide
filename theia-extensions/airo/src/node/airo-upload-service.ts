@@ -7,11 +7,12 @@
  * SPDX-License-Identifier: MIT
  ********************************************************************************/
 
-import { injectable } from '@theia/core/shared/inversify';
+import { injectable, inject } from '@theia/core/shared/inversify';
 import { spawn, execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import { SerialPortInfo, FlashRequest, FlashResult } from '../common/airo-protocol';
+import { AiroCompilerService } from './airo-compiler-service';
 
 // Re-export for convenience so consumers can import from either location
 export { FlashRequest, FlashResult } from '../common/airo-protocol';
@@ -71,6 +72,9 @@ interface SerialPortModule {
  */
 @injectable()
 export class AiroUploadService {
+
+    @inject(AiroCompilerService)
+    protected readonly compilerService!: AiroCompilerService;
 
     private serialportAvailable = false;
     private cachedEsptoolPath: string | undefined;
@@ -356,6 +360,104 @@ export class AiroUploadService {
 
         // ── Execute ───────────────────────────────────────────────────────
         return this.executeFlash(cmd, args, portPath, onProgress);
+    }
+
+    // ─── Full Pipeline: Compile + Flash ──────────────────────────────────
+
+    /**
+     * Compile an .airo file and flash the resulting firmware to an ESP32 board.
+     *
+     * This method handles the full TRUSTED pipeline on the backend:
+     * 1. Compile the .airo file → C++ (via AiroCompilerService)
+     * 2. Build C++ → .bin (via Arduino CLI, if available)
+     * 3. Flash .bin → ESP32 (via esptool)
+     *
+     * @param airoFilePath  Absolute path to the .airo file (or file:// URI)
+     * @param chipType      Target chip: esp32, esp32s2, esp32s3, esp32c3, esp8266
+     * @param portPath      Optional serial port path. Auto-detected if omitted.
+     */
+    async flashAiroFile(airoFilePath: string, chipType: string, portPath?: string): Promise<FlashResult> {
+        // ── Resolve filesystem path ───────────────────────────────────
+        const fsPath = airoFilePath.startsWith('file://')
+            ? this.fsPathFromUri(airoFilePath)
+            : airoFilePath;
+
+        if (!fs.existsSync(fsPath)) {
+            return {
+                success: false,
+                output: '',
+                error: `File not found: ${fsPath}`,
+            };
+        }
+
+        const sketchName = path.basename(fsPath, '.airo');
+        const buildDir = path.join(path.dirname(fsPath), 'build');
+
+        // ── Step 1: Compile .airo → C++ → .bin ────────────────────────
+        const fqbn = chipType === 'esp8266'
+            ? 'esp8266:esp8266:generic'
+            : 'esp32:esp32:esp32';
+
+        const compileResult = await this.compilerService.compile({
+            filePath: fsPath,
+            target: chipType,
+            outputDir: buildDir,
+        });
+
+        if (!compileResult.success) {
+            return {
+                success: false,
+                output: compileResult.output,
+                error: compileResult.error || 'Compilation failed',
+            };
+        }
+
+        // ── Step 2: Locate the .bin firmware ──────────────────────────
+        let binaryPath = compileResult.binaryPath;
+
+        if (!binaryPath) {
+            // The compile result didn't include binaryPath — check the build directory
+            const expectedBin = path.join(buildDir, `${sketchName}.ino.bin`);
+            if (fs.existsSync(expectedBin)) {
+                binaryPath = expectedBin;
+            } else {
+                // Try Arduino CLI build directly if it wasn't attempted during compile
+                const arduinoResult = await this.compilerService.tryArduinoBuild(buildDir, sketchName, fqbn);
+                if (arduinoResult && arduinoResult.success && arduinoResult.binaryPath) {
+                    binaryPath = arduinoResult.binaryPath;
+                } else {
+                    const arduinoAvailable = this.compilerService.findArduinoCli() !== undefined;
+                    if (arduinoAvailable) {
+                        return {
+                            success: false,
+                            output: compileResult.output,
+                            error: 'Firmware binary (.bin) not found. Arduino CLI build failed. ' +
+                                'Check the compiler output for errors. Ensure ESP32 board support is installed: ' +
+                                'arduino-cli core install esp32:esp32',
+                        };
+                    }
+                    return {
+                        success: false,
+                        output: compileResult.output,
+                        error: 'Firmware binary (.bin) not found. Install Arduino CLI for full compilation: ' +
+                            'https://arduino.github.io/arduino-cli/latest/',
+                    };
+                }
+            }
+        }
+
+        // ── Step 3: Flash the firmware ────────────────────────────────
+        const flashRequest: FlashRequest = {
+            binaryPath,
+            chipType,
+            baudRate: 460800,
+        };
+
+        if (portPath) {
+            flashRequest.portPath = portPath;
+        }
+
+        return this.flash(flashRequest);
     }
 
     // ─── Private Helpers ─────────────────────────────────────────────────
@@ -655,6 +757,18 @@ export class AiroUploadService {
                 resolve(false);
             }, 5000);
         });
+    }
+
+    /**
+     * Convert a file:// URI to a filesystem path.
+     */
+    private fsPathFromUri(uri: string): string {
+        const parsed = new URL(uri);
+        let filePath = decodeURIComponent(parsed.pathname);
+        if (process.platform === 'win32' && filePath.match(/^\/[A-Za-z]:/)) {
+            filePath = filePath.substring(1);
+        }
+        return filePath;
     }
 
     /**

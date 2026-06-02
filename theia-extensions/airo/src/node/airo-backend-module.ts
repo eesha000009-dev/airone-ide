@@ -33,7 +33,7 @@ export default new ContainerModule(bind => {
     // .airo → C++ transpiler (always available, no external dependencies)
     bind(AiroTranspiler).toSelf().inSingletonScope();
 
-    // Main compiler service (uses built-in first, then transpiler, then Python if available)
+    // Main compiler service (4-step TRUSTED pipeline: syntax check → transpile → Python → Arduino CLI)
     bind(AiroCompilerService).toSelf().inSingletonScope();
 
     bind(AiroSerialService).toSelf().inSingletonScope();

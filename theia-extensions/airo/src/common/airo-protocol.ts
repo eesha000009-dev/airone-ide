@@ -27,6 +27,8 @@ export interface CompileResult {
     output: string;
     error?: string;
     generatedFiles?: string[];
+    /** Path to the compiled .bin firmware file (produced by Arduino CLI) */
+    binaryPath?: string;
 }
 
 export interface VerifyResult {
@@ -132,6 +134,11 @@ export interface AiroUploadClient {
     flash(request: FlashRequest): Promise<FlashResult>;
     isEsptoolAvailable(): Promise<boolean>;
     installEsptool(): Promise<boolean>;
+    /**
+     * Compile an .airo file and flash the resulting firmware to an ESP32 board.
+     * Handles the full pipeline: compile → Arduino CLI build (if available) → esptool flash.
+     */
+    flashAiroFile(airoFilePath: string, chipType: string, portPath?: string): Promise<FlashResult>;
 }
 
 // ─── DI Symbols ──────────────────────────────────────────────────────────────

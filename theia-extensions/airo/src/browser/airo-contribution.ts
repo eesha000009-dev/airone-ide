@@ -353,12 +353,14 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     /**
      * Upload the compiled sketch to the ESP32 board.
      *
-     * Flow:
-     * 1. Verify/compile the .airo file → generates C++ code
+     * Uses the TRUSTED pipeline via `flashAiroFile` on the backend:
+     * 1. Compile .airo → C++ → .bin (via AiroCompilerService + Arduino CLI)
      * 2. Auto-detect the ESP32 serial port (or use selected port)
-     * 3. Flash the firmware using esptool.py
+     * 3. Check/install esptool
+     * 4. Flash the .bin firmware using esptool.py
      *
-     * If esptool is not installed, offer to install it via pip.
+     * The backend resolves the binary path correctly — no more guessing
+     * from the URI path.
      */
     protected async upload(): Promise<void> {
         const uri = this.getActiveAiroUri();
@@ -376,38 +378,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         const chipType = this._selectedBoard ? this._selectedBoard.platform : 'esp32';
         channel.append(`Board: ${boardLabel} (${chipType})\n`);
 
-        // ─── Step 1: Compile the sketch ──────────────────────────────
-        channel.append('Step 1: Compiling sketch...\n');
-
-        try {
-            const result = await this.sketchService.verify(uri.toString());
-
-            if (!result.success) {
-                channel.append('✗ Compilation failed — cannot upload.\n');
-                if (result.error) {
-                    channel.append(`Error: ${result.error}\n`);
-                }
-                if (result.errors) {
-                    for (const err of result.errors) {
-                        const location = err.line > 0 ? `Line ${err.line}, Col ${err.column}: ` : '';
-                        channel.append(`  ${err.severity.toUpperCase()}: ${location}${err.message}\n`);
-                    }
-                }
-                this.messageService.error('Compilation failed — fix errors before uploading.');
-                this._compiling = false;
-                return;
-            }
-
-            channel.append('✓ Compilation successful!\n');
-        } catch (err: any) {
-            channel.append(`✗ Compilation error: ${err.message}\n`);
-            this.messageService.error('Compilation error: ' + err.message);
-            this._compiling = false;
-            return;
-        }
-
-        // ─── Step 2: Detect port ────────────────────────────────────
-        channel.append('\nStep 2: Detecting serial port...\n');
+        // ─── Step 1: Detect port ────────────────────────────────────
+        channel.append('Step 1: Detecting serial port...\n');
 
         let portPath = this._selectedPort?.path;
         if (!portPath) {
@@ -445,8 +417,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             channel.append(`Using selected port: ${portPath}\n`);
         }
 
-        // ─── Step 3: Check esptool ──────────────────────────────────
-        channel.append('\nStep 3: Checking esptool...\n');
+        // ─── Step 2: Check esptool ──────────────────────────────────
+        channel.append('\nStep 2: Checking esptool...\n');
 
         let esptoolAvailable = false;
         try {
@@ -481,25 +453,18 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             channel.append('✓ esptool found.\n');
         }
 
-        // ─── Step 4: Flash firmware ─────────────────────────────────
-        channel.append(`\nStep 4: Flashing to ${portPath}...\n`);
-        channel.append(`  Chip: ${chipType}\n`);
-        channel.append('  Starting flash operation...\n\n');
+        // ─── Step 3: Compile + Flash via backend ────────────────────
+        // The backend's flashAiroFile handles the full TRUSTED pipeline:
+        //   .airo → C++ (transpiler) → .bin (Arduino CLI) → flash (esptool)
+        channel.append('\nStep 3: Compiling and flashing...\n');
+        channel.append('  Running TRUSTED pipeline: .airo → C++ → .bin → flash\n\n');
 
         try {
-            // Build the firmware path from the compiled output
-            const uriStr = uri.toString();
-            const fsPath = uri.path.toString();
-
-            // The compiler service writes the C++ to a build/ directory.
-            // For the upload, we need to use esptool to flash the compiled binary.
-            // The actual binary compilation happens on the backend.
-            const flashResult = await this.uploadService.flash({
-                binaryPath: fsPath.replace(/\.airo$/, '.bin'),
-                portPath,
+            const flashResult = await this.uploadService.flashAiroFile(
+                uri.toString(),
                 chipType,
-                baudRate: 460800,
-            });
+                portPath
+            );
 
             if (flashResult.success) {
                 channel.append(flashResult.output + '\n');
