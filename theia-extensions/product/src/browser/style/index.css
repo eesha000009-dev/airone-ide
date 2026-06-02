@@ -186,6 +186,38 @@ div[data-area="left"] {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
+   HIDE UNWANTED FILE MENU ITEMS
+   Hide Theia's built-in "New File" and other items we don't want.
+   Only "New Sketch" and "Examples" should appear in the File menu.
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* Hide "New File" command in all menus (Theia built-in) */
+[data-command="core.newFile"],
+[data-command="core:newFile"],
+.lm-Menu-item[data-command="core.newFile"],
+.lm-Menu-item[data-command="core:newFile"],
+.p-Menu-item[data-command="core.newFile"],
+.p-Menu-item[data-command="core:newFile"] {
+    display: none !important;
+}
+
+/* Hide "New Folder" command in all menus */
+[data-command="core.newFolder"],
+[data-command="core:newFolder"],
+.lm-Menu-item[data-command="core.newFolder"],
+.p-Menu-item[data-command="core.newFolder"] {
+    display: none !important;
+}
+
+/* Hide "Open..." (Theia built-in file open) */
+[data-command="core.openFile"],
+[data-command="core:openFile"],
+.lm-Menu-item[data-command="core.openFile"],
+.p-Menu-item[data-command="core.openFile"] {
+    display: none !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
    ENSURE THE TOP PANEL AND MENU BAR CONTAINER ARE VISIBLE
    ═══════════════════════════════════════════════════════════════════════════════
    The top panel is a flex column: menu bar on top, secondary toolbar below.

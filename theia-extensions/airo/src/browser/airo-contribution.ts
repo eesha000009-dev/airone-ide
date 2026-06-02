@@ -56,12 +56,6 @@ export const AIRO_COMPILE_COMMAND: Command = {
     category: 'Airone'
 };
 
-export const AIRO_VERIFY_COMMAND: Command = {
-    id: 'airo.verify',
-    label: 'Verify',
-    category: 'Airone'
-};
-
 export const AIRO_UPLOAD_COMMAND: Command = {
     id: 'airo.upload',
     label: 'Upload',
@@ -530,10 +524,6 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             execute: () => this.compile(),
             isEnabled: () => !this._compiling
         });
-        commands.registerCommand(AIRO_VERIFY_COMMAND, {
-            execute: () => this.verify(),
-            isEnabled: () => !this._compiling
-        });
         commands.registerCommand(AIRO_UPLOAD_COMMAND, {
             execute: () => this.upload(),
             isEnabled: () => !this._compiling
@@ -726,16 +716,12 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
     registerKeybindings(keybindings: KeybindingRegistry): void {
         keybindings.registerKeybinding({
-            command: AIRO_VERIFY_COMMAND.id,
+            command: AIRO_COMPILE_COMMAND.id,
             keybinding: 'ctrl+r'
         });
         keybindings.registerKeybinding({
             command: AIRO_UPLOAD_COMMAND.id,
             keybinding: 'ctrl+u'
-        });
-        keybindings.registerKeybinding({
-            command: AIRO_COMPILE_COMMAND.id,
-            keybinding: 'ctrl+shift+r'
         });
         keybindings.registerKeybinding({
             command: AIRO_SERIAL_MONITOR_COMMAND.id,

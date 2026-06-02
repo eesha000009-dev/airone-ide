@@ -15,7 +15,7 @@ import { ApplicationShell } from '@theia/core/lib/browser/shell';
 
 /**
  * Toolbar contribution that creates a SEPARATE toolbar row below the menu bar
- * for Compile, Verify, Upload, and Serial Monitor buttons.
+ * for New Sketch, Compile, Upload, and Serial Monitor buttons.
  *
  * Auto-update: Updates are checked and downloaded automatically. When ready,
  * a "Restart to Update" button appears in the toolbar.
@@ -179,12 +179,12 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
 
     // ─── SVG Icons ────────────────────────────────────────────────────────────
 
-    protected get compileIconSvg(): string {
-        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+    protected get newSketchIconSvg(): string {
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>`;
     }
 
-    protected get verifyIconSvg(): string {
-        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`;
+    protected get compileIconSvg(): string {
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
     }
 
     protected get uploadIconSvg(): string {
@@ -206,9 +206,18 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
         toolbarRow.id = 'airo-secondary-toolbar';
         toolbarRow.className = 'airo-secondary-toolbar';
 
-        // Left group: Compile, Verify, Upload
+        // Left group: New Sketch, Compile, Upload
         const leftGroup = document.createElement('div');
         leftGroup.className = 'airo-toolbar-left';
+
+        leftGroup.appendChild(this.createButton(
+            'airo-new-sketch-btn',
+            this.newSketchIconSvg,
+            'New Sketch',
+            '#8e44ad',
+            '#7d3c98',
+            () => this.executeCommand('airo.newSketch')
+        ));
 
         leftGroup.appendChild(this.createButton(
             'airo-compile-btn',
@@ -217,15 +226,6 @@ export class AiroToolbarContribution implements FrontendApplicationContribution 
             '#27ae60',
             '#219a52',
             () => this.executeCommand('airo.compile')
-        ));
-
-        leftGroup.appendChild(this.createButton(
-            'airo-verify-btn',
-            this.verifyIconSvg,
-            'Verify',
-            '#2980b9',
-            '#2471a3',
-            () => this.executeCommand('airo.verify')
         ));
 
         leftGroup.appendChild(this.createButton(

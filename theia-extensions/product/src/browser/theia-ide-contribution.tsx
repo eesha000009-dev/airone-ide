@@ -121,6 +121,71 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
 
         // 6. Make logo bigger
         this.enlargeLogo();
+
+        // 7. Hide unwanted File submenu items (New File, New Folder, etc.)
+        this.hideUnwantedFileMenuItems();
+    }
+
+    /**
+     * Hide Theia's built-in "New File", "New Folder", and other unwanted items
+     * from the File dropdown menu. We want only "New Sketch" and "Examples".
+     */
+    protected hideUnwantedFileMenuItems(): void {
+        // List of command IDs to hide from menus
+        const hiddenCommands = [
+            'core.newFile',
+            'core:newFile',
+            'core.newFolder',
+            'core:newFolder',
+            'core.openFile',
+            'core:openFile',
+            'workspace:newFile',
+            'file.newFile',
+        ];
+
+        // Selectors for menu items in dropdown menus (both Lumino and PhosphorJS)
+        const menuItemSelectors = [
+            '.lm-Menu-item',
+            '.p-Menu-item',
+            '.theia-Menu-item',
+        ];
+
+        for (const sel of menuItemSelectors) {
+            try {
+                document.querySelectorAll<HTMLElement>(sel).forEach(item => {
+                    const dataCommand = item.getAttribute('data-command') || '';
+                    if (hiddenCommands.some(cmd => dataCommand === cmd)) {
+                        item.style.display = 'none';
+                        item.style.height = '0';
+                        item.style.padding = '0';
+                        item.style.margin = '0';
+                        item.style.overflow = 'hidden';
+                        item.style.minHeight = '0';
+                        item.style.border = 'none';
+                    }
+                });
+            } catch { /* invalid selector */ }
+        }
+
+        // Also hide by label text in case data-command is not set
+        const hiddenLabels = ['New File', 'New Folder', 'Open File…', 'Open File...'];
+        for (const sel of menuItemSelectors) {
+            try {
+                document.querySelectorAll<HTMLElement>(sel).forEach(item => {
+                    const labelEl = item.querySelector('.lm-Menu-itemLabel, .p-Menu-itemLabel, .theia-Menu-itemLabel');
+                    const text = labelEl?.textContent?.trim() || item.textContent?.trim() || '';
+                    if (hiddenLabels.some(label => text === label)) {
+                        item.style.display = 'none';
+                        item.style.height = '0';
+                        item.style.padding = '0';
+                        item.style.margin = '0';
+                        item.style.overflow = 'hidden';
+                        item.style.minHeight = '0';
+                        item.style.border = 'none';
+                    }
+                });
+            } catch { /* invalid selector */ }
+        }
     }
 
     /**
