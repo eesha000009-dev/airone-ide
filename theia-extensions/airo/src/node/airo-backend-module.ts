@@ -11,13 +11,17 @@ import { ContainerModule } from '@theia/core/shared/inversify';
 import { ConnectionHandler, JsonRpcConnectionHandler } from '@theia/core/lib/common/messaging';
 import { AiroCompilerService } from './airo-compiler-service';
 import { AiroBuiltInCompiler } from './airo-built-in-compiler';
+import { AiroTranspiler } from './airo-transpiler';
 import { AiroSerialService } from './airo-serial-service';
 import { AiroSketchService } from './airo-sketch-service';
+import { AiroUploadService } from './airo-upload-service';
 import {
     AiroSketchClient,
     AiroSerialClient,
+    AiroUploadClient,
     AIRO_SKETCH_PATH,
-    AIRO_SERIAL_PATH
+    AIRO_SERIAL_PATH,
+    AIRO_UPLOAD_PATH
 } from '../common/airo-protocol';
 
 export default new ContainerModule(bind => {
@@ -26,11 +30,15 @@ export default new ContainerModule(bind => {
     // Built-in TypeScript compiler (always available, no Python needed)
     bind(AiroBuiltInCompiler).toSelf().inSingletonScope();
 
-    // Main compiler service (uses built-in first, then Python if available)
+    // .airo → C++ transpiler (always available, no external dependencies)
+    bind(AiroTranspiler).toSelf().inSingletonScope();
+
+    // Main compiler service (uses built-in first, then transpiler, then Python if available)
     bind(AiroCompilerService).toSelf().inSingletonScope();
 
     bind(AiroSerialService).toSelf().inSingletonScope();
     bind(AiroSketchService).toSelf().inSingletonScope();
+    bind(AiroUploadService).toSelf().inSingletonScope();
 
     // ─── RPC Connection Handlers ─────────────────────────────────────────
 
@@ -45,6 +53,13 @@ export default new ContainerModule(bind => {
         new JsonRpcConnectionHandler<AiroSerialClient>(
             AIRO_SERIAL_PATH,
             () => ctx.container.get<AiroSerialService>(AiroSerialService)
+        )
+    ).inSingletonScope();
+
+    bind(ConnectionHandler).toDynamicValue(ctx =>
+        new JsonRpcConnectionHandler<AiroUploadClient>(
+            AIRO_UPLOAD_PATH,
+            () => ctx.container.get<AiroUploadService>(AiroUploadService)
         )
     ).inSingletonScope();
 });

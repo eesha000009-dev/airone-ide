@@ -394,3 +394,75 @@ button[aria-label="Forward"],
 .theia-TreeNodeContent[title=".airone-ide"] {
     display: none !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   7. HIDE UNWANTED DROPDOWN MENU ITEMS IN FILE MENU
+   ═══════════════════════════════════════════════════════════════════════════════
+   Theia's dropdown menus are rendered dynamically with data-command attributes.
+   We hide unwanted items (New File, New Folder, Open File, Open Folder, etc.)
+   using CSS. This is supplemented by JavaScript DOM-based hiding in
+   AiroContribution.onStart(). */
+
+/* Hide "New File" / "New Text File" dropdown items */
+.lm-Menu-item[data-command="workbench.action.files.newUntitledFile"],
+.p-Menu-item[data-command="workbench.action.files.newUntitledFile"],
+.lm-Menu-item[data-command="workbench.action.files.newFile"],
+.p-Menu-item[data-command="workbench.action.files.newFile"],
+.lm-Menu-item[data-command="file.newFile"],
+.p-Menu-item[data-command="file.newFile"],
+.lm-Menu-item[data-command="file.newFolder"],
+.p-Menu-item[data-command="file.newFolder"] {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    border: none !important;
+}
+
+/* Hide "Open File" / "Open Folder" dropdown items */
+.lm-Menu-item[data-command="workspace:openFile"],
+.p-Menu-item[data-command="workspace:openFile"],
+.lm-Menu-item[data-command="workspace:openFolder"],
+.p-Menu-item[data-command="workspace:openFolder"],
+.lm-Menu-item[data-command="workspace:openWorkspace"],
+.p-Menu-item[data-command="workspace:openWorkspace"],
+.lm-Menu-item[data-command="workspace:openRecent"],
+.p-Menu-item[data-command="workspace:openRecent"] {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    border: none !important;
+}
+
+/* Hide "New Window" dropdown item */
+.lm-Menu-item[data-command="workbench.action.newWindow"],
+.p-Menu-item[data-command="workbench.action.newWindow"] {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    border: none !important;
+}
+
+/* Hide "Add Folder to Workspace" */
+.lm-Menu-item[data-command="workspace:addFolder"],
+.p-Menu-item[data-command="workspace:addFolder"],
+.lm-Menu-item[data-command="workspace:removeFolder"],
+.p-Menu-item[data-command="workspace:removeFolder"],
+.lm-Menu-item[data-command="workspace:saveAs"],
+.p-Menu-item[data-command="workspace:saveAs"] {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    border: none !important;
+}

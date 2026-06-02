@@ -23,10 +23,13 @@ import { LanguageGrammarDefinitionContribution } from '@theia/monaco/lib/browser
 import {
     AiroSketchService,
     AiroSerialService,
+    AiroUploadService,
     AIRO_SKETCH_PATH,
     AIRO_SERIAL_PATH,
+    AIRO_UPLOAD_PATH,
     AiroSketchClient,
-    AiroSerialClient
+    AiroSerialClient,
+    AiroUploadClient
 } from '../common/airo-protocol';
 
 export default new ContainerModule((bind, _unbind, isBound, rebind) => {
@@ -42,10 +45,15 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
         return connectionProvider.createProxy<AiroSerialClient>(AIRO_SERIAL_PATH);
     }).inSingletonScope();
 
+    bind(AiroUploadService).toDynamicValue(ctx => {
+        const connectionProvider = ctx.container.get<WebSocketConnectionProvider>(WebSocketConnectionProvider);
+        return connectionProvider.createProxy<AiroUploadClient>(AIRO_UPLOAD_PATH);
+    }).inSingletonScope();
+
     // ─── Commands, Menus, Keybindings ────────────────────────────────────
 
     bind(AiroContribution).toSelf().inSingletonScope();
-    [CommandContribution, MenuContribution, KeybindingContribution].forEach(serviceIdentifier =>
+    [CommandContribution, MenuContribution, KeybindingContribution, FrontendApplicationContribution].forEach(serviceIdentifier =>
         bind(serviceIdentifier).toService(AiroContribution)
     );
 

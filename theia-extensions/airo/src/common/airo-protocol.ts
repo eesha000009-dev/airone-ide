@@ -10,6 +10,7 @@
 export const AIRO_COMPILER_PATH = '/services/airo-compiler';
 export const AIRO_SERIAL_PATH = '/services/airo-serial';
 export const AIRO_SKETCH_PATH = '/services/airo-sketch';
+export const AIRO_UPLOAD_PATH = '/services/airo-upload';
 
 // ─── Compiler Protocol ───────────────────────────────────────────────────────
 
@@ -104,8 +105,38 @@ export interface AiroSketchClient {
     getDefaultBoard(): Promise<BoardInfo>;
 }
 
+// ─── Upload Protocol ─────────────────────────────────────────────────────────
+
+export interface FlashRequest {
+    /** Absolute path to the .bin firmware file */
+    binaryPath: string;
+    /** Serial port path (e.g. COM3, /dev/ttyUSB0). Auto-detected if omitted. */
+    portPath?: string;
+    /** Chip family: esp32, esp32s2, esp32s3, esp32c3, esp8266 */
+    chipType: string;
+    /** Baud rate for the flash operation. Default: 460800 */
+    baudRate?: number;
+    /** Flash offset override. Default: auto-detect based on chipType. */
+    flashOffset?: string;
+}
+
+export interface FlashResult {
+    success: boolean;
+    output: string;
+    error?: string;
+    portUsed?: string;
+}
+
+export interface AiroUploadClient {
+    detectEspPort(): Promise<SerialPortInfo | undefined>;
+    flash(request: FlashRequest): Promise<FlashResult>;
+    isEsptoolAvailable(): Promise<boolean>;
+    installEsptool(): Promise<boolean>;
+}
+
 // ─── DI Symbols ──────────────────────────────────────────────────────────────
 
 export const AiroCompilerService = Symbol('AiroCompilerService');
 export const AiroSerialService = Symbol('AiroSerialService');
 export const AiroSketchService = Symbol('AiroSketchService');
+export const AiroUploadService = Symbol('AiroUploadService');

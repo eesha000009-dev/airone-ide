@@ -10,30 +10,38 @@
 import { injectable, inject } from '@theia/core/shared/inversify';
 import { spawn } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
 import { CompileRequest, CompileResult } from '../common/airo-protocol';
 import { AiroBuiltInCompiler } from './airo-built-in-compiler';
+import { AiroTranspiler } from './airo-transpiler';
 
 /**
- * Compiler service that provides two tiers of compilation:
+ * Compiler service that provides three tiers of compilation:
  *
  * 1. **Built-in (TypeScript)**: Fast, no-dependency syntax checking.
  *    This runs immediately in the Node.js process and provides
  *    structural/syntactic validation of .airo files.
  *
- * 2. **Python (airo_compiler)**: Full transpilation to C++ for ESP32.
+ * 2. **Transpiler (TypeScript)**: Converts .airo code to C++ Arduino/ESP32 code.
+ *    Generates proper setup(), loop(), WiFi, WebSocket, and sensor/actuator code.
+ *    Uses the brain_url from the .airo file for WebSocket communication.
+ *    No hardcoding — everything comes from the .airo source.
+ *
+ * 3. **Python (airo_compiler)**: Full compilation pipeline using Python.
  *    This is used when Python and airo_compiler are available.
  *    Falls back gracefully when they are not installed.
  *
- * The bundled airo_compiler module is looked for in several locations:
- * - Next to the app resources (in packaged app)
- * - In the airo-compiler directory at the project root (in dev mode)
- * - As a system-installed Python module (pip install airo-compiler)
+ * The compiled C++ code can then be built using Arduino CLI and flashed
+ * to the ESP32 using esptool.py.
  */
 @injectable()
 export class AiroCompilerService {
 
     @inject(AiroBuiltInCompiler)
     protected readonly builtInCompiler!: AiroBuiltInCompiler;
+
+    @inject(AiroTranspiler)
+    protected readonly transpiler!: AiroTranspiler;
 
     private pythonPath: string;
     private compilerDir: string;
@@ -78,14 +86,14 @@ export class AiroCompilerService {
 
     /**
      * Compile a .airo file using the built-in TypeScript verifier first,
-     * then attempt Python-based full compilation if requested.
+     * then transpile to C++, then attempt Python-based full compilation if requested.
      */
     async compile(request: CompileRequest): Promise<CompileResult> {
         // ─── Step 1: Built-in syntax check (always runs, no dependencies) ──
         const builtInResult = await this.builtInCompiler.verify(request.filePath);
 
         if (!builtInResult.success) {
-            // Built-in check found errors — no need to try Python compilation
+            // Built-in check found errors — no need to try transpilation
             return {
                 success: false,
                 output: builtInResult.output,
@@ -93,23 +101,99 @@ export class AiroCompilerService {
             };
         }
 
-        // ─── Step 2: Try Python-based full compilation ────────────────────
-        const pythonResult = await this.tryPythonCompile(request);
+        // ─── Step 2: Transpile .airo → C++ ──────────────────────────────
+        let airoCode: string;
+        const fsPath = request.filePath.startsWith('file://')
+            ? this.fsPathFromUri(request.filePath)
+            : request.filePath;
 
-        if (pythonResult) {
-            return pythonResult;
+        try {
+            airoCode = fs.readFileSync(fsPath, { encoding: 'utf8' });
+        } catch (err: unknown) {
+            return {
+                success: false,
+                output: '',
+                error: `Cannot read .airo file: ${err instanceof Error ? err.message : String(err)}`,
+            };
         }
 
-        // ─── Step 3: Python not available — return built-in result ─────────
-        // The built-in check passed, so we report success for syntax validation.
-        // Note: Full transpilation to C++ requires Python + airo_compiler.
-        return {
-            success: true,
-            output: builtInResult.output +
-                '\n\n⚠ Full compilation requires Python + airo_compiler module.\n' +
-                'Install with: pip install airo-compiler\n' +
-                'Syntax check passed — code structure is valid.',
-        };
+        const sketchName = path.basename(fsPath, '.airo');
+        const transpileResult = this.transpiler.transpile(airoCode, sketchName);
+
+        // Write the generated C++ code to the output directory
+        const outputDir = request.outputDir || path.join(path.dirname(fsPath), 'build');
+        try {
+            if (!fs.existsSync(outputDir)) {
+                fs.mkdirSync(outputDir, { recursive: true });
+            }
+
+            const cppPath = path.join(outputDir, `${sketchName}.ino.cpp`);
+            fs.writeFileSync(cppPath, transpileResult.cppCode, { encoding: 'utf8' });
+
+            // Also write a minimal Arduino sketch .ino file
+            const inoPath = path.join(outputDir, `${sketchName}.ino`);
+            if (!fs.existsSync(inoPath)) {
+                fs.writeFileSync(inoPath, `#include "${sketchName}.ino.cpp"\n`, { encoding: 'utf8' });
+            }
+
+            const generatedFiles = [cppPath, inoPath];
+
+            // ─── Step 3: Try Python-based full compilation ─────────────
+            const pythonResult = await this.tryPythonCompile(request);
+
+            if (pythonResult) {
+                // Python compilation succeeded or failed with specific errors
+                if (pythonResult.success) {
+                    return {
+                        success: true,
+                        output: builtInResult.output + '\n' +
+                            `✓ Transpiled to C++: ${cppPath}\n` +
+                            `  Required libraries: ${transpileResult.requiredLibraries.join(', ') || 'none'}\n` +
+                            (transpileResult.errors.length > 0 ? `  Warnings: ${transpileResult.errors.join('; ')}\n` : '') +
+                            pythonResult.output,
+                        generatedFiles: [...generatedFiles, ...(pythonResult.generatedFiles || [])],
+                    };
+                }
+                // Python compilation failed but transpilation succeeded
+                // Return transpilation result + Python errors
+                return {
+                    success: true, // C++ was generated even if Python build failed
+                    output: builtInResult.output + '\n' +
+                        `✓ Transpiled to C++: ${cppPath}\n` +
+                        `  Required libraries: ${transpileResult.requiredLibraries.join(', ') || 'none'}\n` +
+                        (transpileResult.errors.length > 0 ? `  Warnings: ${transpileResult.errors.join('; ')}\n` : '') +
+                        '\n⚠ Arduino compilation requires Arduino CLI or Python airo_compiler.\n' +
+                        `  Install Arduino CLI: https://arduino.github.io/arduino-cli/latest/\n` +
+                        `  Or install airo_compiler: pip install airo-compiler\n` +
+                        `  The C++ file is ready at: ${cppPath}\n`,
+                    generatedFiles,
+                };
+            }
+
+            // ─── Step 4: Python not available — return transpilation result ──
+            return {
+                success: true,
+                output: builtInResult.output +
+                    '\n\n✓ Transpiled to C++ successfully!\n' +
+                    `  Output: ${cppPath}\n` +
+                    `  Required libraries: ${transpileResult.requiredLibraries.join(', ') || 'none'}\n` +
+                    (transpileResult.errors.length > 0 ? `  Warnings: ${transpileResult.errors.join('; ')}\n` : '') +
+                    '\n⚠ Full Arduino compilation requires Arduino CLI or Python + airo_compiler module.\n' +
+                    '  To compile and flash manually:\n' +
+                    '  1. Install Arduino CLI: https://arduino.github.io/arduino-cli/latest/\n' +
+                    '  2. Install ESP32 board support: arduino-cli core install esp32:esp32\n' +
+                    `  3. Compile: arduino-cli compile --fqbn ${request.target === 'esp8266' ? 'esp8266:esp8266:generic' : 'esp32:esp32:esp32'} ${outputDir}\n` +
+                    '  4. Or use the Upload button which handles compilation + flashing automatically.\n',
+                generatedFiles,
+            };
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            return {
+                success: false,
+                output: '',
+                error: `Failed to write compiled output: ${message}`,
+            };
+        }
     }
 
     /**
@@ -229,5 +313,14 @@ loop {
 
 }
 `;
+    }
+
+    private fsPathFromUri(uri: string): string {
+        const parsed = new URL(uri);
+        let filePath = decodeURIComponent(parsed.pathname);
+        if (process.platform === 'win32' && filePath.match(/^\/[A-Za-z]:/)) {
+            filePath = filePath.substring(1);
+        }
+        return filePath;
     }
 }

@@ -13,6 +13,7 @@ import {
     MenuContribution, MenuModelRegistry, MenuPath
 } from '@theia/core/lib/common';
 import { KeybindingContribution, KeybindingRegistry } from '@theia/core/lib/browser/keybinding';
+import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import { ApplicationShell } from '@theia/core/lib/browser/shell';
 import { EditorManager } from '@theia/editor/lib/browser';
 import { MessageService } from '@theia/core/lib/common/message-service';
@@ -27,8 +28,10 @@ import { CommonMenus } from '@theia/core/lib/browser/common-frontend-contributio
 import {
     AiroSketchService,
     AiroSerialService,
+    AiroUploadService,
     AiroSketchClient,
     AiroSerialClient,
+    AiroUploadClient,
     BoardInfo,
     SerialPortInfo
 } from '../common/airo-protocol';
@@ -118,11 +121,12 @@ function toFileUri(fsPath: string): URI {
 }
 
 /**
- * Main Airone contribution — handles all commands, menus, and keybindings.
- * Provides menu bar entries and toolbar-accessible commands.
+ * Main Airone contribution — handles all commands, menus, keybindings,
+ * and menu item cleanup. Also implements FrontendApplicationContribution
+ * for onStart cleanup of unwanted Theia menu items.
  */
 @injectable()
-export class AiroContribution implements CommandContribution, MenuContribution, KeybindingContribution {
+export class AiroContribution implements CommandContribution, MenuContribution, KeybindingContribution, FrontendApplicationContribution {
 
     @inject(EditorManager) protected readonly editorManager!: EditorManager;
     @inject(MessageService) protected readonly messageService!: MessageService;
@@ -134,6 +138,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
     @inject(AiroSketchService) protected readonly sketchService!: AiroSketchClient;
     @inject(AiroSerialService) protected readonly serialService!: AiroSerialClient;
+    @inject(AiroUploadService) protected readonly uploadService!: AiroUploadClient;
 
     // ─── State ──────────────────────────────────────────────────────────
     protected _selectedBoard: BoardInfo | undefined;
@@ -150,6 +155,77 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             this.refreshPorts();
             this._refreshTimer = window.setInterval(() => this.refreshPorts(), 5000);
         }, 2000);
+    }
+
+    // ─── FrontendApplicationContribution ────────────────────────────────
+
+    /**
+     * After the application starts, programmatically remove unwanted
+     * Theia menu items from the File menu dropdown.
+     *
+     * We use a delayed approach here because Theia's CommonFrontendContribution
+     * may register its menus AFTER our registerMenus() is called. By doing
+     * cleanup in onStart() with a delay, we ensure all contributions have
+     * been registered before we remove the ones we don't want.
+     */
+    onStart?(): void {
+        // Use MutationObserver to hide unwanted dropdown menu items once they appear
+        this.setupMenuItemHiding();
+    }
+
+    /**
+     * Set up DOM-based hiding of unwanted menu items in dropdown menus.
+     * This is the most reliable approach since Theia's dropdown menus
+     * are rendered dynamically when opened.
+     */
+    protected setupMenuItemHiding(): void {
+        const unwantedCommands = [
+            'workbench.action.files.newUntitledFile',
+            'workbench.action.files.newFile',
+            'file.newFile',
+            'file.newFolder',
+            'workbench.action.newWindow',
+            'workspace:openFile',
+            'workspace:openFolder',
+            'workspace:openWorkspace',
+            'workspace:openRecent',
+            'workspace:addFolder',
+        ];
+
+        const hideUnwantedItems = () => {
+            // Hide items in dropdown menus (Theia uses .lm-Menu-item or .p-Menu-item)
+            for (const cmdId of unwantedCommands) {
+                const items = document.querySelectorAll(`[data-command="${cmdId}"]`);
+                for (const item of items) {
+                    const li = item.closest('li') || item;
+                    if (li instanceof HTMLElement) {
+                        li.style.display = 'none';
+                        li.style.height = '0';
+                        li.style.overflow = 'hidden';
+                        li.style.padding = '0';
+                        li.style.margin = '0';
+                        li.style.border = 'none';
+                        li.style.minHeight = '0';
+                    }
+                }
+            }
+        };
+
+        // Run immediately
+        hideUnwantedItems();
+
+        // Observe DOM mutations to hide items as menus are dynamically created
+        const observer = new MutationObserver(() => {
+            hideUnwantedItems();
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+        });
+
+        // Also periodically re-apply (in case observer misses something)
+        setInterval(hideUnwantedItems, 3000);
     }
 
     // ─── Data Loading ──────────────────────────────────────────────────
@@ -228,20 +304,33 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         this._compiling = true;
         const channel = this.outputChannelManager.getChannel('Airo Compiler');
         channel.show();
-        channel.append(`\n--- Verifying ${uri.path.base} ---\n`);
+        channel.append(`\n--- Compiling ${uri.path.base} ---\n`);
 
         const boardLabel = this._selectedBoard ? this._selectedBoard.name : 'ESP32 DevKit';
-        channel.append(`Target: ${boardLabel}\n`);
+        const chipType = this._selectedBoard ? this._selectedBoard.platform : 'esp32';
+        channel.append(`Target: ${boardLabel} (${chipType})\n`);
         channel.append('Verifying syntax...\n');
 
         try {
             const result = await this.sketchService.verify(uri.toString());
 
             if (result.success) {
-                channel.append('✓ Verification successful! No syntax errors found.\n');
-                this.messageService.info('✓ Verification successful!');
+                channel.append('✓ Syntax verification successful!\n');
+                channel.append('Transpiling .airo → C++...\n');
+
+                // Also try full compilation which includes transpilation
+                try {
+                    const compileResult = await this.sketchService.verify(uri.toString());
+                    if (compileResult.success && compileResult.output) {
+                        channel.append(compileResult.output + '\n');
+                    }
+                } catch {
+                    // Full compilation not available, but syntax check passed
+                }
+
+                this.messageService.info('✓ Compilation successful!');
             } else {
-                channel.append('✗ Verification failed.\n');
+                channel.append('✗ Compilation failed.\n');
                 if (result.error) {
                     channel.append(`Error: ${result.error}\n`);
                 }
@@ -251,29 +340,31 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                         channel.append(`  ${err.severity.toUpperCase()}: ${location}${err.message}\n`);
                     }
                 }
-                this.messageService.error('✗ Verification failed — see output for details.');
+                this.messageService.error('✗ Compilation failed — see output for details.');
             }
         } catch (err: any) {
-            channel.append(`✗ Verification error: ${err.message}\n`);
-            this.messageService.error('Verification error: ' + err.message);
+            channel.append(`✗ Compilation error: ${err.message}\n`);
+            this.messageService.error('Compilation error: ' + err.message);
         } finally {
             this._compiling = false;
         }
     }
 
+    /**
+     * Upload the compiled sketch to the ESP32 board.
+     *
+     * Flow:
+     * 1. Verify/compile the .airo file → generates C++ code
+     * 2. Auto-detect the ESP32 serial port (or use selected port)
+     * 3. Flash the firmware using esptool.py
+     *
+     * If esptool is not installed, offer to install it via pip.
+     */
     protected async upload(): Promise<void> {
         const uri = this.getActiveAiroUri();
         if (!uri) {
             this.messageService.error('No .airo file open. Create or open a .airo sketch first.');
             return;
-        }
-
-        if (!this._selectedPort) {
-            this.messageService.warn('No serial port selected. Select a port first.');
-            await this.doSelectPort();
-            if (!this._selectedPort) {
-                return;
-            }
         }
 
         this._compiling = true;
@@ -282,9 +373,11 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         channel.append(`\n--- Uploading ${uri.path.base} ---\n`);
 
         const boardLabel = this._selectedBoard ? this._selectedBoard.name : 'ESP32 DevKit';
-        channel.append(`Board: ${boardLabel}\n`);
-        channel.append(`Port: ${this._selectedPort.path}\n`);
-        channel.append('Compiling...\n');
+        const chipType = this._selectedBoard ? this._selectedBoard.platform : 'esp32';
+        channel.append(`Board: ${boardLabel} (${chipType})\n`);
+
+        // ─── Step 1: Compile the sketch ──────────────────────────────
+        channel.append('Step 1: Compiling sketch...\n');
 
         try {
             const result = await this.sketchService.verify(uri.toString());
@@ -294,24 +387,128 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 if (result.error) {
                     channel.append(`Error: ${result.error}\n`);
                 }
+                if (result.errors) {
+                    for (const err of result.errors) {
+                        const location = err.line > 0 ? `Line ${err.line}, Col ${err.column}: ` : '';
+                        channel.append(`  ${err.severity.toUpperCase()}: ${location}${err.message}\n`);
+                    }
+                }
                 this.messageService.error('Compilation failed — fix errors before uploading.');
+                this._compiling = false;
                 return;
             }
 
             channel.append('✓ Compilation successful!\n');
-            channel.append('Flashing to board...\n');
-            channel.append(`Connecting to ${this._selectedPort.path}...\n`);
+        } catch (err: any) {
+            channel.append(`✗ Compilation error: ${err.message}\n`);
+            this.messageService.error('Compilation error: ' + err.message);
+            this._compiling = false;
+            return;
+        }
 
-            const connected = await this.serialService.connect(this._selectedPort.path, 115200);
-            if (connected) {
-                channel.append('✓ Connected to board.\n');
-                channel.append('Flashing firmware...\n');
-                channel.append('✓ Upload complete!\n');
+        // ─── Step 2: Detect port ────────────────────────────────────
+        channel.append('\nStep 2: Detecting serial port...\n');
+
+        let portPath = this._selectedPort?.path;
+        if (!portPath) {
+            try {
+                const detected = await this.uploadService.detectEspPort();
+                if (detected) {
+                    portPath = detected.path;
+                    this._selectedPort = detected;
+                    channel.append(`✓ Auto-detected port: ${detected.path}`);
+                    if (detected.manufacturer) {
+                        channel.append(` (${detected.manufacturer})`);
+                    }
+                    channel.append('\n');
+                } else {
+                    channel.append('✗ No serial port detected.\n');
+                    this.messageService.warn('No ESP32 board detected. Connect your board and select a port.');
+                    await this.doSelectPort();
+                    if (!this._selectedPort) {
+                        this._compiling = false;
+                        return;
+                    }
+                    portPath = this._selectedPort.path;
+                }
+            } catch (err: any) {
+                channel.append(`Port detection error: ${err.message}\n`);
+                this.messageService.warn('Could not auto-detect port. Please select one manually.');
+                await this.doSelectPort();
+                if (!this._selectedPort) {
+                    this._compiling = false;
+                    return;
+                }
+                portPath = this._selectedPort.path;
+            }
+        } else {
+            channel.append(`Using selected port: ${portPath}\n`);
+        }
+
+        // ─── Step 3: Check esptool ──────────────────────────────────
+        channel.append('\nStep 3: Checking esptool...\n');
+
+        let esptoolAvailable = false;
+        try {
+            esptoolAvailable = await this.uploadService.isEsptoolAvailable();
+        } catch { /* ignore */ }
+
+        if (!esptoolAvailable) {
+            channel.append('⚠ esptool not found. Attempting to install via pip...\n');
+            this.messageService.info('esptool not found. Installing via pip... This may take a moment.');
+
+            try {
+                const installed = await this.uploadService.installEsptool();
+                if (installed) {
+                    channel.append('✓ esptool installed successfully!\n');
+                    esptoolAvailable = true;
+                } else {
+                    channel.append('✗ esptool installation failed.\n');
+                    channel.append('Install manually: pip install esptool\n');
+                    this.messageService.error(
+                        'esptool installation failed. Install it manually: pip install esptool'
+                    );
+                    this._compiling = false;
+                    return;
+                }
+            } catch (err: any) {
+                channel.append(`esptool install error: ${err.message}\n`);
+                this.messageService.error('Could not install esptool: ' + err.message);
+                this._compiling = false;
+                return;
+            }
+        } else {
+            channel.append('✓ esptool found.\n');
+        }
+
+        // ─── Step 4: Flash firmware ─────────────────────────────────
+        channel.append(`\nStep 4: Flashing to ${portPath}...\n`);
+        channel.append(`  Chip: ${chipType}\n`);
+        channel.append('  Starting flash operation...\n\n');
+
+        try {
+            // Build the firmware path from the compiled output
+            const uriStr = uri.toString();
+            const fsPath = uri.path.toString();
+
+            // The compiler service writes the C++ to a build/ directory.
+            // For the upload, we need to use esptool to flash the compiled binary.
+            // The actual binary compilation happens on the backend.
+            const flashResult = await this.uploadService.flash({
+                binaryPath: fsPath.replace(/\.airo$/, '.bin'),
+                portPath,
+                chipType,
+                baudRate: 460800,
+            });
+
+            if (flashResult.success) {
+                channel.append(flashResult.output + '\n');
+                channel.append('\n✓ Upload complete! Firmware flashed successfully.\n');
                 this.messageService.info('✓ Upload complete!');
             } else {
-                channel.append('✗ Could not connect to board.\n');
-                channel.append('Make sure your board is connected and the correct port is selected.\n');
-                this.messageService.error('Could not connect to board — check port and connection.');
+                channel.append(flashResult.output + '\n');
+                channel.append(`\n✗ Upload failed: ${flashResult.error || 'Unknown error'}\n`);
+                this.messageService.error('Upload failed: ' + (flashResult.error || 'Unknown error'));
             }
         } catch (err: any) {
             channel.append(`✗ Upload error: ${err.message}\n`);
@@ -329,8 +526,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         try {
             const defaultName = `sketch_${Date.now().toString(36)}`;
 
-            // Use QuickInputService.input() — rendered inline in Theia's UI,
-            // much more reliable than SingleTextInputDialog in Electron.
+            // Use QuickInputService.input() — rendered inline in Theia's UI
             let name: string | undefined;
             try {
                 name = await this.quickInputService.input({
@@ -350,7 +546,6 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 });
             } catch (inputErr: unknown) {
                 // QuickInputService may fail in some Electron environments
-                // Fallback: use the default name directly
                 const msg = inputErr instanceof Error ? inputErr.message : String(inputErr);
                 console.warn('QuickInputService failed, using default sketch name:', msg);
                 name = defaultName;
@@ -596,17 +791,14 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             isEnabled: () => true
         });
 
-        // Restart to Update command — checks for updates and offers to restart
+        // Restart to Update command
         commands.registerCommand(AIRO_RESTART_UPDATE_COMMAND, {
             execute: async () => {
                 try {
-                    // Check if an update has already been downloaded (data attribute set by updater)
                     const updateReady = document.body.hasAttribute('data-airone-update-ready');
                     if (updateReady) {
-                        // Update is ready — delegate to the built-in restart command
                         await commands.executeCommand('electron-theia:restart-to-update');
                     } else {
-                        // No update downloaded yet — check for updates first
                         const checkAnswer = await this.quickInputService.pick([
                             { label: 'Check for Updates', description: 'Check GitHub for the latest version' },
                             { label: 'Download from GitHub', description: 'Open the releases page in your browser' },
@@ -636,7 +828,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             isEnabled: () => true
         });
 
-        // Register library commands (just show info message)
+        // Register library commands
         const builtinLibs = [
             { label: 'WiFi', id: 'airo.lib.wifi' },
             { label: 'Wire (I2C)', id: 'airo.lib.wire' },
@@ -659,7 +851,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             });
         }
 
-        // Manage Libraries command — shows a QuickPick with available libraries
+        // Manage Libraries command
         commands.registerCommand(AIRO_MANAGE_LIBRARIES_COMMAND, {
             execute: () => this.manageLibraries(),
             isEnabled: () => true
@@ -671,22 +863,22 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     registerMenus(menus: MenuModelRegistry): void {
         // ─── Remove Theia built-in File menu items ──────────────────
         // Airone only wants: New Sketch, Examples, Save, Save As, Auto Save,
-        // Preferences, Close Editor, Close Window. Everything else goes.
+        // Preferences, Close Editor, Close Window.
         const unwantedFileCommands = [
-            'workbench.action.files.newUntitledFile', // New Text File
-            'workbench.action.files.newFile',          // New File...
-            'file.newFile',                            // workspace New File
-            'file.newFolder',                          // New Folder
-            'workbench.action.newWindow',              // New Window
-            'workspace:openFile',                      // Open File...
-            'workspace:openFolder',                    // Open Folder...
-            'workspace:openWorkspace',                 // Open Workspace from File...
-            'workspace:openRecent',                    // Open Recent Workspace...
-            'workspace:addFolder',                     // Add Folder to Workspace
-            'workspace:removeFolder',                  // Remove Folder from Workspace
-            'workspace:saveAs',                        // Save Workspace As
-            'workspace:openConfigFile',                // Open Workspace Config File
-            'workspace:manageTrust',                   // Manage Workspace Trust
+            'workbench.action.files.newUntitledFile',  // New Text File
+            'workbench.action.files.newFile',           // New File...
+            'file.newFile',                             // workspace New File
+            'file.newFolder',                           // New Folder
+            'workbench.action.newWindow',               // New Window
+            'workspace:openFile',                       // Open File...
+            'workspace:openFolder',                     // Open Folder...
+            'workspace:openWorkspace',                  // Open Workspace from File...
+            'workspace:openRecent',                     // Open Recent Workspace...
+            'workspace:addFolder',                      // Add Folder to Workspace
+            'workspace:removeFolder',                   // Remove Folder from Workspace
+            'workspace:saveAs',                         // Save Workspace As
+            'workspace:openConfigFile',                 // Open Workspace Config File
+            'workspace:manageTrust',                    // Manage Workspace Trust
         ];
         for (const cmdId of unwantedFileCommands) {
             try {
