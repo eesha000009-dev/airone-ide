@@ -755,7 +755,7 @@ loop {
             return 'macOS_64bit';
         }
         // Linux
-        if (arch === 'arm64' || arch === 'aarch64') return 'Linux_ARM64';
+        if (arch === 'arm64') return 'Linux_ARM64';
         if (arch === 'arm') return 'Linux_ARMv7';
         if (arch === 'x64') return 'Linux_64bit';
         return 'Linux_32bit';
