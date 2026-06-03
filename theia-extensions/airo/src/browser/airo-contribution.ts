@@ -119,7 +119,6 @@ function toFileUri(fsPath: string): URI {
 
 /**
  * Main Airone contribution — handles all commands, menus, and keybindings.
- * Provides menu bar entries and toolbar-accessible commands.
  */
 @injectable()
 export class AiroContribution implements CommandContribution, MenuContribution, KeybindingContribution {
@@ -144,7 +143,6 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     protected _refreshTimer: number | undefined;
 
     constructor() {
-        // Load board/port data on startup
         setTimeout(() => {
             this.loadBoards();
             this.refreshPorts();
@@ -218,7 +216,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
     // ─── Actions ───────────────────────────────────────────────────────
 
-    protected async verify(): Promise<void> {
+    protected async compile(): Promise<void> {
         const uri = this.getActiveAiroUri();
         if (!uri) {
             this.messageService.error('No .airo file open. Create or open a .airo sketch first.');
@@ -228,20 +226,23 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         this._compiling = true;
         const channel = this.outputChannelManager.getChannel('Airo Compiler');
         channel.show();
-        channel.append(`\n--- Verifying ${uri.path.base} ---\n`);
+        channel.append(`\n--- Compiling ${uri.path.base} ---\n`);
 
         const boardLabel = this._selectedBoard ? this._selectedBoard.name : 'ESP32 DevKit';
         channel.append(`Target: ${boardLabel}\n`);
-        channel.append('Verifying syntax...\n');
+        channel.append('Compiling...\n');
 
         try {
             const result = await this.sketchService.verify(uri.toString());
 
             if (result.success) {
-                channel.append('✓ Verification successful! No syntax errors found.\n');
-                this.messageService.info('✓ Verification successful!');
+                channel.append('✓ Compilation successful!\n');
+                if (result.output) {
+                    channel.append(result.output + '\n');
+                }
+                this.messageService.info('✓ Compilation successful!');
             } else {
-                channel.append('✗ Verification failed.\n');
+                channel.append('✗ Compilation failed.\n');
                 if (result.error) {
                     channel.append(`Error: ${result.error}\n`);
                 }
@@ -251,11 +252,11 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                         channel.append(`  ${err.severity.toUpperCase()}: ${location}${err.message}\n`);
                     }
                 }
-                this.messageService.error('✗ Verification failed — see output for details.');
+                this.messageService.error('✗ Compilation failed — see output for details.');
             }
         } catch (err: any) {
-            channel.append(`✗ Verification error: ${err.message}\n`);
-            this.messageService.error('Verification error: ' + err.message);
+            channel.append(`✗ Compilation error: ${err.message}\n`);
+            this.messageService.error('Compilation error: ' + err.message);
         } finally {
             this._compiling = false;
         }
@@ -321,16 +322,10 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         }
     }
 
-    protected async compile(): Promise<void> {
-        await this.verify();
-    }
-
     protected async newSketch(): Promise<void> {
         try {
             const defaultName = `sketch_${Date.now().toString(36)}`;
 
-            // Use QuickInputService.input() — rendered inline in Theia's UI,
-            // much more reliable than SingleTextInputDialog in Electron.
             const name = await this.quickInputService.input({
                 title: 'New Sketch',
                 value: defaultName,
@@ -354,24 +349,63 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
             this.messageService.info(`Creating sketch "${sketchName}"...`);
 
+            // Create the sketch on the backend
             const sketch = await this.sketchService.newSketch(sketchName);
 
             // Convert filesystem path to proper file:// URI
             const fileUri = toFileUri(sketch.mainFile);
 
-            // Open the newly created file
+            // Try multiple approaches to open the file
+            let opened = false;
+
+            // Approach 1: Use OpenerService (most reliable in Theia)
             try {
                 const opener = await this.openerService.getOpener(fileUri);
                 await opener.open(fileUri);
-                this.messageService.info(`Created sketch: ${sketch.name}`);
-            } catch {
-                // If opener fails, try using the command service
+                opened = true;
+            } catch (e) {
+                console.warn('[Airo] OpenerService failed:', e);
+            }
+
+            // Approach 2: Use core.open command
+            if (!opened) {
                 try {
                     await this.commandService.executeCommand('core.open', fileUri);
-                    this.messageService.info(`Created sketch: ${sketch.name}`);
-                } catch {
-                    this.messageService.info(`Sketch created at: ${sketch.mainFile}. Open it from the File menu.`);
+                    opened = true;
+                } catch (e) {
+                    console.warn('[Airo] core.open command failed:', e);
                 }
+            }
+
+            // Approach 3: Use theia editor open command
+            if (!opened) {
+                try {
+                    await this.commandService.executeCommand('editor.open', {
+                        uri: fileUri.toString()
+                    });
+                    opened = true;
+                } catch (e) {
+                    console.warn('[Airo] editor.open command failed:', e);
+                }
+            }
+
+            // Approach 4: Try opening via the file navigator
+            if (!opened) {
+                try {
+                    await this.commandService.executeCommand('workspace:openFile', fileUri.toString());
+                    opened = true;
+                } catch (e) {
+                    console.warn('[Airo] workspace:openFile command failed:', e);
+                }
+            }
+
+            if (opened) {
+                this.messageService.info(`✓ Sketch created: ${sketch.name}`);
+            } else {
+                this.messageService.info(
+                    `Sketch created at: ${sketch.mainFile}\n` +
+                    `Open it from File menu or drag it into the editor.`
+                );
             }
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -401,7 +435,6 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                     code
                 );
 
-                // Convert filesystem path to proper file:// URI
                 const fileUri = toFileUri(sketch.mainFile);
                 const opener = await this.openerService.getOpener(fileUri);
                 await opener.open(fileUri);
@@ -553,23 +586,19 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 try {
                     await commands.executeCommand('electron-theia:check-for-updates');
                 } catch {
-                    this.messageService.info('Airone IDE — No updates available at this time. You can check again later or download from GitHub Releases.');
+                    this.messageService.info('Airone IDE — No updates available at this time.');
                 }
             },
             isEnabled: () => true
         });
 
-        // Restart to Update command — checks for updates and offers to restart
         commands.registerCommand(AIRO_RESTART_UPDATE_COMMAND, {
             execute: async () => {
                 try {
-                    // Check if an update has already been downloaded (data attribute set by updater)
                     const updateReady = document.body.hasAttribute('data-airone-update-ready');
                     if (updateReady) {
-                        // Update is ready — delegate to the built-in restart command
                         await commands.executeCommand('electron-theia:restart-to-update');
                     } else {
-                        // No update downloaded yet — check for updates first
                         const checkAnswer = await this.quickInputService.pick([
                             { label: 'Check for Updates', description: 'Check GitHub for the latest version' },
                             { label: 'Download from GitHub', description: 'Open the releases page in your browser' },
@@ -599,7 +628,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             isEnabled: () => true
         });
 
-        // Register library commands (just show info message)
+        // Register library commands
         const builtinLibs = [
             { label: 'WiFi', id: 'airo.lib.wifi' },
             { label: 'Wire (I2C)', id: 'airo.lib.wire' },
@@ -622,7 +651,6 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             });
         }
 
-        // Manage Libraries command — shows a QuickPick with available libraries
         commands.registerCommand(AIRO_MANAGE_LIBRARIES_COMMAND, {
             execute: () => this.manageLibraries(),
             isEnabled: () => true

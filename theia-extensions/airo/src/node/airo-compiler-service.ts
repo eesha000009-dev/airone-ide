@@ -142,10 +142,54 @@ export class AiroCompilerService {
             ext = 'tar.gz';
         }
 
+        // Primary URL: downloads.arduino.cc (redirects to versioned URL)
         const url = `https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_${osName}_${archName}.${ext}`;
         const osLabel = `${osName}_${archName}`;
 
         return { url, ext, osLabel };
+    }
+
+    /**
+     * Get the Arduino CLI download URL from GitHub Releases API.
+     * Used as a fallback if the primary downloads.arduino.cc URL fails.
+     */
+    private async getArduinoCliGitHubUrl(osLabel: string, ext: string): Promise<string | undefined> {
+        return new Promise(resolve => {
+            const options: https.RequestOptions = {
+                hostname: 'api.github.com',
+                path: '/repos/arduino/arduino-cli/releases/latest',
+                method: 'GET',
+                headers: { 'User-Agent': 'AironeIDE/1.0' },
+            };
+
+            const req = https.request(options, res => {
+                let data = '';
+                res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+                res.on('end', () => {
+                    try {
+                        const release = JSON.parse(data);
+                        const version = release.tag_name; // e.g., "v1.5.0"
+                        // Find the matching asset
+                        const assetPattern = `arduino-cli_${version.replace('v', '')}_${osLabel}.${ext}`;
+                        const asset = (release.assets || []).find((a: { name: string; browser_download_url: string }) =>
+                            a.name === assetPattern
+                        );
+                        if (asset) {
+                            resolve(asset.browser_download_url);
+                        } else {
+                            // Fallback: construct URL directly
+                            resolve(`https://github.com/arduino/arduino-cli/releases/download/${version}/arduino-cli_${version.replace('v', '')}_${osLabel}.${ext}`);
+                        }
+                    } catch {
+                        resolve(undefined);
+                    }
+                });
+            });
+
+            req.on('error', () => resolve(undefined));
+            req.setTimeout(10000, () => { req.destroy(); resolve(undefined); });
+            req.end();
+        });
     }
 
     /**
@@ -263,9 +307,24 @@ export class AiroCompilerService {
                 fs.mkdirSync(toolsDir, { recursive: true });
             }
 
-            // Download
-            await this.downloadFile(url, archivePath);
-            outputCb('  ✓ Download complete.');
+            // Download — try primary URL first, then GitHub fallback
+            try {
+                await this.downloadFile(url, archivePath);
+                outputCb('  ✓ Download complete.');
+            } catch (primaryErr: unknown) {
+                const primaryMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+                outputCb(`  Primary URL failed: ${primaryMsg}`);
+                outputCb('  Trying GitHub Releases fallback...');
+
+                const githubUrl = await this.getArduinoCliGitHubUrl(osLabel, ext);
+                if (githubUrl) {
+                    outputCb(`  Fallback URL: ${githubUrl}`);
+                    await this.downloadFile(githubUrl, archivePath);
+                    outputCb('  ✓ Download complete (from GitHub).');
+                } else {
+                    throw new Error(`Download failed: ${primaryMsg}. GitHub fallback also failed.`);
+                }
+            }
 
             // Extract
             outputCb('  Extracting...');

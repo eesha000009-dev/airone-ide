@@ -1,9 +1,7 @@
 /********************************************************************************
  * Copyright (C) 2025 Airone and others.
  *
- * This program and the accompanying materials are made available under the
- * terms of the MIT License, which is available in the project root.
- *
+ * Airone IDE Product Styles
  * SPDX-License-Identifier: MIT
  ********************************************************************************/
 
@@ -13,8 +11,6 @@
 
 /* ═══════════════════════════════════════════════════════════════════════════════
    PREVENT BLACK / DARK BACKGROUND FLASH
-   Force white backgrounds on all top-level containers so the Electron window
-   never shows a dark background while loading.
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 html, body,
@@ -127,9 +123,7 @@ ul.theia-aboutExtensions {
 
 /* ═══════════════════════════════════════════════════════════════════════════════
    MENU BAR — WHITELIST APPROACH (Lumino + PhosphorJS)
-   ═══════════════════════════════════════════════════════════════════════════════
-   Theia 1.72 uses Lumino (lm- prefix). Menu items do NOT have aria-label.
-   CSS hides all items; JavaScript marks allowed items with data-airone-visible. */
+   ═══════════════════════════════════════════════════════════════════════════════ */
 
 /* Step 1: Hide ALL menu bar items */
 .lm-MenuBar-item,
@@ -144,7 +138,68 @@ ul.theia-aboutExtensions {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   HIDE ENTIRE SIDEBAR / ACTIVITY BAR (Lumino + PhosphorJS)
+   HIDE UNWANTED FILE MENU ITEMS IN DROPDOWN MENUS
+   Hide Theia's built-in "New File", "New Folder", "Open File" items.
+   These can appear in ANY dropdown menu (File, Edit, context menus, etc.)
+   We match by ALL known command IDs across Theia versions/modules.
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* Core commands */
+[data-command="core.newFile"],
+[data-command="core:newFile"],
+[data-command="core.newFolder"],
+[data-command="core:newFolder"],
+[data-command="core.openFile"],
+[data-command="core:openFile"],
+
+/* Workspace commands */
+[data-command="workspace:newFile"],
+[data-command="workspace:NewFile"],
+[data-command="workspace:newFolder"],
+[data-command="workspace:NewFolder"],
+
+/* File commands */
+[data-command="file.newFile"],
+[data-command="file:newFile"],
+
+/* Navigator commands (most likely in Theia 1.72+) */
+[data-command="navigator:newFile"],
+[data-command="navigator:NewFile"],
+[data-command="navigator:newFolder"],
+[data-command="navigator:NewFolder"],
+[data-command="navigator:openFile"],
+[data-command="navigator:OpenFile"],
+
+/* Menu item selectors with data-command (Lumino + PhosphorJS) */
+.lm-Menu-item[data-command="core.newFile"],
+.lm-Menu-item[data-command="core:newFile"],
+.lm-Menu-item[data-command="workspace:newFile"],
+.lm-Menu-item[data-command="workspace:NewFile"],
+.lm-Menu-item[data-command="file.newFile"],
+.lm-Menu-item[data-command="file:newFile"],
+.lm-Menu-item[data-command="navigator:newFile"],
+.lm-Menu-item[data-command="navigator:NewFile"],
+.p-Menu-item[data-command="core.newFile"],
+.p-Menu-item[data-command="core:newFile"],
+.p-Menu-item[data-command="workspace:newFile"],
+.p-Menu-item[data-command="workspace:NewFile"],
+
+/* Items already hidden by JavaScript */
+[data-airone-hidden="true"] {
+    display: none !important;
+    height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    min-height: 0 !important;
+    border: none !important;
+    position: absolute !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   HIDE ENTIRE SIDEBAR / ACTIVITY BAR
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 #theia-activitybar,
@@ -186,43 +241,8 @@ div[data-area="left"] {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   HIDE UNWANTED FILE MENU ITEMS
-   Hide Theia's built-in "New File" and other items we don't want.
-   Only "New Sketch" and "Examples" should appear in the File menu.
-   ═══════════════════════════════════════════════════════════════════════════════ */
-
-/* Hide "New File" command in all menus (Theia built-in) */
-[data-command="core.newFile"],
-[data-command="core:newFile"],
-.lm-Menu-item[data-command="core.newFile"],
-.lm-Menu-item[data-command="core:newFile"],
-.p-Menu-item[data-command="core.newFile"],
-.p-Menu-item[data-command="core:newFile"] {
-    display: none !important;
-}
-
-/* Hide "New Folder" command in all menus */
-[data-command="core.newFolder"],
-[data-command="core:newFolder"],
-.lm-Menu-item[data-command="core.newFolder"],
-.p-Menu-item[data-command="core.newFolder"] {
-    display: none !important;
-}
-
-/* Hide "Open..." (Theia built-in file open) */
-[data-command="core.openFile"],
-[data-command="core:openFile"],
-.lm-Menu-item[data-command="core.openFile"],
-.p-Menu-item[data-command="core.openFile"] {
-    display: none !important;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════════
    ENSURE THE TOP PANEL AND MENU BAR CONTAINER ARE VISIBLE
-   ═══════════════════════════════════════════════════════════════════════════════
-   The top panel is a flex column: menu bar on top, secondary toolbar below.
-   Theia's Lumino BoxPanel positions children absolutely, so the top panel's
-   height MUST be auto so it can grow to include the toolbar. */
+   ═══════════════════════════════════════════════════════════════════════════════ */
 
 #theia-top-panel,
 .theia-top-panel {
@@ -237,7 +257,6 @@ div[data-area="left"] {
     flex-shrink: 0 !important;
 }
 
-/* The menu bar CONTAINER (not items) must be visible — both Lumino and PhosphorJS */
 .lm-MenuBar.lm-Widget,
 .p-MenuBar.p-Widget,
 .theia-MenuBar.theia-Widget,
