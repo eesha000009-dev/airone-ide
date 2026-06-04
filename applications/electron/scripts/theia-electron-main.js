@@ -1,7 +1,36 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { app, dialog } = require('electron');
 const { copyBundledPlugins } = require('./appimage-helpers');
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GLOBAL ERROR HANDLERS — Prevent silent crashes
+// Without these, any unhandled exception/rejection crashes the Electron process
+// silently (splash screen shows, then disappears).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let fatalErrorOccurred = false;
+
+process.on('uncaughtException', (error) => {
+    console.error('[Airone IDE] FATAL: Uncaught Exception:', error);
+    fatalErrorOccurred = true;
+    try {
+        dialog.showErrorBox(
+            'Airone IDE — Unexpected Error',
+            `An unexpected error occurred:\n\n${error.message || String(error)}\n\nPlease restart the application. ` +
+            `If this persists, report at https://github.com/eesha000009-dev/airone-ide/issues`
+        );
+    } catch {
+        // dialog may not be available yet
+    }
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[Airone IDE] FATAL: Unhandled Promise Rejection:', reason);
+    // Don't show dialog for rejections — they're usually less critical
+    // but DO log them so we can diagnose issues
+});
 
 // Update to override the supported VS Code API version.
 // process.env.VSCODE_API_VERSION = '1.50.0'
@@ -35,5 +64,27 @@ if (isAppImage) {
     process.env.THEIA_DEFAULT_PLUGINS = `local-dir:${bundledPluginsDir}`;
 }
 
-// Handover to the auto-generated electron application handler.
-require('../lib/backend/electron-main.js');
+// ═══════════════════════════════════════════════════════════════════════════════
+// Start Theia backend with error protection
+// ═══════════════════════════════════════════════════════════════════════════════
+try {
+    // Handover to the auto-generated electron application handler.
+    require('../lib/backend/electron-main.js');
+} catch (error) {
+    console.error('[Airone IDE] FATAL: Failed to start Theia backend:', error);
+    try {
+        dialog.showErrorBox(
+            'Airone IDE — Failed to Start',
+            `The backend failed to start:\n\n${error.message || String(error)}\n\n` +
+            `Try reinstalling Airone IDE. If this persists, report at ` +
+            `https://github.com/eesha000009-dev/airone-ide/issues`
+        );
+    } catch {
+        // dialog may not be available
+    }
+    try {
+        app.quit();
+    } catch {
+        // nothing we can do
+    }
+}

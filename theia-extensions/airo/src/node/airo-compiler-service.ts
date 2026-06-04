@@ -45,27 +45,35 @@ export class AiroCompilerService {
     // ─── Path Resolution ──────────────────────────────────────────────────
 
     private resolveCompilerDir(): string {
-        if (typeof __dirname !== 'undefined' && __dirname.includes('.asar')) {
-            return path.join((process as any).resourcesPath!, 'airo-compiler');
-        }
-
-        const possibleLocations = [
-            path.resolve(__dirname, '../../../../../../airo-compiler'),
-            path.resolve(process.cwd(), 'airo-compiler'),
-            path.resolve(process.cwd(), '../airo-compiler'),
-        ];
-
         try {
-            for (const loc of possibleLocations) {
-                if (fs.existsSync(path.join(loc, 'airo_compiler', '__init__.py'))) {
-                    return loc;
+            if (typeof __dirname !== 'undefined' && __dirname.includes('.asar')) {
+                const resourcesPath = (process as any).resourcesPath;
+                if (resourcesPath) {
+                    return path.join(resourcesPath, 'airo-compiler');
                 }
             }
-        } catch {
-            // ignore
-        }
 
-        return possibleLocations[0];
+            const possibleLocations = [
+                path.resolve(__dirname, '../../../../../../airo-compiler'),
+                path.resolve(process.cwd(), 'airo-compiler'),
+                path.resolve(process.cwd(), '../airo-compiler'),
+            ];
+
+            try {
+                for (const loc of possibleLocations) {
+                    if (fs.existsSync(path.join(loc, 'airo_compiler', '__init__.py'))) {
+                        return loc;
+                    }
+                }
+            } catch {
+                // ignore
+            }
+
+            return possibleLocations[0];
+        } catch {
+            // If anything goes wrong, return a safe default
+            return path.join(os.homedir(), '.airone', 'airo-compiler');
+        }
     }
 
     private resolvePythonPath(): string {

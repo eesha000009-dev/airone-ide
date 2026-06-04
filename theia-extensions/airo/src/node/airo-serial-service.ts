@@ -14,8 +14,13 @@ import { SerialPortInfo } from '../common/airo-protocol';
  * Serial port service for communicating with ESP32 and other boards.
  *
  * Uses the `serialport` npm package when available. If serialport is not
- * installed (e.g., in a browser-only environment), the service gracefully
+ * installed (e.g., in a browser-only environment, or the native module
+ * fails to load in a packaged Electron app), the service gracefully
  * degrades and reports no available ports.
+ *
+ * CRITICAL: The serialport native module is loaded LAZILY (only when
+ * actually needed) and wrapped in comprehensive error handling to prevent
+ * it from crashing the entire Theia backend process.
  */
 
 interface SerialPortInstance {
@@ -35,31 +40,65 @@ interface SerialPortListEntry {
     productId?: string;
 }
 
+/** Cached serialport module — loaded lazily */
+let serialportModule: any = undefined;
+let serialportChecked = false;
+
+/**
+ * Safely load the serialport native module.
+ * Returns the module if available, or null if not.
+ * This is separated out so that a failure to load the native module
+ * doesn't crash the entire service or backend.
+ */
+function getSerialportModule(): any | null {
+    if (serialportChecked) {
+        return serialportModule;
+    }
+    serialportChecked = true;
+
+    try {
+        // Attempt to require the serialport module
+        // This can fail if:
+        // 1. The native addon (.node) is missing (not built for this platform)
+        // 2. The native addon was built for a different Electron/Node version
+        // 3. The .node file is corrupt or missing dependencies
+        serialportModule = require('serialport');
+        console.log('[AiroSerialService] serialport module loaded successfully.');
+    } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn('[AiroSerialService] serialport package not available. Serial communication will be disabled.');
+        console.warn('[AiroSerialService] Reason:', message);
+        serialportModule = null;
+    }
+
+    return serialportModule;
+}
+
 @injectable()
 export class AiroSerialService {
     private port: SerialPortInstance | undefined = undefined;
     private dataBuffer: string = '';
-    private serialportAvailable = false;
 
-    constructor() {
-        // Check if serialport is available at startup
-        try {
-            require('serialport');
-            this.serialportAvailable = true;
-        } catch {
-            this.serialportAvailable = false;
-            console.warn('[AiroSerialService] serialport package not available. Serial communication will be disabled.');
-        }
+    /**
+     * Check if the serialport module is available.
+     * Loads it lazily on first check.
+     */
+    private isSerialportAvailable(): boolean {
+        return getSerialportModule() !== null;
     }
 
     async listPorts(): Promise<SerialPortInfo[]> {
-        if (!this.serialportAvailable) {
-            console.warn('[AiroSerialService] Cannot list ports: serialport package not available.');
+        const sp = getSerialportModule();
+        if (!sp) {
             return [];
         }
 
         try {
-            const { SerialPort } = require('serialport');
+            const { SerialPort } = sp;
+            if (!SerialPort || typeof SerialPort.list !== 'function') {
+                console.warn('[AiroSerialService] SerialPort.list not available.');
+                return [];
+            }
             const ports = await SerialPort.list();
             return ports.map((p: SerialPortListEntry) => ({
                 path: p.path,
@@ -76,7 +115,8 @@ export class AiroSerialService {
     }
 
     async connect(portPath: string, baudRate: number): Promise<boolean> {
-        if (!this.serialportAvailable) {
+        const sp = getSerialportModule();
+        if (!sp) {
             console.error('[AiroSerialService] Cannot connect: serialport package not available.');
             return false;
         }
@@ -86,7 +126,7 @@ export class AiroSerialService {
                 await this.disconnect();
             }
 
-            const { SerialPort } = require('serialport');
+            const { SerialPort } = sp;
 
             this.port = new SerialPort({
                 path: portPath,
@@ -96,7 +136,8 @@ export class AiroSerialService {
 
             // Try to load the readline parser
             try {
-                const { ReadlineParser } = require('@serialport/parser-readline');
+                const parserReadline = require('@serialport/parser-readline');
+                const { ReadlineParser } = parserReadline;
                 const parser = this.port!.pipe(new ReadlineParser({ delimiter: '\n' })) as {
                     on: (event: string, cb: (data: string) => void) => void;
                 };

@@ -369,19 +369,51 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             // Convert filesystem path to proper file:// URI
             const fileUri = toFileUri(sketch.mainFile);
 
-            // Open the newly created file
-            try {
-                const opener = await this.openerService.getOpener(fileUri);
-                await opener.open(fileUri);
-                this.messageService.info(`Created sketch: ${sketch.name}`);
-            } catch {
-                // If opener fails, try using the command service
+            // Open the newly created file — try multiple approaches
+            let opened = false;
+
+            // Approach 1: Use OpenerService
+            if (!opened) {
+                try {
+                    const opener = await this.openerService.getOpener(fileUri);
+                    await opener.open(fileUri);
+                    opened = true;
+                    this.messageService.info(`Created sketch: ${sketch.name}`);
+                } catch { /* try next approach */ }
+            }
+
+            // Approach 2: Use core.open command
+            if (!opened) {
                 try {
                     await this.commandService.executeCommand('core.open', fileUri);
+                    opened = true;
                     this.messageService.info(`Created sketch: ${sketch.name}`);
-                } catch {
-                    this.messageService.info(`Sketch created at: ${sketch.mainFile}. Open it from the File menu.`);
-                }
+                } catch { /* try next approach */ }
+            }
+
+            // Approach 3: Use FileEditorOpener directly
+            if (!opened) {
+                try {
+                    await this.commandService.executeCommand('file-editor.open', { uri: fileUri.toString() });
+                    opened = true;
+                    this.messageService.info(`Created sketch: ${sketch.name}`);
+                } catch { /* try next approach */ }
+            }
+
+            // Approach 4: Use workspace.open command
+            if (!opened) {
+                try {
+                    await this.commandService.executeCommand('workspace.open', fileUri.toString());
+                    opened = true;
+                    this.messageService.info(`Created sketch: ${sketch.name}`);
+                } catch { /* give up */ }
+            }
+
+            if (!opened) {
+                this.messageService.info(
+                    `Sketch created at: ${sketch.mainFile}. ` +
+                    `Use File → Open to open the .airo file.`
+                );
             }
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);

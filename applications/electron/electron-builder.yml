@@ -8,6 +8,10 @@ asarUnpack:
   - "**/lib/backend/native/**"
   - "**/lib/backend/shell-integrations/**"
   - "**/lib/prebuilds/**"
+  - "**/node_modules/serialport/**"
+  - "**/node_modules/@serialport/**"
+  - "**/node_modules/@serialport/bindings-cpp/**"
+  - "**/node_modules/@serialport/parser-readline/**"
 nodeGypRebuild: false
 npmRebuild: false
 
