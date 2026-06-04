@@ -189,32 +189,92 @@ div[data-area="left"] {
    HIDE UNWANTED FILE MENU ITEMS
    Hide Theia's built-in "New File" and other items we don't want.
    Only "New Sketch" and "Examples" should appear in the File menu.
+   We target ALL known command IDs across Theia versions.
    ═══════════════════════════════════════════════════════════════════════════════ */
 
-/* Hide "New File" command in all menus (Theia built-in) */
+/* Hide "New File" / "New Text File" in ALL menus — comprehensive selectors */
 [data-command="core.newFile"],
 [data-command="core:newFile"],
+[data-command="workbench.action.files.newUntitledFile"],
+[data-command="workbench.action.files.newFile"],
+[data-command="file.newFile"],
+[data-command="file:newFile"],
+[data-command="workspace:newFile"],
+[data-command="navigator.newFile"],
 .lm-Menu-item[data-command="core.newFile"],
 .lm-Menu-item[data-command="core:newFile"],
+.lm-Menu-item[data-command="workbench.action.files.newUntitledFile"],
+.lm-Menu-item[data-command="workbench.action.files.newFile"],
+.lm-Menu-item[data-command="file.newFile"],
+.lm-Menu-item[data-command="file:newFile"],
 .p-Menu-item[data-command="core.newFile"],
-.p-Menu-item[data-command="core:newFile"] {
+.p-Menu-item[data-command="core:newFile"],
+.p-Menu-item[data-command="workbench.action.files.newUntitledFile"],
+.p-Menu-item[data-command="workbench.action.files.newFile"],
+.p-Menu-item[data-command="file.newFile"] {
     display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    border: none !important;
 }
 
-/* Hide "New Folder" command in all menus */
+/* Hide "New Folder" in ALL menus */
 [data-command="core.newFolder"],
 [data-command="core:newFolder"],
+[data-command="workbench.action.files.newFolder"],
+[data-command="file.newFolder"],
+[data-command="file:newFolder"],
 .lm-Menu-item[data-command="core.newFolder"],
-.p-Menu-item[data-command="core.newFolder"] {
+.lm-Menu-item[data-command="core:newFolder"],
+.lm-Menu-item[data-command="workbench.action.files.newFolder"],
+.lm-Menu-item[data-command="file.newFolder"],
+.p-Menu-item[data-command="core.newFolder"],
+.p-Menu-item[data-command="workbench.action.files.newFolder"],
+.p-Menu-item[data-command="file.newFolder"] {
     display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    border: none !important;
 }
 
 /* Hide "Open..." (Theia built-in file open) */
 [data-command="core.openFile"],
 [data-command="core:openFile"],
+[data-command="workspace:openFile"],
+[data-command="workbench.action.files.openFile"],
+[data-command="workbench.action.files.openFolder"],
+[data-command="workspace:openFolder"],
 .lm-Menu-item[data-command="core.openFile"],
-.p-Menu-item[data-command="core.openFile"] {
+.lm-Menu-item[data-command="core:openFile"],
+.lm-Menu-item[data-command="workspace:openFile"],
+.p-Menu-item[data-command="core.openFile"],
+.p-Menu-item[data-command="workspace:openFile"] {
     display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    border: none !important;
+}
+
+/* Hide "New Window" in ALL menus */
+[data-command="workbench.action.newWindow"],
+.lm-Menu-item[data-command="workbench.action.newWindow"],
+.p-Menu-item[data-command="workbench.action.newWindow"] {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    border: none !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════

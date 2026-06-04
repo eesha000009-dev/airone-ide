@@ -403,15 +403,33 @@ button[aria-label="Forward"],
    using CSS. This is supplemented by JavaScript DOM-based hiding in
    AiroContribution.onStart(). */
 
-/* Hide "New File" / "New Text File" dropdown items */
+/* Hide "New File" / "New Text File" dropdown items — comprehensive across Theia versions */
 .lm-Menu-item[data-command="workbench.action.files.newUntitledFile"],
 .p-Menu-item[data-command="workbench.action.files.newUntitledFile"],
 .lm-Menu-item[data-command="workbench.action.files.newFile"],
 .p-Menu-item[data-command="workbench.action.files.newFile"],
 .lm-Menu-item[data-command="file.newFile"],
 .p-Menu-item[data-command="file.newFile"],
+.lm-Menu-item[data-command="file:newFile"],
+.p-Menu-item[data-command="file:newFile"],
+.lm-Menu-item[data-command="core.newFile"],
+.p-Menu-item[data-command="core.newFile"],
+.lm-Menu-item[data-command="core:newFile"],
+.p-Menu-item[data-command="core:newFile"],
+.lm-Menu-item[data-command="workspace:newFile"],
+.p-Menu-item[data-command="workspace:newFile"],
+.lm-Menu-item[data-command="navigator.newFile"],
+.p-Menu-item[data-command="navigator.newFile"],
 .lm-Menu-item[data-command="file.newFolder"],
-.p-Menu-item[data-command="file.newFolder"] {
+.p-Menu-item[data-command="file.newFolder"],
+.lm-Menu-item[data-command="file:newFolder"],
+.p-Menu-item[data-command="file:newFolder"],
+.lm-Menu-item[data-command="core.newFolder"],
+.p-Menu-item[data-command="core.newFolder"],
+.lm-Menu-item[data-command="core:newFolder"],
+.p-Menu-item[data-command="core:newFolder"],
+.lm-Menu-item[data-command="workbench.action.files.newFolder"],
+.p-Menu-item[data-command="workbench.action.files.newFolder"] {
     display: none !important;
     height: 0 !important;
     min-height: 0 !important;

@@ -182,14 +182,26 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         const unwantedCommands = [
             'workbench.action.files.newUntitledFile',
             'workbench.action.files.newFile',
-            'file.newFile',
-            'file.newFolder',
+            'workbench.action.files.newFolder',
+            'workbench.action.files.openFile',
+            'workbench.action.files.openFolder',
             'workbench.action.newWindow',
+            'file.newFile',
+            'file:newFile',
+            'file.newFolder',
+            'file:newFolder',
+            'core.newFile',
+            'core:newFile',
+            'core.newFolder',
+            'core:newFolder',
+            'core.openFile',
+            'core:openFile',
             'workspace:openFile',
             'workspace:openFolder',
             'workspace:openWorkspace',
             'workspace:openRecent',
             'workspace:addFolder',
+            'navigator.newFile',
         ];
 
         const hideUnwantedItems = () => {
@@ -531,6 +543,17 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             // Open the newly created file — try multiple strategies
             let opened = false;
 
+            // Strategy 0: EditorManager.open() — most reliable in Theia
+            if (!opened) {
+                try {
+                    await this.editorManager.open(fileUri);
+                    opened = true;
+                    this.messageService.info(`Created sketch: ${sketch.name}`);
+                } catch (e) {
+                    console.warn('EditorManager.open failed:', e);
+                }
+            }
+
             // Strategy 1: OpenerService
             if (!opened) {
                 try {
@@ -543,14 +566,14 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 }
             }
 
-            // Strategy 2: core.open command
+            // Strategy 2: vscode.open command (standard Theia command)
             if (!opened) {
                 try {
-                    await this.commandService.executeCommand('core.open', fileUri);
+                    await this.commandService.executeCommand('vscode.open', fileUri);
                     opened = true;
                     this.messageService.info(`Created sketch: ${sketch.name}`);
                 } catch (e) {
-                    console.warn('core.open command failed:', e);
+                    console.warn('vscode.open command failed:', e);
                 }
             }
 
@@ -832,9 +855,20 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         const unwantedFileCommands = [
             'workbench.action.files.newUntitledFile',  // New Text File
             'workbench.action.files.newFile',           // New File...
-            'file.newFile',                             // workspace New File
-            'file.newFolder',                           // New Folder
+            'workbench.action.files.newFolder',          // New Folder
+            'workbench.action.files.openFile',           // Open File
+            'workbench.action.files.openFolder',         // Open Folder
             'workbench.action.newWindow',               // New Window
+            'file.newFile',                             // workspace New File
+            'file:newFile',                             // workspace New File (alt)
+            'file.newFolder',                           // New Folder
+            'core.newFile',                             // core New File
+            'core:newFile',                             // core New File (alt)
+            'core.newFolder',                           // core New Folder
+            'core:newFolder',                           // core New Folder (alt)
+            'core.openFile',                            // core Open File
+            'core:openFile',                            // core Open File (alt)
+            'navigator.newFile',                        // navigator New File
             'workspace:openFile',                       // Open File...
             'workspace:openFolder',                     // Open Folder...
             'workspace:openWorkspace',                  // Open Workspace from File...

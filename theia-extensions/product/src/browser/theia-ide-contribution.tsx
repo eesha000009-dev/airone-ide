@@ -131,7 +131,7 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
      * from the File dropdown menu. We want only "New Sketch" and "Examples".
      */
     protected hideUnwantedFileMenuItems(): void {
-        // List of command IDs to hide from menus
+        // List of command IDs to hide from menus — comprehensive across Theia versions
         const hiddenCommands = [
             'core.newFile',
             'core:newFile',
@@ -139,8 +139,19 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
             'core:newFolder',
             'core.openFile',
             'core:openFile',
+            'workbench.action.files.newUntitledFile',
+            'workbench.action.files.newFile',
+            'workbench.action.files.newFolder',
+            'workbench.action.files.openFile',
+            'workbench.action.files.openFolder',
+            'workbench.action.newWindow',
             'workspace:newFile',
+            'workspace:openFile',
+            'workspace:openFolder',
             'file.newFile',
+            'file:newFile',
+            'file.newFolder',
+            'navigator.newFile',
         ];
 
         // Selectors for menu items in dropdown menus (both Lumino and PhosphorJS)
@@ -168,7 +179,7 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
         }
 
         // Also hide by label text in case data-command is not set
-        const hiddenLabels = ['New File', 'New Folder', 'Open File…', 'Open File...'];
+        const hiddenLabels = ['New File', 'New Text File', 'New Folder', 'Open File…', 'Open File...', 'Open Folder…', 'Open Folder...', 'New Window'];
         for (const sel of menuItemSelectors) {
             try {
                 document.querySelectorAll<HTMLElement>(sel).forEach(item => {

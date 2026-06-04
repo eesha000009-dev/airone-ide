@@ -292,7 +292,7 @@ export class AiroCompilerService {
     /**
      * Auto-download and install Arduino CLI to ~/.airone/tools/.
      *
-     * Downloads the latest stable release from GitHub.
+     * Downloads the latest stable release from GitHub releases API.
      * Returns the path to the installed binary, or undefined on failure.
      */
     async ensureArduinoCli(currentOutput: string): Promise<{ cliPath: string | undefined; output: string }> {
@@ -322,9 +322,29 @@ export class AiroCompilerService {
 
             // Determine platform-specific download URL
             const platform = this.getArduinoCliPlatform();
-            const ext = platform.includes('windows') ? '.zip' : '.tar.gz';
+            const isWindows = platform.toLowerCase().includes('windows');
+            const ext = isWindows ? '.zip' : '.tar.gz';
+
+            // Step 1: Get the latest version tag from GitHub releases API
+            output += '  Fetching latest Arduino CLI version from GitHub...\n';
+            let version: string | undefined;
+            try {
+                version = await this.getLatestArduinoCliVersion();
+                output += `  Latest version: ${version}\n`;
+            } catch {
+                output += '  ⚠ Could not fetch version from GitHub API, trying direct download...\n';
+            }
+
+            // Construct download URL — prefer GitHub releases with version
+            let downloadUrl: string;
+            if (version) {
+                downloadUrl = `https://github.com/arduino/arduino-cli/releases/download/${version}/arduino-cli_${version}_${platform}${ext}`;
+            } else {
+                // Fallback: try downloads.arduino.cc with .zip for Windows
+                downloadUrl = `https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_${platform}${ext}`;
+            }
+
             const fileName = `arduino-cli_${platform}${ext}`;
-            const downloadUrl = `https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_${platform}${ext}`;
 
             output += `  Downloading Arduino CLI for ${platform}...\n`;
             output += `  URL: ${downloadUrl}\n`;
@@ -336,7 +356,7 @@ export class AiroCompilerService {
             output += '  ✓ Download complete. Extracting...\n';
 
             // Extract the binary
-            const extractedPath = await this.extractArchive(archivePath, localPath, platform.includes('windows'));
+            const extractedPath = await this.extractArchive(archivePath, localPath, isWindows);
 
             if (extractedPath && fs.existsSync(extractedPath)) {
                 // Make executable on Unix
@@ -759,6 +779,61 @@ loop {
         if (arch === 'arm') return 'Linux_ARMv7';
         if (arch === 'x64') return 'Linux_64bit';
         return 'Linux_32bit';
+    }
+
+    /**
+     * Fetch the latest Arduino CLI version tag from the GitHub releases API.
+     * Returns the tag name (e.g. "v1.0.4") or throws on failure.
+     */
+    private getLatestArduinoCliVersion(): Promise<string> {
+        return new Promise((resolve, reject) => {
+            const options: https.RequestOptions = {
+                hostname: 'api.github.com',
+                path: '/repos/arduino/arduino-cli/releases/latest',
+                method: 'GET',
+                headers: {
+                    'User-Agent': 'Airone-IDE/1.0',
+                    'Accept': 'application/vnd.github+json',
+                },
+            };
+
+            const req = https.request(options, (res) => {
+                if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    // Follow redirect
+                    const redirectUrl = new URL(res.headers.location);
+                    this.getLatestArduinoCliVersion().then(resolve).catch(reject);
+                    return;
+                }
+
+                if (res.statusCode !== 200) {
+                    reject(new Error(`GitHub API returned status ${res.statusCode}`));
+                    return;
+                }
+
+                let data = '';
+                res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+                res.on('end', () => {
+                    try {
+                        const release = JSON.parse(data);
+                        const tag = release.tag_name;
+                        if (tag) {
+                            resolve(tag);
+                        } else {
+                            reject(new Error('No tag_name in GitHub release response'));
+                        }
+                    } catch {
+                        reject(new Error('Failed to parse GitHub API response'));
+                    }
+                });
+            });
+
+            req.on('error', reject);
+            req.setTimeout(15000, () => {
+                req.destroy();
+                reject(new Error('GitHub API request timed out'));
+            });
+            req.end();
+        });
     }
 
     /**
