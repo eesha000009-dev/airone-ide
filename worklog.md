@@ -96,3 +96,42 @@ Stage Summary:
 - Required libraries auto-install: ✅ implemented
 - Build passing on all platforms: ✅
 - New release: v0.1.0-build.202606030136
+---
+Task ID: 3
+Agent: Main
+Task: Fix Airone IDE crash after splash screen
+
+Work Log:
+- Analyzed crash: IDE shows splash then crashes — likely caused by aggressive MutationObservers firing during Theia initialization
+- Identified 3 crash-causing issues:
+  1. TheiaIDEContribution: MutationObserver starts in constructor, fires on EVERY DOM mutation during init, no error handling
+  2. AiroToolbarContribution: Same issue — observers fire during Theia init with no protection
+  3. CSS `display: none !important` on ALL menu items hides everything permanently if JS fails before marking items visible
+- Fixed TheiaIDEContribution:
+  - Delayed observer start until 2 seconds after window load event
+  - Added 200ms debounce on MutationObserver callback
+  - Added re-entrancy guard (isModifying flag)
+  - Wrapped ALL DOM operations in try-catch
+  - Reduced max attempts from 500 to 300
+  - Added `document.body.setAttribute('data-airone-ui-ready', 'true')` to signal CSS
+- Fixed AiroToolbarContribution:
+  - Added 150ms debounce on MutationObserver
+  - Added isAdjusting re-entrancy guard on layout adjustment
+  - Wrapped ALL DOM operations in try-catch
+  - Added error handling to button click handlers
+  - Reduced layout adjustment timeouts (removed aggressive 7-time staggered calls)
+- Fixed AiroContribution:
+  - Wrapped constructor setTimeout in try-catch
+  - Wrapped deferred init callback in try-catch
+  - Wrapped port refresh interval callback in try-catch
+  - Increased init delay from 2000ms to 3000ms
+- Fixed CSS (both index.css and airo-sidebar.css):
+  - Menu hiding CSS now only activates when `body[data-airone-ui-ready="true"]` is set by JS
+  - This prevents menus from being permanently hidden if JS crashes before marking items visible
+- Pushed to both repos: airone-ai-backbone (main), airone-ide (master)
+
+Stage Summary:
+- All 3 crash-causing MutationObservers now have error handling, debouncing, and delayed start
+- CSS no longer hides menus before JS is ready — prevents blank UI on JS crash
+- AiroContribution constructor is now crash-safe
+- Commit: 72d97ee pushed to both repos
