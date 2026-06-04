@@ -1,55 +1,41 @@
-# Arduino IDE Build Complete
+# Airone IDE Build Status
 
 ## Build Status: ✅ SUCCESS
 
-The Arduino IDE has been successfully compiled with .airo language support.
+**Latest Release**: `v0.1.0-build.202606040211`
 
-### What was built:
-- **arduino-ide-extension/lib/** — All TypeScript compiled to JavaScript
-- **electron-app/lib/frontend/** — Webpack frontend bundle
-- **electron-app/lib/backend/** — Webpack backend bundle
+### Build Artifacts
 
-### .airo Extension Files Compiled:
-- `lib/browser/contributions/airo-sketch.js` ✅
-- `lib/browser/contributions/sync-to-backbone.js` ✅
-- `lib/browser/contributions/airo-language.js` ✅
-- `lib/node/airo-compiler-service.js` ✅
-- `lib/common/protocol/airo-compiler-service.js` ✅
+| Platform | Artifact | Size | Status |
+|----------|----------|------|--------|
+| Windows | `AironeIDESetup.exe` | 137MB | ✅ |
+| Linux | `AironeIDE.AppImage` | 167MB | ✅ |
+| Linux | `AironeIDE.deb` | 98MB | ✅ |
+| Android | `AironeIDE.apk` | 123MB | ✅ |
 
-### Key Updates Made This Session:
+### Build Fixes Applied This Session
 
-1. **senddatato Natural Language Prompt Format**
-   The compiled C++ firmware now sends sensor data as:
-   ```
-   Currently, the input sensors read:
-   (temperature: 28.50, ultrasonic: 45.00),
-   What do you want to do to:
-   (ledpin, urhands).
-   ```
-   Instead of JSON. The AI brain reads this prompt directly.
+1. **Root package.json overwritten** — The Theia IDE root `package.json` had been overwritten with the ai-backbone's package.json, causing `yarn build:extensions` command not found error. Restored from `airo-package.json` backup.
 
-2. **Brain Server (Python)** — Parses natural language prompts from ESP32 robots
+2. **bun.lock causing CI failure** — The `bun.lock` file at the repo root caused lerna to detect `bun` as the package manager. Since `bun` is not installed on GitHub Actions runners, the build failed with `/bin/sh: 1: bun: not found`. Removed `bun.lock` from the repo.
 
-3. **AI Backbone (Electron desktop app)** — Brain server handles NL prompt format
+3. **DOM.Iterable missing from tsconfig** — Re-added `"DOM.Iterable"` to the `lib` array in `theia-extensions/airo/tsconfig.json` to fix NodeListOf iteration errors.
 
-4. **.airo Template** — Updated with `#library#`, `Pin defi{}`, `#variables#` structure
+4. **Arduino CLI download URL** — Windows now uses `.zip` instead of `.tar.gz` (was causing 404 errors). The URL `https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Windows_64bit.zip` works correctly (302 redirect to the actual version).
 
-5. **Example Robot (zeeb.airo)** — Updated to match new template
+5. **IDE crash after splash screen** — Added error handling to all MutationObservers, debounced observers to prevent infinite loops, delayed UI modifications until after Theia initialization, made CSS menu hiding resilient (only activates after JS signals readiness via `data-airone-ui-ready` attribute).
 
-### Build Fixes Applied:
-- Installed @types/react@18.2.0 (Node 24 compatibility)
-- Installed react@18.2.0 + react-dom@18.2.0
-- Copied i18n files to expected location
-- Fixed @vscode/ripgrep exports for Node 24
-- Rebuilt native modules (node-pty, ffmpeg, drivelist)
-- Stubbed keytar and native-keymap (need root for system deps)
-- Set noEmitOnError=false in tsconfig
-
-### All 4 Airone Components Status:
+### All 4 Airone Components Status
 
 | Component | Status | Location |
 |-----------|--------|----------|
 | Airo Compiler | ✅ Built | /home/z/my-project/airo-compiler/ |
 | Brain Server | ✅ Built | /home/z/my-project/brain-server/ |
 | AI Backbone | ✅ Built | /home/z/my-project/ai-backbone/ |
-| Arduino IDE | ✅ Built | /home/z/my-project/arduino-ide/ |
+| Airone IDE | ✅ Built & Released | /home/z/my-project/ |
+
+### Remaining Known Issues
+
+- **"New File" still visible** in File dropdown — CSS/DOM hiding may not work in all cases
+- **Port selection** — Requires `serialport` npm to be properly built as a native module in the packaged app
+- **Upload** — Needs `esptool.py` bundled in the packaged app

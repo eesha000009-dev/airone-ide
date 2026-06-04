@@ -135,3 +135,29 @@ Stage Summary:
 - CSS no longer hides menus before JS is ready — prevents blank UI on JS crash
 - AiroContribution constructor is now crash-safe
 - Commit: 72d97ee pushed to both repos
+---
+Task ID: 4
+Agent: Main
+Task: Fix broken GitHub Actions CI build for Airone IDE
+
+Work Log:
+- Checked GitHub Actions: Run #138 failed on all 3 platforms (Linux, Windows, Android)
+- Error: `yarn build:extensions` — "Command 'build:extensions' not found"
+- Root cause: Root `package.json` had been overwritten with ai-backbone's package.json (which uses npm/webpack, not lerna/yarn)
+- Restored Theia IDE package.json from `airo-package.json` backup (contains lerna workspaces, build:extensions, build:applications, etc.)
+- Second failure: `/bin/sh: 1: bun: not found` — lerna detects `bun` as package manager from `bun.lock` file
+- Removed `bun.lock` from repo (CI uses yarn, not bun)
+- Also re-added `"DOM.Iterable"` to airo tsconfig lib (fix had been lost)
+- Build #141 passed on all 3 platforms:
+  - Linux Build: ✅ success
+  - Windows Build: ✅ success
+  - Android Build: ✅ success
+  - Create GitHub Release: ✅ success
+- New release: `v0.1.0-build.202606040211` with 7 artifacts
+
+Stage Summary:
+- Root package.json restored to Theia IDE version (was overwritten with ai-backbone's)
+- bun.lock removed (was causing lerna to use bun which isn't on CI)
+- DOM.Iterable re-added to airo tsconfig
+- All platforms build successfully: Windows (137MB exe), Linux (167MB AppImage, 98MB deb), Android (123MB apk)
+- Release v0.1.0-build.202606040211 published
