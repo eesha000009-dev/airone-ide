@@ -115,9 +115,19 @@ export const AIRO_MANAGE_LIBRARIES_COMMAND: Command = {
 
 /** Helper to convert a filesystem path to a proper file:// URI */
 function toFileUri(fsPath: string): URI {
-    const normalized = fsPath.replace(/\\/g, '/');
-    const withSlash = normalized.startsWith('/') ? normalized : '/' + normalized;
-    return new URI('file://' + withSlash);
+    // Use vscode-uri's URI.file() which correctly handles platform-specific
+    // paths (especially Windows drive letters and backslashes).
+    // This is the same approach used by Theia's own updater extension.
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { URI: VSCodeURI } = require('vscode-uri');
+        return new URI(VSCodeURI.file(fsPath));
+    } catch {
+        // Fallback: manual construction
+        const normalized = fsPath.replace(/\\/g, '/');
+        const withSlash = normalized.startsWith('/') ? normalized : '/' + normalized;
+        return new URI('file://' + withSlash);
+    }
 }
 
 /**
@@ -221,6 +231,35 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                     }
                 }
             }
+
+            // Also hide by label text (in case data-command doesn't match)
+            const hiddenLabels = ['New File', 'New Text File', 'New Folder', 'Open File…', 'Open File...', 'Open Folder…', 'Open Folder...', 'New Window', 'Add Folder to Workspace'];
+            const menuItemSelectors = ['.lm-Menu-item', '.p-Menu-item', '.theia-Menu-item'];
+            for (const sel of menuItemSelectors) {
+                try {
+                    document.querySelectorAll<HTMLElement>(sel).forEach(item => {
+                        const labelEl = item.querySelector('.lm-Menu-itemLabel, .p-Menu-itemLabel, .theia-Menu-itemLabel');
+                        const text = labelEl?.textContent?.trim() || item.textContent?.trim() || '';
+                        if (hiddenLabels.some(label => text === label)) {
+                            item.style.display = 'none';
+                            item.style.height = '0';
+                            item.style.overflow = 'hidden';
+                            item.style.padding = '0';
+                            item.style.margin = '0';
+                            item.style.border = 'none';
+                            item.style.minHeight = '0';
+                        }
+                    });
+                } catch { /* invalid selector */ }
+            }
+
+            // Also hide any element containing "New File" as a direct text in the File menu context
+            document.querySelectorAll<HTMLElement>('.lm-MenuBar-item').forEach(menuItem => {
+                const label = menuItem.querySelector('.lm-MenuBar-itemLabel');
+                if (label?.textContent?.trim() === 'File') {
+                    // Found the File menu — we'll monitor its dropdown when opened
+                }
+            });
         };
 
         // Run immediately
@@ -237,7 +276,20 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         });
 
         // Also periodically re-apply (in case observer misses something)
-        setInterval(hideUnwantedItems, 3000);
+        setInterval(hideUnwantedItems, 500);
+
+        // Intercept Theia's command execution to block unwanted commands
+        try {
+            const origExecute = this.commandService.executeCommand.bind(this.commandService);
+            const blockedCommands = new Set(unwantedCommands);
+            this.commandService.executeCommand = function(commandId: string, ...args: any[]) {
+                if (blockedCommands.has(commandId)) {
+                    // Block the command silently
+                    return Promise.resolve();
+                }
+                return origExecute(commandId, ...args);
+            };
+        } catch { /* ignore if interception fails */ }
     }
 
     // ─── Data Loading ──────────────────────────────────────────────────
@@ -538,23 +590,15 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             const sketch = await this.sketchService.newSketch(sketchName);
 
             // Convert filesystem path to proper file:// URI
+            // Use vscode-uri's URI.file() — the same method Theia's own updater uses
             const fileUri = toFileUri(sketch.mainFile);
 
             // Open the newly created file — try multiple strategies
             let opened = false;
+            const lastError: string[] = [];
 
-            // Strategy 0: EditorManager.open() — most reliable in Theia
-            if (!opened) {
-                try {
-                    await this.editorManager.open(fileUri);
-                    opened = true;
-                    this.messageService.info(`Created sketch: ${sketch.name}`);
-                } catch (e) {
-                    console.warn('EditorManager.open failed:', e);
-                }
-            }
-
-            // Strategy 1: OpenerService
+            // Strategy 0: OpenerService — the standard Theia approach
+            // (Same pattern used by the updater extension)
             if (!opened) {
                 try {
                     const opener = await this.openerService.getOpener(fileUri);
@@ -562,35 +606,48 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                     opened = true;
                     this.messageService.info(`Created sketch: ${sketch.name}`);
                 } catch (e) {
-                    console.warn('OpenerService failed:', e);
+                    lastError.push(`OpenerService: ${e instanceof Error ? e.message : String(e)}`);
                 }
             }
 
-            // Strategy 2: vscode.open command (standard Theia command)
+            // Strategy 1: EditorManager.open()
             if (!opened) {
                 try {
-                    await this.commandService.executeCommand('vscode.open', fileUri);
+                    await this.editorManager.open(fileUri);
                     opened = true;
                     this.messageService.info(`Created sketch: ${sketch.name}`);
                 } catch (e) {
-                    console.warn('vscode.open command failed:', e);
+                    lastError.push(`EditorManager: ${e instanceof Error ? e.message : String(e)}`);
                 }
             }
 
-            // Strategy 3: Theia's open handler
+            // Strategy 2: Theia's core.open command
             if (!opened) {
                 try {
-                    await this.commandService.executeCommand('theia.open', fileUri.toString());
+                    await this.commandService.executeCommand('core.open', fileUri);
                     opened = true;
                     this.messageService.info(`Created sketch: ${sketch.name}`);
                 } catch (e) {
-                    console.warn('theia.open command failed:', e);
+                    lastError.push(`core.open: ${e instanceof Error ? e.message : String(e)}`);
+                }
+            }
+
+            // Strategy 3: Theia's resource.open command
+            if (!opened) {
+                try {
+                    await this.commandService.executeCommand('resource.open', fileUri);
+                    opened = true;
+                    this.messageService.info(`Created sketch: ${sketch.name}`);
+                } catch (e) {
+                    lastError.push(`resource.open: ${e instanceof Error ? e.message : String(e)}`);
                 }
             }
 
             if (!opened) {
-                this.messageService.info(
-                    `Sketch created at: ${sketch.mainFile}. Use File menu to open it.`
+                // Show the path so the user can manually open the file
+                const errorDetails = lastError.length > 0 ? `\nErrors: ${lastError.join('; ')}` : '';
+                this.messageService.warn(
+                    `Sketch created at: ${sketch.mainFile}${errorDetails}\nURI: ${fileUri.toString()}`
                 );
             }
         } catch (err: unknown) {

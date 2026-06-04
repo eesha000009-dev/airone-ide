@@ -336,9 +336,13 @@ export class AiroCompilerService {
             }
 
             // Construct download URL — prefer GitHub releases with version
+            // NOTE: The tag path uses the version WITH 'v' (e.g. v1.5.0),
+            // but the asset FILENAME uses version WITHOUT 'v' (e.g. 1.5.0).
+            // Actual URL: https://github.com/arduino/arduino-cli/releases/download/v1.5.0/arduino-cli_1.5.0_Windows_64bit.zip
             let downloadUrl: string;
             if (version) {
-                downloadUrl = `https://github.com/arduino/arduino-cli/releases/download/${version}/arduino-cli_${version}_${platform}${ext}`;
+                const versionNum = version.replace(/^v/, ''); // Strip 'v' prefix for filename
+                downloadUrl = `https://github.com/arduino/arduino-cli/releases/download/${version}/arduino-cli_${versionNum}_${platform}${ext}`;
             } else {
                 // Fallback: try downloads.arduino.cc with .zip for Windows
                 downloadUrl = `https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_${platform}${ext}`;
