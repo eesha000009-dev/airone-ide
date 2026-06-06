@@ -128,11 +128,18 @@ export class AiroCompilerService {
                 fs.mkdirSync(outputDir, { recursive: true });
             }
 
-            const cppPath = path.join(outputDir, `${sketchName}.ino.cpp`);
+            // Arduino CLI requires the .ino file to be in a directory with the same name
+            // e.g., for sketch "titled", we need: build/titled/titled.ino
+            const sketchDir = path.join(outputDir, sketchName);
+            if (!fs.existsSync(sketchDir)) {
+                fs.mkdirSync(sketchDir, { recursive: true });
+            }
+
+            const cppPath = path.join(sketchDir, `${sketchName}.ino.cpp`);
             fs.writeFileSync(cppPath, transpileResult.cppCode, { encoding: 'utf8' });
 
             // Also write a minimal Arduino sketch .ino file
-            const inoPath = path.join(outputDir, `${sketchName}.ino`);
+            const inoPath = path.join(sketchDir, `${sketchName}.ino`);
             if (!fs.existsSync(inoPath)) {
                 fs.writeFileSync(inoPath, `#include "${sketchName}.ino.cpp"\n`, { encoding: 'utf8' });
             }
@@ -558,7 +565,14 @@ export class AiroCompilerService {
                 args.push('--config-dir', configDir);
             }
 
-            args.push(outputDir);
+            // Arduino CLI requires the sketch directory (containing the .ino file)
+            // to match the .ino filename — use the sketch subdirectory, not the build root
+            const sketchDir = path.join(outputDir, sketchName);
+            if (fs.existsSync(sketchDir)) {
+                args.push(sketchDir);
+            } else {
+                args.push(outputDir);
+            }
 
             const proc = spawn(arduinoCli, args, {
                 stdio: 'pipe',

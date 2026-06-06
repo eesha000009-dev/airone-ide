@@ -278,18 +278,9 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         // Also periodically re-apply (in case observer misses something)
         setInterval(hideUnwantedItems, 500);
 
-        // Intercept Theia's command execution to block unwanted commands
-        try {
-            const origExecute = this.commandService.executeCommand.bind(this.commandService);
-            const blockedCommands = new Set(unwantedCommands);
-            this.commandService.executeCommand = function<T = any>(commandId: string, ...args: any[]): Promise<T | undefined> {
-                if (blockedCommands.has(commandId)) {
-                    // Block the command silently — return undefined to match the type signature
-                    return Promise.resolve(undefined as T | undefined);
-                }
-                return origExecute(commandId, ...args);
-            };
-        } catch { /* ignore if interception fails */ }
+        // NOTE: We rely solely on DOM-based hiding (above) for menu item removal.
+        // Command interception (monkey-patching executeCommand) was removed because
+        // it caused TypeScript TS2322 build errors and was fragile at runtime.
     }
 
     // ─── Data Loading ──────────────────────────────────────────────────
@@ -561,7 +552,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 name = await this.quickInputService.input({
                     title: 'New Sketch',
                     value: defaultName,
-                    prompt: 'Enter a name for the new sketch',
+                    prompt: 'Enter sketch name (a .airo file will be created automatically)',
                     placeHolder: 'sketch_name',
                     validateInput: async (input: string) => {
                         if (!input || input.trim().length === 0) {
@@ -1036,6 +1027,11 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         keybindings.registerKeybinding({
             command: AIRO_SERIAL_MONITOR_COMMAND.id,
             keybinding: 'ctrl+shift+m'
+        });
+        keybindings.registerKeybinding({
+            command: AIRO_NEW_SKETCH_COMMAND.id,
+            keybinding: 'ctrl+shift+n',
+            mac: 'cmd+shift+n'
         });
     }
 }
