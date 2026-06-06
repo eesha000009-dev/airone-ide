@@ -282,10 +282,10 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         try {
             const origExecute = this.commandService.executeCommand.bind(this.commandService);
             const blockedCommands = new Set(unwantedCommands);
-            this.commandService.executeCommand = function(commandId: string, ...args: any[]) {
+            this.commandService.executeCommand = function<T = any>(commandId: string, ...args: any[]): Promise<T | undefined> {
                 if (blockedCommands.has(commandId)) {
-                    // Block the command silently
-                    return Promise.resolve();
+                    // Block the command silently — return undefined to match the type signature
+                    return Promise.resolve(undefined as T | undefined);
                 }
                 return origExecute(commandId, ...args);
             };
