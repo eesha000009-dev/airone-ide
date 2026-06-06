@@ -1030,8 +1030,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         });
         keybindings.registerKeybinding({
             command: AIRO_NEW_SKETCH_COMMAND.id,
-            keybinding: 'ctrl+shift+n',
-            mac: 'cmd+shift+n'
+            keybinding: 'ctrl+shift+n'
         });
     }
 }
