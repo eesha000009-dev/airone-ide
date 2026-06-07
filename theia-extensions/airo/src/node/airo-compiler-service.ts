@@ -519,6 +519,12 @@ export class AiroCompilerService {
                 output += '  You may need to install it manually: arduino-cli core install esp32:esp32\n';
                 return { output };
             }
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            output += `  ⚠ Could not auto-install ESP32 board support: ${message}\n`;
+            output += '  You may need to install it manually: arduino-cli core install esp32:esp32\n';
+            return { output };
+        }
     }
 
     /**
