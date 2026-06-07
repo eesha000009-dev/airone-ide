@@ -469,19 +469,56 @@ export class AiroCompilerService {
             // Install ESP32 core
             const coreName = fqbn.split(':').slice(0, 2).join(':'); // e.g. esp32:esp32
             output += `  Installing core: ${coreName}...\n`;
-            const installOutput = execSync(
-                `"${arduinoCli}" core install ${coreName} --config-dir "${configDir}"`,
-                { encoding: 'utf8', timeout: 300_000 } // 5 min timeout
-            );
-            output += '  ✓ ESP32 board support installed successfully.\n';
 
-            return { output };
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            output += `  ⚠ Could not auto-install ESP32 board support: ${message}\n`;
-            output += '  You may need to install it manually: arduino-cli core install esp32:esp32\n';
-            return { output };
-        }
+            try {
+                const installOutput = execSync(
+                    `"${arduinoCli}" core install ${coreName} --config-dir "${configDir}"`,
+                    { encoding: 'utf8', timeout: 300_000 } // 5 min timeout
+                );
+                output += '  ✓ ESP32 board support installed successfully.\n';
+                return { output };
+            } catch (installErr: unknown) {
+                const installMsg = installErr instanceof Error ? installErr.message : String(installErr);
+
+                // If the error is about a corrupted archive or locked file, try cleaning
+                // staging directories and retrying once.
+                if (installMsg.includes('corrupted') || installMsg.includes('locked') ||
+                    installMsg.includes('being used by another process') || installMsg.includes('EBUSY')) {
+                    output += `  ⚠ Install failed (locked/corrupted file). Cleaning staging files and retrying...\n`;
+
+                    // Clean staging directories in the Arduino data directory
+                    const stagingDir = path.join(configDir, 'staging');
+                    const packagesDir = path.join(os.homedir(), '.airone', 'arduino-cli', 'packages');
+
+                    for (const dir of [stagingDir, packagesDir]) {
+                        try {
+                            if (fs.existsSync(dir)) {
+                                fs.rmSync(dir, { recursive: true, force: true });
+                                output += `  Cleaned: ${dir}\n`;
+                            }
+                        } catch (cleanErr) {
+                            output += `  Could not clean ${dir}: ${cleanErr instanceof Error ? cleanErr.message : String(cleanErr)}\n`;
+                        }
+                    }
+
+                    // Retry the install
+                    try {
+                        const retryOutput = execSync(
+                            `"${arduinoCli}" core install ${coreName} --config-dir "${configDir}"`,
+                            { encoding: 'utf8', timeout: 300_000 }
+                        );
+                        output += '  ✓ ESP32 board support installed successfully (after cleanup retry).\n';
+                        return { output };
+                    } catch (retryErr: unknown) {
+                        const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+                        output += `  ⚠ Retry also failed: ${retryMsg}\n`;
+                    }
+                }
+
+                output += `  ⚠ Could not auto-install ESP32 board support: ${installMsg}\n`;
+                output += '  You may need to install it manually: arduino-cli core install esp32:esp32\n';
+                return { output };
+            }
     }
 
     /**

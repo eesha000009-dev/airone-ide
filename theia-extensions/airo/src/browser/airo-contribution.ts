@@ -24,6 +24,7 @@ import { WidgetManager } from '@theia/core/lib/browser';
 import { CommandService } from '@theia/core/lib/common/command';
 import { QuickInputService, QuickPickItem } from '@theia/core/lib/common/quick-pick-service';
 import { AiroSerialWidget } from './airo-serial-widget';
+import { NewSketchDialog } from './new-sketch-dialog';
 import { CommonMenus } from '@theia/core/lib/browser/common-frontend-contribution';
 import {
     AiroSketchService,
@@ -149,6 +150,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     @inject(AiroSketchService) protected readonly sketchService!: AiroSketchClient;
     @inject(AiroSerialService) protected readonly serialService!: AiroSerialClient;
     @inject(AiroUploadService) protected readonly uploadService!: AiroUploadClient;
+    @inject(NewSketchDialog) protected readonly newSketchDialog!: NewSketchDialog;
 
     // ─── State ──────────────────────────────────────────────────────────
     protected _selectedBoard: BoardInfo | undefined;
@@ -542,33 +544,53 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         await this.verify();
     }
 
+    /**
+     * Create a new Airone sketch.
+     *
+     * Uses a custom SingleTextInputDialog (like Arduino IDE) that only prompts
+     * for the sketch name. The .airo extension is fixed — no need for the user
+     * to specify it. A folder named after the sketch is created containing
+     * `<name>.airo` with the Airone language template pre-filled.
+     *
+     * Fallback: if the dialog fails to open (rare in some Electron envs),
+     * the QuickInputService is used as a backup.
+     */
     protected async newSketch(): Promise<void> {
         try {
-            const defaultName = `sketch_${Date.now().toString(36)}`;
-
-            // Use QuickInputService.input() — rendered inline in Theia's UI
+            // ─── Step 1: Get sketch name from the user ───────────────
             let name: string | undefined;
+
+            // Try the Arduino-style SingleTextInputDialog first
             try {
-                name = await this.quickInputService.input({
-                    title: 'New Sketch',
-                    value: defaultName,
-                    prompt: 'Enter sketch name (a .airo file will be created automatically)',
-                    placeHolder: 'sketch_name',
-                    validateInput: async (input: string) => {
-                        if (!input || input.trim().length === 0) {
-                            return 'Sketch name cannot be empty';
+                name = await this.newSketchDialog.open();
+            } catch {
+                // Dialog was cancelled
+                return;
+            }
+
+            // Fallback to QuickInputService if dialog didn't return a name
+            if (!name) {
+                const defaultName = `sketch_${Date.now().toString(36)}`;
+                try {
+                    name = await this.quickInputService.input({
+                        title: 'New Sketch',
+                        value: defaultName,
+                        prompt: 'Enter sketch name (a .airo file will be created automatically)',
+                        placeHolder: 'sketch_name',
+                        validateInput: async (input: string) => {
+                            if (!input || input.trim().length === 0) {
+                                return 'Sketch name cannot be empty';
+                            }
+                            if (!/^[a-zA-Z0-9_-]+$/.test(input.trim())) {
+                                return 'Only letters, numbers, underscores, and hyphens allowed';
+                            }
+                            return undefined;
                         }
-                        if (!/^[a-zA-Z0-9_-]+$/.test(input.trim())) {
-                            return 'Only letters, numbers, underscores, and hyphens allowed';
-                        }
-                        return undefined;
-                    }
-                });
-            } catch (inputErr: unknown) {
-                // QuickInputService may fail in some Electron environments
-                const msg = inputErr instanceof Error ? inputErr.message : String(inputErr);
-                console.warn('QuickInputService failed, using default sketch name:', msg);
-                name = defaultName;
+                    });
+                } catch {
+                    // Both dialog methods failed — use default name silently
+                    name = defaultName;
+                }
             }
 
             if (!name || name.trim().length === 0) {
@@ -576,20 +598,18 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             }
             const sketchName = name.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
 
+            // ─── Step 2: Create the sketch via backend ──────────────
             this.messageService.info(`Creating sketch "${sketchName}"...`);
 
             const sketch = await this.sketchService.newSketch(sketchName);
 
-            // Convert filesystem path to proper file:// URI
-            // Use vscode-uri's URI.file() — the same method Theia's own updater uses
+            // ─── Step 3: Open the newly created .airo file ───────────
             const fileUri = toFileUri(sketch.mainFile);
 
-            // Open the newly created file — try multiple strategies
             let opened = false;
             const lastError: string[] = [];
 
             // Strategy 0: OpenerService — the standard Theia approach
-            // (Same pattern used by the updater extension)
             if (!opened) {
                 try {
                     const opener = await this.openerService.getOpener(fileUri);
@@ -635,7 +655,6 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             }
 
             if (!opened) {
-                // Show the path so the user can manually open the file
                 const errorDetails = lastError.length > 0 ? `\nErrors: ${lastError.join('; ')}` : '';
                 this.messageService.warn(
                     `Sketch created at: ${sketch.mainFile}${errorDetails}\nURI: ${fileUri.toString()}`
