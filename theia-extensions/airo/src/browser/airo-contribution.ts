@@ -26,6 +26,7 @@ import { QuickInputService, QuickPickItem } from '@theia/core/lib/common/quick-p
 import { AiroSerialWidget } from './airo-serial-widget';
 import { NewSketchDialog } from './new-sketch-dialog';
 import { CommonMenus } from '@theia/core/lib/browser/common-frontend-contribution';
+import { optional } from '@theia/core/shared/inversify';
 import {
     AiroSketchService,
     AiroSerialService,
@@ -144,9 +145,13 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     @inject(OpenerService) protected readonly openerService!: OpenerService;
     @inject(OutputChannelManager) protected readonly outputChannelManager!: OutputChannelManager;
     @inject(WidgetManager) protected readonly widgetManager!: WidgetManager;
-    @inject(QuickInputService) protected readonly quickInputService!: QuickInputService;
+    @inject(QuickInputService) @optional() protected readonly quickInputService!: QuickInputService;
     @inject(CommandService) protected readonly commandService!: CommandService;
-    @inject(NewSketchDialog) protected readonly newSketchDialog!: NewSketchDialog;
+
+    // NOTE: NewSketchDialog is NOT injected via Inversify. It extends
+    // SingleTextInputDialog which creates DOM elements in its constructor.
+    // Creating it as an Inversify singleton could crash the frontend.
+    // Instead, it's instantiated on-demand in newSketch().
 
     @inject(AiroSketchService) protected readonly sketchService!: AiroSketchClient;
     @inject(AiroSerialService) protected readonly serialService!: AiroSerialClient;
@@ -571,8 +576,14 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             let name: string | undefined;
 
             // Try the Arduino-style SingleTextInputDialog first
+            // IMPORTANT: Create the dialog on-demand, NOT via Inversify injection.
+            // SingleTextInputDialog creates DOM elements in its constructor,
+            // and if it fails as an Inversify singleton, it crashes the entire
+            // Theia frontend (stuck on preload.html). Creating on-demand lets
+            // us catch the error and fall back gracefully.
             try {
-                const result = await this.newSketchDialog.open();
+                const dialog = new NewSketchDialog();
+                const result = await dialog.open();
                 if (result === undefined) {
                     // User cancelled the dialog
                     return;
@@ -582,6 +593,11 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 // SingleTextInputDialog may fail in some environments;
                 // fall back to QuickInputService
                 try {
+                    if (!this.quickInputService) {
+                        // QuickInputService not available either
+                        this.messageService.warn('Cannot open sketch dialog. Please try again.');
+                        return;
+                    }
                     name = await this.quickInputService.input({
                         title: 'New Sketch',
                         value: 'my_sketch',

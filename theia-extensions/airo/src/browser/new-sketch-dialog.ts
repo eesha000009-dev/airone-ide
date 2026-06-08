@@ -7,7 +7,6 @@
  * SPDX-License-Identifier: MIT
  ********************************************************************************/
 
-import { injectable } from '@theia/core/shared/inversify';
 import { SingleTextInputDialog } from '@theia/core/lib/browser/dialogs';
 
 /**
@@ -28,8 +27,14 @@ import { SingleTextInputDialog } from '@theia/core/lib/browser/dialogs';
  * - Name must start with a letter (to be a valid C identifier for Arduino)
  * - Only alphanumeric characters, underscores, and hyphens are allowed
  * - Name must not exceed 63 characters
+ *
+ * IMPORTANT: This class is NOT an Inversify @injectable(). It extends
+ * SingleTextInputDialog which creates DOM elements in its constructor.
+ * If registered as an Inversify singleton, any constructor failure would
+ * crash the entire Theia frontend module, leaving the user stuck on
+ * the preload.html splash screen. Instead, instantiate on-demand in
+ * the newSketch() method where errors can be safely caught.
  */
-@injectable()
 export class NewSketchDialog extends SingleTextInputDialog {
 
     constructor() {
@@ -51,7 +56,7 @@ export class NewSketchDialog extends SingleTextInputDialog {
                 if (trimmed.length > 63) {
                     return 'Sketch name is too long (max 63 characters).';
                 }
-                return '';
+                return false;
             }
         });
     }
