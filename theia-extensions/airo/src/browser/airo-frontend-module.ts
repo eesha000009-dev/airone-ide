@@ -20,6 +20,7 @@ import { AiroToolbarContribution } from './airo-toolbar-contribution';
 import { AiroLanguageContribution } from './airo-language-contribution';
 import { NewSketchDialog } from './new-sketch-dialog';
 import { AiroSerialWidget } from './airo-serial-widget';
+import { NewSketchDialog } from './new-sketch-dialog';
 import { LanguageGrammarDefinitionContribution } from '@theia/monaco/lib/browser/textmate';
 import {
     AiroSketchService,
@@ -56,6 +57,9 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
     bind(NewSketchDialog).toSelf().inSingletonScope();
 
     // ─── Commands, Menus, Keybindings ────────────────────────────────────
+
+    // Register the Arduino-style New Sketch dialog (SingleTextInputDialog)
+    bind(NewSketchDialog).toSelf().inSingletonScope();
 
     bind(AiroContribution).toSelf().inSingletonScope();
     [CommandContribution, MenuContribution, KeybindingContribution, FrontendApplicationContribution].forEach(serviceIdentifier =>

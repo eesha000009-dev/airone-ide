@@ -146,11 +146,11 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     @inject(WidgetManager) protected readonly widgetManager!: WidgetManager;
     @inject(QuickInputService) protected readonly quickInputService!: QuickInputService;
     @inject(CommandService) protected readonly commandService!: CommandService;
+    @inject(NewSketchDialog) protected readonly newSketchDialog!: NewSketchDialog;
 
     @inject(AiroSketchService) protected readonly sketchService!: AiroSketchClient;
     @inject(AiroSerialService) protected readonly serialService!: AiroSerialClient;
     @inject(AiroUploadService) protected readonly uploadService!: AiroUploadClient;
-    @inject(NewSketchDialog) protected readonly newSketchDialog!: NewSketchDialog;
 
     // ─── State ──────────────────────────────────────────────────────────
     protected _selectedBoard: BoardInfo | undefined;
@@ -267,9 +267,12 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         // Run immediately
         hideUnwantedItems();
 
-        // Observe DOM mutations to hide items as menus are dynamically created
+        // Observe DOM mutations to hide items as menus are dynamically created.
+        // Use a debounce to avoid excessive DOM queries on rapid mutations.
+        let debounceTimer: ReturnType<typeof setTimeout> | undefined;
         const observer = new MutationObserver(() => {
-            hideUnwantedItems();
+            if (debounceTimer) { clearTimeout(debounceTimer); }
+            debounceTimer = setTimeout(hideUnwantedItems, 100);
         });
 
         observer.observe(document.body, {
@@ -277,12 +280,17 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             subtree: true,
         });
 
-        // Also periodically re-apply (in case observer misses something)
-        setInterval(hideUnwantedItems, 500);
+        // Periodically re-apply every 3 seconds (less aggressive than 500ms)
+        setInterval(hideUnwantedItems, 3000);
 
-        // NOTE: We rely solely on DOM-based hiding (above) for menu item removal.
-        // Command interception (monkey-patching executeCommand) was removed because
-        // it caused TypeScript TS2322 build errors and was fragile at runtime.
+        // NOTE: We do NOT monkey-patch executeCommand anymore.
+        // The previous approach of intercepting CommandService.executeCommand
+        // caused TS2322 build failures and could crash the Theia frontend at
+        // runtime (stuck on preload.html). Instead, we rely on DOM-based
+        // hiding (MutationObserver + CSS) to prevent unwanted menu items from
+        // being visible. If a user somehow triggers a blocked command via
+        // keyboard shortcut, the DOM hiding ensures the menu item is not
+        // clickable, and Theia will handle the command gracefully.
     }
 
     // ─── Data Loading ──────────────────────────────────────────────────
@@ -558,23 +566,25 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     protected async newSketch(): Promise<void> {
         try {
             // ─── Step 1: Get sketch name from the user ───────────────
+            // Use the Arduino-style SingleTextInputDialog modal.
+            // Only prompts for sketch name — .airo extension is automatic.
             let name: string | undefined;
 
             // Try the Arduino-style SingleTextInputDialog first
             try {
-                name = await this.newSketchDialog.open();
+                const result = await this.newSketchDialog.open();
+                if (result === undefined) {
+                    // User cancelled the dialog
+                    return;
+                }
+                name = result.trim();
             } catch {
-                // Dialog was cancelled
-                return;
-            }
-
-            // Fallback to QuickInputService if dialog didn't return a name
-            if (!name) {
-                const defaultName = `sketch_${Date.now().toString(36)}`;
+                // SingleTextInputDialog may fail in some environments;
+                // fall back to QuickInputService
                 try {
                     name = await this.quickInputService.input({
                         title: 'New Sketch',
-                        value: defaultName,
+                        value: 'my_sketch',
                         prompt: 'Enter sketch name (a .airo file will be created automatically)',
                         placeHolder: 'sketch_name',
                         validateInput: async (input: string) => {
@@ -588,8 +598,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                         }
                     });
                 } catch {
-                    // Both dialog methods failed — use default name silently
-                    name = defaultName;
+                    // Both dialog methods failed — cannot proceed without a name
+                    return;
                 }
             }
 
@@ -1044,12 +1054,12 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             keybinding: 'ctrl+u'
         });
         keybindings.registerKeybinding({
-            command: AIRO_SERIAL_MONITOR_COMMAND.id,
-            keybinding: 'ctrl+shift+m'
-        });
-        keybindings.registerKeybinding({
             command: AIRO_NEW_SKETCH_COMMAND.id,
             keybinding: 'ctrl+shift+n'
+        });
+        keybindings.registerKeybinding({
+            command: AIRO_SERIAL_MONITOR_COMMAND.id,
+            keybinding: 'ctrl+shift+m'
         });
     }
 }
