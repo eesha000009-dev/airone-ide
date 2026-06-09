@@ -37,6 +37,7 @@ import {
     BoardInfo,
     SerialPortInfo
 } from '../common/airo-protocol';
+import { AiroEspFlashService } from './airo-esp-flash-service';
 
 // ─── Menu Paths ──────────────────────────────────────────────────────────────
 
@@ -149,6 +150,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     @inject(AiroSketchService) protected readonly sketchService!: AiroSketchClient;
     @inject(AiroSerialService) protected readonly serialService!: AiroSerialClient;
     @inject(AiroUploadService) protected readonly uploadService!: AiroUploadClient;
+    @inject(AiroEspFlashService) protected readonly espFlashService!: AiroEspFlashService;
 
     // ─── State ──────────────────────────────────────────────────────────
     protected _selectedBoard: BoardInfo | undefined;
@@ -536,6 +538,20 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
     // ─── Active .airo File Detection ──────────────────────────────────
 
+    /**
+     * Decode a base64-encoded string to an ArrayBuffer.
+     * Used to convert .bin firmware data from the backend RPC
+     * into the format esptool-js expects.
+     */
+    protected base64ToArrayBuffer(base64: string): ArrayBuffer {
+        const binaryString = atob(base64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
     protected getActiveAiroUri(): URI | undefined {
         try {
             const activeEditor = this.editorManager.activeEditor;
@@ -623,19 +639,26 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     /**
      * Upload the compiled sketch to the ESP32 board.
      *
-     * Uses the TRUSTED pipeline via `flashAiroFile` on the backend:
-     * 1. Compile .airo → C++ → .bin (via AiroCompilerService + Arduino CLI)
-     * 2. Auto-detect the ESP32 serial port (or use selected port)
-     * 3. Check/install esptool
-     * 4. Flash the .bin firmware using esptool.py
+     * Uses esptool-js + Web Serial API for a zero-dependency flash experience:
+     * 1. Compile .airo → C++ (transpiler) via backend
+     * 2. User selects a serial port via the native browser port picker
+     * 3. esptool-js connects to the ESP32 bootloader
+     * 4. Flash the .bin firmware directly from the frontend
      *
-     * The backend resolves the binary path correctly — no more guessing
-     * from the URI path.
+     * No Python, no esptool.py, no Arduino CLI required.
      */
     protected async upload(): Promise<void> {
         const uri = this.getActiveAiroUri();
         if (!uri) {
             this.messageService.error('No .airo file open. Create or open a .airo sketch first.');
+            return;
+        }
+
+        // Check if Web Serial API is available
+        if (!this.espFlashService.isWebSerialAvailable()) {
+            this.messageService.error(
+                'Web Serial API not available. Please use the Airone Electron app for ESP32 flashing.'
+            );
             return;
         }
 
@@ -647,107 +670,113 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         const boardLabel = this._selectedBoard ? this._selectedBoard.name : 'ESP32 DevKit';
         const chipType = this._selectedBoard ? this._selectedBoard.platform : 'esp32';
         channel.append(`Board: ${boardLabel} (${chipType})\n`);
+        channel.append('Flash method: esptool-js (Web Serial API)\n');
 
-        // ─── Step 1: Detect port ────────────────────────────────────
-        channel.append('Step 1: Detecting serial port...\n');
+        // ─── Step 1: Compile .airo → C++ → .bin (via backend) ────────
+        channel.append('\nStep 1: Compiling .airo sketch...\n');
 
-        let portPath = this._selectedPort?.path;
-        if (!portPath) {
-            try {
-                const detected = await this.uploadService.detectEspPort();
-                if (detected) {
-                    portPath = detected.path;
-                    this._selectedPort = detected;
-                    channel.append(`✓ Auto-detected port: ${detected.path}`);
-                    if (detected.manufacturer) {
-                        channel.append(` (${detected.manufacturer})`);
-                    }
-                    channel.append('\n');
-                } else {
-                    channel.append('✗ No serial port detected.\n');
-                    this.messageService.warn('No ESP32 board detected. Connect your board and select a port.');
-                    await this.doSelectPort();
-                    if (!this._selectedPort) {
-                        this._compiling = false;
-                        return;
-                    }
-                    portPath = this._selectedPort.path;
-                }
-            } catch (err: any) {
-                channel.append(`Port detection error: ${err.message}\n`);
-                this.messageService.warn('Could not auto-detect port. Please select one manually.');
-                await this.doSelectPort();
-                if (!this._selectedPort) {
-                    this._compiling = false;
-                    return;
-                }
-                portPath = this._selectedPort.path;
-            }
-        } else {
-            channel.append(`Using selected port: ${portPath}\n`);
-        }
-
-        // ─── Step 2: Check esptool ──────────────────────────────────
-        channel.append('\nStep 2: Checking esptool...\n');
-
-        let esptoolAvailable = false;
+        let binaryPath: string | undefined;
         try {
-            esptoolAvailable = await this.uploadService.isEsptoolAvailable();
-        } catch { /* ignore */ }
+            const compileResult = await this.uploadService.compileAiroFile(
+                uri.toString(),
+                chipType
+            );
 
-        if (!esptoolAvailable) {
-            channel.append('⚠ esptool not found. Attempting to install via pip...\n');
-            this.messageService.info('esptool not found. Installing via pip... This may take a moment.');
+            channel.append(compileResult.output + '\n');
 
-            try {
-                const installed = await this.uploadService.installEsptool();
-                if (installed) {
-                    channel.append('✓ esptool installed successfully!\n');
-                    esptoolAvailable = true;
-                } else {
-                    channel.append('✗ esptool installation failed.\n');
-                    channel.append('Install manually: pip install esptool\n');
-                    this.messageService.error(
-                        'esptool installation failed. Install it manually: pip install esptool'
-                    );
-                    this._compiling = false;
-                    return;
+            if (!compileResult.success) {
+                channel.append('✗ Compilation failed.\n');
+                if (compileResult.error) {
+                    channel.append(`Error: ${compileResult.error}\n`);
                 }
-            } catch (err: any) {
-                channel.append(`esptool install error: ${err.message}\n`);
-                this.messageService.error('Could not install esptool: ' + err.message);
+                this.messageService.error('✗ Compilation failed — fix errors before uploading.');
                 this._compiling = false;
                 return;
             }
-        } else {
-            channel.append('✓ esptool found.\n');
+
+            channel.append('✓ Compilation successful.\n');
+            binaryPath = compileResult.binaryPath;
+
+            if (!binaryPath) {
+                channel.append('⚠ No .bin firmware produced (Arduino CLI may not be installed).\n');
+            } else {
+                channel.append(`✓ Firmware binary: ${binaryPath}\n`);
+            }
+
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            channel.append(`✗ Compilation error: ${message}\n`);
+            this.messageService.error('Compilation error: ' + message);
+            this._compiling = false;
+            return;
         }
 
-        // ─── Step 3: Compile + Flash via backend ────────────────────
-        // The backend's flashAiroFile handles the full TRUSTED pipeline:
-        //   .airo → C++ (transpiler) → .bin (Arduino CLI) → flash (esptool)
-        channel.append('\nStep 3: Compiling and flashing...\n');
-        channel.append('  Running TRUSTED pipeline: .airo → C++ → .bin → flash\n\n');
+        // ─── Step 2: Select port and flash via esptool-js ──────────
+        channel.append('\nStep 2: Selecting ESP32 port and flashing...\n');
+        channel.append('A port selection dialog will appear. Select your ESP32 board.\n');
 
         try {
-            const flashResult = await this.uploadService.flashAiroFile(
-                uri.toString(),
-                chipType,
-                portPath
-            );
-
-            if (flashResult.success) {
-                channel.append(flashResult.output + '\n');
-                channel.append('\n✓ Upload complete! Firmware flashed successfully.\n');
-                this.messageService.info('✓ Upload complete!');
-            } else {
-                channel.append(flashResult.output + '\n');
-                channel.append(`\n✗ Upload failed: ${flashResult.error || 'Unknown error'}\n`);
-                this.messageService.error('Upload failed: ' + (flashResult.error || 'Unknown error'));
+            // Determine flash offset based on board type
+            let flashAddress = 0x10000; // Default for ESP32
+            if (chipType === 'esp32s3' || chipType === 'esp32c3') {
+                flashAddress = 0x0;
+            } else if (chipType === 'esp8266') {
+                flashAddress = 0x10000;
             }
-        } catch (err: any) {
-            channel.append(`✗ Upload error: ${err.message}\n`);
-            this.messageService.error('Upload error: ' + err.message);
+
+            if (binaryPath) {
+                // Read the binary file from the backend via RPC
+                channel.append(`Reading firmware: ${binaryPath}\n`);
+                const binaryBase64 = await this.uploadService.readBinaryFile(binaryPath);
+
+                if (!binaryBase64) {
+                    channel.append('✗ Could not read firmware binary file.\n');
+                    this.messageService.error('Could not read the firmware binary. Try compiling first.');
+                    this._compiling = false;
+                    return;
+                }
+
+                // Decode base64 to ArrayBuffer for esptool-js
+                const binaryData = this.base64ToArrayBuffer(binaryBase64);
+
+                // Flash using esptool-js
+                const result = await this.espFlashService.connectAndFlash(
+                    binaryData,
+                    flashAddress,
+                    (percent, msg) => {
+                        if (percent >= 0) {
+                            channel.append(`  [${percent}%] ${msg}\n`);
+                        }
+                    }
+                );
+
+                if (result.success) {
+                    channel.append(result.output + '\n');
+                    channel.append(`\n✓ Upload complete! ${result.chipName ? `(${result.chipName})` : ''}\n`);
+                    this.messageService.info('✓ Upload complete! Firmware flashed successfully.');
+                } else {
+                    channel.append(result.output + '\n');
+                    channel.append(`\n✗ Upload failed: ${result.error || 'Unknown error'}\n`);
+                    this.messageService.error('Upload failed: ' + (result.error || 'Unknown error'));
+                }
+            } else {
+                // No binary — tell the user they need to compile first
+                channel.append('✗ No firmware binary (.bin) found.\n');
+                channel.append('  The sketch was compiled to C++, but no .bin firmware was produced.\n');
+                channel.append('  This means the Arduino CLI is not installed.\n');
+                channel.append('  You can install it manually:\n');
+                channel.append('    1. Download from: https://arduino.github.io/arduino-cli/latest/\n');
+                channel.append('    2. Run: arduino-cli config init\n');
+                channel.append('    3. Run: arduino-cli core install esp32:esp32\n');
+                channel.append('    4. Then try Upload again.\n');
+                this.messageService.warn(
+                    'No firmware binary produced. Arduino CLI may need to be installed for C++ compilation.'
+                );
+            }
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            channel.append(`✗ Upload error: ${message}\n`);
+            this.messageService.error('Upload error: ' + message);
         } finally {
             this._compiling = false;
         }

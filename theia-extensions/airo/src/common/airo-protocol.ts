@@ -129,6 +129,16 @@ export interface FlashResult {
     portUsed?: string;
 }
 
+export interface CompileResultBinary {
+    success: boolean;
+    output: string;
+    error?: string;
+    /** Path to the compiled .bin firmware file */
+    binaryPath?: string;
+    /** List of all generated files */
+    generatedFiles?: string[];
+}
+
 export interface AiroUploadClient {
     detectEspPort(): Promise<SerialPortInfo | undefined>;
     flash(request: FlashRequest): Promise<FlashResult>;
@@ -139,6 +149,16 @@ export interface AiroUploadClient {
      * Handles the full pipeline: compile → Arduino CLI build (if available) → esptool flash.
      */
     flashAiroFile(airoFilePath: string, chipType: string, portPath?: string): Promise<FlashResult>;
+    /**
+     * Compile an .airo file to produce a .bin firmware binary (no flashing).
+     * Used by the frontend esptool-js flash flow: compile on backend, flash on frontend.
+     */
+    compileAiroFile(airoFilePath: string, chipType: string): Promise<CompileResultBinary>;
+    /**
+     * Read a binary file and return it as a base64-encoded string.
+     * Used by the frontend to get .bin firmware data for esptool-js flashing.
+     */
+    readBinaryFile(filePath: string): Promise<string | undefined>;
 }
 
 // ─── DI Symbols ──────────────────────────────────────────────────────────────

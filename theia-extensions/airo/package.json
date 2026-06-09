@@ -22,21 +22,20 @@
   ],
   "dependencies": {
     "@theia/core": "1.72.0-next.42",
-    "@theia/monaco": "1.72.0-next.42",
     "@theia/editor": "1.72.0-next.42",
-    "@theia/output": "1.72.0-next.42",
-    "@theia/workspace": "1.72.0-next.42",
-    "@theia/process": "1.72.0-next.42",
-    "@theia/navigator": "1.72.0-next.42",
     "@theia/filesystem": "1.72.0-next.42",
-    "inversify": "^6.2.2",
-    "serialport": "^12.0.0",
-    "@serialport/parser-readline": "^12.0.0"
+    "@theia/monaco": "1.72.0-next.42",
+    "@theia/navigator": "1.72.0-next.42",
+    "@theia/output": "1.72.0-next.42",
+    "@theia/process": "1.72.0-next.42",
+    "@theia/workspace": "1.72.0-next.42",
+    "esptool-js": "^0.6.0",
+    "inversify": "^6.2.2"
   },
   "devDependencies": {
+    "css-loader": "^6.8.1",
     "rimraf": "^2.7.1",
-    "typescript": "^4.9.5",
-    "css-loader": "^6.8.1"
+    "typescript": "^4.9.5"
   },
   "scripts": {
     "clean": "rimraf lib *.tsbuildinfo",

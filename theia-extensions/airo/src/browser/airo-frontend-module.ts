@@ -22,6 +22,7 @@ import { AiroLanguageContribution } from './airo-language-contribution';
 // (core.newFile) is now overridden to create .airo sketches using Theia's
 // built-in SingleTextInputDialog. No separate dialog class needed.
 import { AiroSerialWidget } from './airo-serial-widget';
+import { AiroEspFlashService } from './airo-esp-flash-service';
 import { LanguageGrammarDefinitionContribution } from '@theia/monaco/lib/browser/textmate';
 import {
     AiroSketchService,
@@ -77,6 +78,12 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
         id: AiroSerialWidget.ID,
         createWidget: () => context.container.get<AiroSerialWidget>(AiroSerialWidget),
     })).inSingletonScope();
+
+    // ─── ESP32 Flash Service (esptool-js + Web Serial API) ────────────
+    // Frontend-only service that uses esptool-js for ESP32 detection
+    // and flashing via the Web Serial API. No Python or Arduino CLI needed.
+
+    bind(AiroEspFlashService).toSelf().inSingletonScope();
 
     // NOTE: AiroSidebarWidget and AiroSidebarContribution are intentionally
     // NOT registered. The sidebar has been removed per the Arduino-IDE

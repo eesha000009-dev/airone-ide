@@ -11,7 +11,7 @@ import { injectable, inject } from '@theia/core/shared/inversify';
 import { spawn, execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
-import { SerialPortInfo, FlashRequest, FlashResult } from '../common/airo-protocol';
+import { SerialPortInfo, FlashRequest, FlashResult, CompileResultBinary } from '../common/airo-protocol';
 import { AiroCompilerService } from './airo-compiler-service';
 
 // Re-export for convenience so consumers can import from either location
@@ -558,6 +558,93 @@ export class AiroUploadService {
         }
 
         return this.flash(flashRequest);
+    }
+
+    // ─── Compile-Only (for esptool-js frontend flashing) ──────────────
+
+    /**
+     * Compile an .airo file to produce a .bin firmware binary without flashing.
+     * This is used by the frontend esptool-js flash flow:
+     *   1. Backend compiles .airo → C++ → .bin
+     *   2. Frontend reads the .bin via readBinaryFile()
+     *   3. Frontend flashes using esptool-js + Web Serial API
+     *
+     * No Python, esptool.py, or serialport needed on the frontend side.
+     */
+    async compileAiroFile(airoFilePath: string, chipType: string): Promise<CompileResultBinary> {
+        // ── Resolve filesystem path ───────────────────────────────────
+        const fsPath = airoFilePath.startsWith('file://')
+            ? this.fsPathFromUri(airoFilePath)
+            : airoFilePath;
+
+        if (!fs.existsSync(fsPath)) {
+            return {
+                success: false,
+                output: '',
+                error: `File not found: ${fsPath}`,
+            };
+        }
+
+        const sketchName = path.basename(fsPath, '.airo');
+        const buildDir = path.join(path.dirname(fsPath), 'build');
+
+        // ── Compile .airo → C++ → .bin ────────────────────────────────
+        const compileResult = await this.compilerService.compile({
+            filePath: fsPath,
+            target: chipType,
+            outputDir: buildDir,
+        });
+
+        if (!compileResult.success) {
+            return {
+                success: false,
+                output: compileResult.output,
+                error: compileResult.error || 'Compilation failed',
+            };
+        }
+
+        // ── Locate the .bin firmware ──────────────────────────────────
+        let binaryPath = compileResult.binaryPath;
+
+        if (!binaryPath) {
+            // Check the build directory directly
+            const expectedBin = path.join(buildDir, `${sketchName}.ino.bin`);
+            if (fs.existsSync(expectedBin)) {
+                binaryPath = expectedBin;
+            } else {
+                // Try Arduino CLI build directly
+                const fqbn = chipType === 'esp8266'
+                    ? 'esp8266:esp8266:generic'
+                    : 'esp32:esp32:esp32';
+                const arduinoResult = await this.compilerService.tryArduinoBuild(buildDir, sketchName, fqbn);
+                if (arduinoResult && arduinoResult.success && arduinoResult.binaryPath) {
+                    binaryPath = arduinoResult.binaryPath;
+                }
+            }
+        }
+
+        return {
+            success: true,
+            output: compileResult.output,
+            binaryPath,
+            generatedFiles: compileResult.generatedFiles,
+        };
+    }
+
+    /**
+     * Read a binary file and return it as a base64-encoded string.
+     * The frontend can decode this to an ArrayBuffer for esptool-js.
+     */
+    async readBinaryFile(filePath: string): Promise<string | undefined> {
+        try {
+            if (!fs.existsSync(filePath)) {
+                return undefined;
+            }
+            const data = fs.readFileSync(filePath);
+            return data.toString('base64');
+        } catch {
+            return undefined;
+        }
     }
 
     // ─── Private Helpers ─────────────────────────────────────────────────
