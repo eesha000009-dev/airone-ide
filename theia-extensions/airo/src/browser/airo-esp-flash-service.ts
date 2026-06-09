@@ -232,16 +232,20 @@ export class AiroEspFlashService {
             onProgress?.(15, 'Starting flash...');
 
             const flashData = new Uint8Array(binaryBuffer);
-            await esploader.writeFlash(
-                [{ data: flashData, address: flashAddress }],
-                'keep',
-                'keep',
-                'keep',
-                false, // don't erase entire flash
-                true,  // compress
-                false, // verify
-                true,  // calculate MD5 hash
-            );
+            await esploader.writeFlash({
+                fileArray: [{ data: flashData, address: flashAddress }],
+                flashMode: 'keep',
+                flashFreq: 'keep',
+                flashSize: 'keep',
+                eraseAll: false,    // don't erase entire flash
+                compress: true,     // compress
+                reportProgress: (fileIndex: number, written: number, total: number) => {
+                    if (onProgress && total > 0) {
+                        const percent = Math.round((written / total) * 100);
+                        onProgress(percent, `Writing firmware... ${percent}%`);
+                    }
+                },
+            });
 
             log(`✓ Firmware flashed successfully to address 0x${flashAddress.toString(16)}`);
             log(`  Data size: ${flashData.length} bytes`);
@@ -250,7 +254,7 @@ export class AiroEspFlashService {
             // ── Step 4: Reset the board ─────────────────────────────────
             log('Step 4: Resetting board...');
             try {
-                await esploader.hardReset();
+                await esploader.after('hard_reset');
                 log('✓ Board reset. Firmware should now be running.');
             } catch {
                 log('⚠ Could not auto-reset. Press the EN/RST button on your board.');

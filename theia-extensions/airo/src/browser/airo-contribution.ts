@@ -202,10 +202,16 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
         // Close the GettingStarted widget if it's open
         try {
-            const { GettingStartedWidget } = await import('@theia/getting-started/lib/browser/getting-started-widget');
-            const widgets = this.widgetManager.getWidgets(GettingStartedWidget.ID);
-            for (const widget of widgets) {
-                widget.close();
+            // @theia/getting-started is an optional peer — it may not be installed.
+            // Use require() instead of import() to avoid a TS2307 at compile time.
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const mod = require('@theia/getting-started/lib/browser/getting-started-widget');
+            const GettingStartedWidget: { ID: string } = mod.GettingStartedWidget;
+            if (GettingStartedWidget?.ID) {
+                const widgets = this.widgetManager.getWidgets(GettingStartedWidget.ID);
+                for (const widget of widgets) {
+                    widget.close();
+                }
             }
         } catch {
             // GettingStarted may not be available; ignore

@@ -151,3 +151,26 @@ Stage Summary:
 - The extractZipManually method now uses .NET ZipFile via PowerShell as fallback
 - All CI builds now pass the "Build extensions" step
 - Remaining task: board/port detection for ESP32 (needs serialport npm integration)
+
+---
+Task ID: 4
+Agent: Main Agent
+Task: Fix 3 TypeScript build errors in airo extension (esptool-js API migration)
+
+Work Log:
+- Ran `npx tsc -b theia-extensions/airo` and found 3 errors:
+  1. TS2554: `writeFlash()` called with 8 positional args, but esptool-js v0.6.0 expects a single `FlashOptions` object
+  2. TS2339: `hardReset()` doesn't exist on ESPLoader — should use `after('hard_reset')`
+  3. TS2307: `@theia/getting-started` module not found (optional peer dependency)
+- Read esptool-js v0.6.0 type declarations (esploader.d.ts, flashOptions.d.ts, resetModes.d.ts)
+- Fix 1: Changed `writeFlash(arg1, arg2, ..., arg8)` → `writeFlash({ fileArray, flashMode, flashFreq, flashSize, eraseAll, compress, reportProgress })`
+- Fix 2: Changed `esploader.hardReset()` → `esploader.after('hard_reset')`
+- Fix 3: Changed `import('@theia/getting-started/...')` → `require('@theia/getting-started/...')` to avoid TS2307 at compile time while still handling missing module at runtime
+- Rebuilt: `npx tsc -b theia-extensions/airo` → 0 errors ✅
+
+Stage Summary:
+- All 3 airo extension build errors fixed
+- esptool-js API correctly uses FlashOptions object pattern
+- Board reset uses `after('hard_reset')` instead of non-existent `hardReset()`
+- GettingStarted import uses require() for optional peer dependency
+- airo extension now compiles cleanly
