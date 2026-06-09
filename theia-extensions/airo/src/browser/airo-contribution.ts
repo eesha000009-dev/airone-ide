@@ -791,7 +791,10 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                     if (trimmed.length > 63) {
                         return 'Sketch name is too long (max 63 characters).';
                     }
-                    return false;
+                    // IMPORTANT: Return '' (empty string) to indicate "valid" in Theia.
+                    // Returning `false` would DISABLE the OK button because Theia
+                    // interprets `false` as "invalid" (DialogError.getResult(false) = false).
+                    return '';
                 }
             });
 
