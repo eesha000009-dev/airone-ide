@@ -132,6 +132,59 @@ try {
             } catch (err) {
                 console.error('[Airone] Cache clearing setup failed:', err);
             }
+
+            // ═════════════════════════════════════════════════════════════
+            // AUTO-UPDATE PROXY SUPPORT
+            // ═════════════════════════════════════════════════════════════
+            // electron-updater uses Electron's net module for downloading
+            // updates. If the user is behind a proxy (common in corporate
+            // networks), the updater will fail with net::ERR_TIMED_OUT.
+            //
+            // Fix: Configure the session to respect system proxy settings
+            // and pass proxy config to electron-updater.
+            // ═════════════════════════════════════════════════════════════
+            try {
+                const session = electron.session && electron.session.defaultSession;
+                if (session) {
+                    // Resolve system proxy for the GitHub update URL
+                    session.resolveProxy('https://github.com').then(proxy => {
+                        console.log(`[Airone] System proxy for github.com: ${proxy}`);
+
+                        // If a proxy is detected, configure it for electron-updater
+                        if (proxy && proxy !== 'DIRECT') {
+                            // Store the proxy for later use by electron-updater
+                            // electron-updater reads GH_TOKEN and proxy env vars
+                            const proxyUrl = proxy.replace(/^PROXY\s+/i, '');
+                            if (proxyUrl) {
+                                console.log(`[Airone] Configuring proxy for auto-updater: ${proxyUrl}`);
+                                process.env.HTTP_PROXY = process.env.HTTP_PROXY || `http://${proxyUrl}`;
+                                process.env.HTTPS_PROXY = process.env.HTTPS_PROXY || `http://${proxyUrl}`;
+                            }
+                        }
+                    }).catch(err => {
+                        console.error('[Airone] Failed to resolve proxy:', err);
+                    });
+
+                    // Also set up proxy authentication handler
+                    // This handles the case where the proxy requires credentials
+                    session.on('login', (event, webContents, request, authInfo, callback) => {
+                        // If authInfo has proxy credentials requested, we can
+                        // handle it here. For now, just log it.
+                        if (authInfo.isProxy) {
+                            console.log(`[Airone] Proxy authentication required for: ${authInfo.host}`);
+                            // Users can set PROXY_USER and PROXY_PASS env vars
+                            const proxyUser = process.env.PROXY_USER;
+                            const proxyPass = process.env.PROXY_PASS;
+                            if (proxyUser && proxyPass) {
+                                event.preventDefault();
+                                callback(proxyUser, proxyPass);
+                            }
+                        }
+                    });
+                }
+            } catch (err) {
+                console.error('[Airone] Proxy setup failed:', err);
+            }
         });
     }
 } catch (err) {

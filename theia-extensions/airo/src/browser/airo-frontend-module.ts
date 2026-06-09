@@ -18,10 +18,9 @@ import { WebSocketConnectionProvider } from '@theia/core/lib/browser/messaging';
 import { AiroContribution } from './airo-contribution';
 import { AiroToolbarContribution } from './airo-toolbar-contribution';
 import { AiroLanguageContribution } from './airo-language-contribution';
-// NOTE: NewSketchDialog is NOT bound in Inversify. It extends SingleTextInputDialog
-// which creates DOM elements in its constructor. Binding it as an Inversify singleton
-// could crash the frontend module (stuck on preload.html). Instead, it is
-// instantiated on-demand in AiroContribution.newSketch().
+// NOTE: NewSketchDialog has been REMOVED. The existing Theia "New File" command
+// (core.newFile) is now overridden to create .airo sketches using Theia's
+// built-in SingleTextInputDialog. No separate dialog class needed.
 import { AiroSerialWidget } from './airo-serial-widget';
 import { LanguageGrammarDefinitionContribution } from '@theia/monaco/lib/browser/textmate';
 import {

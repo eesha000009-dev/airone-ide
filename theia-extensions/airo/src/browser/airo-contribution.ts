@@ -24,7 +24,7 @@ import { WidgetManager } from '@theia/core/lib/browser';
 import { CommandService } from '@theia/core/lib/common/command';
 import { QuickInputService, QuickPickItem } from '@theia/core/lib/common/quick-pick-service';
 import { AiroSerialWidget } from './airo-serial-widget';
-import { NewSketchDialog } from './new-sketch-dialog';
+import { SingleTextInputDialog } from '@theia/core/lib/browser/dialogs';
 import { CommonMenus } from '@theia/core/lib/browser/common-frontend-contribution';
 import { optional } from '@theia/core/shared/inversify';
 import {
@@ -67,11 +67,9 @@ export const AIRO_UPLOAD_COMMAND: Command = {
     category: 'Airone'
 };
 
-export const AIRO_NEW_SKETCH_COMMAND: Command = {
-    id: 'airo.newSketch',
-    label: 'New Sketch',
-    category: 'Airone'
-};
+// NOTE: AIRO_NEW_SKETCH_COMMAND has been REMOVED.
+// The existing Theia "New File" command (core.newFile) is now overridden
+// to create .airo sketches instead. No separate command needed.
 
 export const AIRO_EXAMPLES_COMMAND: Command = {
     id: 'airo.examples',
@@ -147,11 +145,6 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     @inject(WidgetManager) protected readonly widgetManager!: WidgetManager;
     @inject(QuickInputService) @optional() protected readonly quickInputService!: QuickInputService;
     @inject(CommandService) protected readonly commandService!: CommandService;
-
-    // NOTE: NewSketchDialog is NOT injected via Inversify. It extends
-    // SingleTextInputDialog which creates DOM elements in its constructor.
-    // Creating it as an Inversify singleton could crash the frontend.
-    // Instead, it's instantiated on-demand in newSketch().
 
     @inject(AiroSketchService) protected readonly sketchService!: AiroSketchClient;
     @inject(AiroSerialService) protected readonly serialService!: AiroSerialClient;
@@ -325,7 +318,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                         btn.addEventListener('click', (e: MouseEvent) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            this.commandService.executeCommand('airo.newSketch');
+                            this.commandService.executeCommand('core.newFile');
                         });
 
                         // Insert the button at the end of the tab bar content
@@ -405,16 +398,15 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
      */
     protected setupMenuItemHiding(): void {
         const unwantedCommands = [
-            // NOTE: We do NOT hide 'core.newFile' or 'workbench.action.files.newUntitledFile'
-            // because we repurpose the New File command to create a new .airo sketch.
+            // NOTE: We do NOT hide 'core.newFile', 'workbench.action.files.newUntitledFile',
+            // 'file.newFile', 'file:newFile', or 'navigator.newFile' because we repurpose
+            // the New File command to create a new .airo sketch.
             // The command handler is overridden in registerCommands().
             'workbench.action.files.newFile',
             'workbench.action.files.newFolder',
             'workbench.action.files.openFile',
             'workbench.action.files.openFolder',
             'workbench.action.newWindow',
-            'file.newFile',
-            'file:newFile',
             'file.newFolder',
             'file:newFolder',
             'core.newFolder',
@@ -426,7 +418,6 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             'workspace:openWorkspace',
             'workspace:openRecent',
             'workspace:addFolder',
-            'navigator.newFile',
         ];
 
         const hideUnwantedItems = () => {
@@ -769,69 +760,51 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     /**
      * Create a new Airone sketch.
      *
-     * Uses a custom SingleTextInputDialog (like Arduino IDE) that only prompts
-     * for the sketch name. The .airo extension is fixed — no need for the user
-     * to specify it. A folder named after the sketch is created containing
-     * `<name>.airo` with the Airone language template pre-filled.
+     * Uses Theia's built-in SingleTextInputDialog — the same dialog that
+     * the normal "New File" command uses — but configured for .airo sketches.
+     * The .airo extension is fixed and automatic. The user only enters a
+     * sketch name, and a folder + .airo file with template is created.
      *
-     * Fallback: if the dialog fails to open (rare in some Electron envs),
-     * the QuickInputService is used as a backup.
+     * This method is called by the overridden core.newFile command handler
+     * AND by the "+" button in the tab bar.
      */
     protected async newSketch(): Promise<void> {
         try {
             // ─── Step 1: Get sketch name from the user ───────────────
-            // Use the Arduino-style SingleTextInputDialog modal.
-            // Only prompts for sketch name — .airo extension is automatic.
-            let name: string | undefined;
-
-            // Try the Arduino-style SingleTextInputDialog first
-            // IMPORTANT: Create the dialog on-demand, NOT via Inversify injection.
-            // SingleTextInputDialog creates DOM elements in its constructor,
-            // and if it fails as an Inversify singleton, it crashes the entire
-            // Theia frontend (stuck on preload.html). Creating on-demand lets
-            // us catch the error and fall back gracefully.
-            try {
-                const dialog = new NewSketchDialog();
-                const result = await dialog.open();
-                if (result === undefined) {
-                    // User cancelled the dialog
-                    return;
-                }
-                name = result.trim();
-            } catch {
-                // SingleTextInputDialog may fail in some environments;
-                // fall back to QuickInputService
-                try {
-                    if (!this.quickInputService) {
-                        // QuickInputService not available either
-                        this.messageService.warn('Cannot open sketch dialog. Please try again.');
-                        return;
+            // Use Theia's built-in SingleTextInputDialog — the same dialog
+            // the normal "New File" popup uses, but configured for .airo.
+            const dialog = new SingleTextInputDialog({
+                title: 'New Sketch',
+                initialValue: 'my_sketch',
+                placeholder: 'Enter sketch name (.airo extension is automatic)',
+                validate: (value: string) => {
+                    const trimmed = value.trim();
+                    if (!trimmed) {
+                        return 'Sketch name cannot be empty.';
                     }
-                    name = await this.quickInputService.input({
-                        title: 'New Sketch',
-                        value: 'my_sketch',
-                        prompt: 'Enter sketch name (a .airo file will be created automatically)',
-                        placeHolder: 'sketch_name',
-                        validateInput: async (input: string) => {
-                            if (!input || input.trim().length === 0) {
-                                return 'Sketch name cannot be empty';
-                            }
-                            if (!/^[a-zA-Z0-9_-]+$/.test(input.trim())) {
-                                return 'Only letters, numbers, underscores, and hyphens allowed';
-                            }
-                            return undefined;
-                        }
-                    });
-                } catch {
-                    // Both dialog methods failed — cannot proceed without a name
-                    return;
+                    if (!/^[a-zA-Z]/.test(trimmed)) {
+                        return 'Sketch name must start with a letter.';
+                    }
+                    if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(trimmed)) {
+                        return 'Only letters, numbers, underscores, and hyphens allowed.';
+                    }
+                    if (trimmed.length > 63) {
+                        return 'Sketch name is too long (max 63 characters).';
+                    }
+                    return false;
                 }
-            }
+            });
 
-            if (!name || name.trim().length === 0) {
+            const result = await dialog.open();
+            if (result === undefined) {
+                // User cancelled
                 return;
             }
-            const sketchName = name.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+            const name = result.trim();
+            if (!name || name.length === 0) {
+                return;
+            }
+            const sketchName = name.replace(/[^a-zA-Z0-9_-]/g, '_');
 
             // ─── Step 2: Create the sketch via backend ──────────────
             this.messageService.info(`Creating sketch "${sketchName}"...`);
@@ -1050,24 +1023,30 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             execute: () => this.upload(),
             isEnabled: () => !this._compiling
         });
-        commands.registerCommand(AIRO_NEW_SKETCH_COMMAND, {
-            execute: () => this.newSketch(),
-            isEnabled: () => true
-        });
+        // ─── Override Theia's "New File" command as "New Sketch" ───────
+        // We UNREGISTER the existing core.newFile handler first, then
+        // re-register it with our own handler that creates .airo sketches.
+        // This way the normal "New File" popup/dialog becomes our sketch dialog.
+        try { commands.unregisterCommand({ id: 'core.newFile' }); } catch { /* not registered yet */ }
+        try { commands.unregisterCommand({ id: 'workbench.action.files.newUntitledFile' }); } catch { /* not registered yet */ }
+        try { commands.unregisterCommand({ id: 'file.newFile' }); } catch { /* not registered yet */ }
+        try { commands.unregisterCommand({ id: 'file:newFile' }); } catch { /* not registered yet */ }
 
-        // ─── Repurpose Theia's "New File" command as "New Sketch" ───────
-        // Instead of hiding the New File menu item, we override its handler
-        // so that clicking "New File" (or Ctrl+N) opens our NewSketchDialog.
-        // The .airo extension is fixed — users only enter a sketch name.
+        // Register our handler for "New File" → creates .airo sketch
+        commands.registerCommand({ id: 'core.newFile', label: 'New Sketch', category: 'Airone' }, {
+            execute: () => this.newSketch(),
+            isEnabled: () => true,
+            isVisible: () => true
+        });
         try {
-            commands.registerCommand({ id: 'core.newFile', label: 'New Sketch' }, {
+            commands.registerCommand({ id: 'workbench.action.files.newUntitledFile', label: 'New Sketch', category: 'Airone' }, {
                 execute: () => this.newSketch(),
                 isEnabled: () => true,
                 isVisible: () => true
             });
-        } catch { /* may already be registered by Theia core */ }
+        } catch { /* may already be registered */ }
         try {
-            commands.registerCommand({ id: 'workbench.action.files.newUntitledFile', label: 'New Sketch' }, {
+            commands.registerCommand({ id: 'file.newFile', label: 'New Sketch', category: 'Airone' }, {
                 execute: () => this.newSketch(),
                 isEnabled: () => true,
                 isVisible: () => true
@@ -1174,22 +1153,19 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         // Airone only wants: New Sketch, Examples, Save, Save As, Auto Save,
         // Preferences, Close Editor, Close Window.
         const unwantedFileCommands = [
-            'workbench.action.files.newUntitledFile',  // New Text File
-            'workbench.action.files.newFile',           // New File...
+            // NOTE: We do NOT unregister core.newFile, file.newFile, navigator.newFile,
+            // or workbench.action.files.newUntitledFile — we override them instead.
+            'workbench.action.files.newUntitledFile',  // New Text File (we override this)
+            'workbench.action.files.newFile',           // New File... (we override via core.newFile)
             'workbench.action.files.newFolder',          // New Folder
             'workbench.action.files.openFile',           // Open File
             'workbench.action.files.openFolder',         // Open Folder
             'workbench.action.newWindow',               // New Window
-            'file.newFile',                             // workspace New File
-            'file:newFile',                             // workspace New File (alt)
             'file.newFolder',                           // New Folder
-            'core.newFile',                             // core New File
-            'core:newFile',                             // core New File (alt)
             'core.newFolder',                           // core New Folder
             'core:newFolder',                           // core New Folder (alt)
             'core.openFile',                            // core Open File
             'core:openFile',                            // core Open File (alt)
-            'navigator.newFile',                        // navigator New File
             'workspace:openFile',                       // Open File...
             'workspace:openFolder',                     // Open Folder...
             'workspace:openWorkspace',                  // Open Workspace from File...
@@ -1207,8 +1183,9 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         }
 
         // ─── File menu additions ────────────────────────────────────
+        // "New Sketch" is now handled by the overridden core.newFile command
         menus.registerMenuAction(CommonMenus.FILE, {
-            commandId: AIRO_NEW_SKETCH_COMMAND.id,
+            commandId: 'core.newFile',
             label: 'New Sketch',
             order: '0'
         });
@@ -1298,8 +1275,13 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             keybinding: 'ctrl+u'
         });
         keybindings.registerKeybinding({
-            command: AIRO_NEW_SKETCH_COMMAND.id,
+            command: 'core.newFile',
             keybinding: 'ctrl+shift+n'
+        });
+        // Also bind Ctrl+N to New Sketch (common shortcut for new file)
+        keybindings.registerKeybinding({
+            command: 'core.newFile',
+            keybinding: 'ctrl+n'
         });
         keybindings.registerKeybinding({
             command: AIRO_SERIAL_MONITOR_COMMAND.id,
