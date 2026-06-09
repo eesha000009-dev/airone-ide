@@ -13,6 +13,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as https from 'https';
+import * as http from 'http';
 import { CompileRequest, CompileResult } from '../common/airo-protocol';
 import { AiroBuiltInCompiler } from './airo-built-in-compiler';
 import { AiroTranspiler } from './airo-transpiler';
@@ -417,7 +418,14 @@ export class AiroCompilerService {
 
         try {
             // Check if the core is already installed
-            const coreList = execSync(`"${arduinoCli}" core list`, {
+            // IMPORTANT: Must use --config-dir to match the directory where
+            // we install cores. Without this, arduino-cli looks in the default
+            // location and won't find our ESP32 core.
+            const configDir = path.join(os.homedir(), '.airone', 'arduino-cli');
+            const coreListArgs = fs.existsSync(configDir)
+                ? `"${arduinoCli}" core list --config-dir "${configDir}"`
+                : `"${arduinoCli}" core list`;
+            const coreList = execSync(coreListArgs, {
                 encoding: 'utf8',
                 timeout: 15000,
             });
@@ -446,6 +454,21 @@ export class AiroCompilerService {
                     timeout: 10000,
                 });
             } catch { /* may already exist */ }
+
+            // Set data directory to our custom location so cores/packages
+            // are stored alongside our config (not in the default ~/.arduino15)
+            try {
+                execSync(`"${arduinoCli}" config set directories.data "${path.join(configDir, 'data')}" --dest-dir "${configDir}"`, {
+                    encoding: 'utf8',
+                    timeout: 10000,
+                });
+            } catch { /* may already be set */ }
+            try {
+                execSync(`"${arduinoCli}" config set directories.downloads "${path.join(configDir, 'staging')}" --dest-dir "${configDir}"`, {
+                    encoding: 'utf8',
+                    timeout: 10000,
+                });
+            } catch { /* may already be set */ }
 
             // Add ESP32 board index URL
             const esp32Url = 'https://espressif.github.io/arduino-esp32/package_esp32_index.json';
@@ -898,6 +921,8 @@ loop {
 
     /**
      * Download a file from a URL with redirect support.
+     * Handles both HTTP and HTTPS redirects (GitHub releases may redirect
+     * to objects.githubusercontent.com which is HTTPS, but some CDNs use HTTP).
      */
     private downloadFile(url: string, destPath: string): Promise<void> {
         return new Promise((resolve, reject) => {
@@ -908,6 +933,8 @@ loop {
                 }
 
                 const parsedUrl = new URL(currentUrl);
+                const isHttps = parsedUrl.protocol === 'https:';
+                const httpModule = isHttps ? https : http;
                 const options: https.RequestOptions = {
                     hostname: parsedUrl.hostname,
                     path: parsedUrl.pathname + parsedUrl.search,
@@ -915,7 +942,7 @@ loop {
                     headers: { 'User-Agent': 'Airone-IDE/1.0' },
                 };
 
-                const req = https.request(options, (res) => {
+                const req = httpModule.request(options, (res) => {
                     // Handle redirects
                     if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                         doDownload(res.headers.location, redirectCount + 1);
@@ -965,16 +992,25 @@ loop {
                 let extracted = false;
 
                 // Method 1: PowerShell Expand-Archive
+                // Use -EncodedCommand to avoid all quoting/escaping issues with
+                // paths that contain spaces, parentheses, or special characters.
                 if (!extracted) {
                     try {
-                        // Escape single quotes in paths for PowerShell
-                        const safeArchivePath = archivePath.replace(/'/g, "''");
-                        const safeExtractDir = extractDir.replace(/'/g, "''");
-                        const psCmd = `Expand-Archive -Path '${safeArchivePath}' -DestinationPath '${safeExtractDir}' -Force`;
-                        execSync(`powershell -NoProfile -Command "${psCmd}"`, { timeout: 60000 });
+                        const psScript = `Expand-Archive -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${extractDir.replace(/'/g, "''")}' -Force`;
+                        const encodedCmd = Buffer.from(psScript).toString('base64');
+                        execSync(`powershell -NoProfile -EncodedCommand ${encodedCmd}`, { timeout: 60000 });
                         extracted = true;
                     } catch (psErr) {
-                        console.warn('[AiroCompilerService] PowerShell extraction failed, trying fallback:', psErr instanceof Error ? psErr.message : String(psErr));
+                        // Fallback: try the old quoting approach (for older PowerShell)
+                        try {
+                            const safeArchivePath = archivePath.replace(/'/g, "''");
+                            const safeExtractDir = extractDir.replace(/'/g, "''");
+                            const psCmd = `Expand-Archive -Path '${safeArchivePath}' -DestinationPath '${safeExtractDir}' -Force`;
+                            execSync(`powershell -NoProfile -Command "${psCmd}"`, { timeout: 60000 });
+                            extracted = true;
+                        } catch (psErr2) {
+                            console.warn('[AiroCompilerService] PowerShell extraction failed, trying fallback:', psErr2 instanceof Error ? psErr2.message : String(psErr2));
+                        }
                     }
                 }
 
