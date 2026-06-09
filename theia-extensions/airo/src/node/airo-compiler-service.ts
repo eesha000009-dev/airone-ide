@@ -13,7 +13,6 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as https from 'https';
-import * as zlib from 'zlib';
 import { CompileRequest, CompileResult } from '../common/airo-protocol';
 import { AiroBuiltInCompiler } from './airo-built-in-compiler';
 import { AiroTranspiler } from './airo-transpiler';
@@ -1059,36 +1058,17 @@ loop {
     }
 
     /**
-     * Manually extract a ZIP file using Node.js built-in modules.
-     * Fallback when PowerShell and tar are not available on Windows.
+     * Manually extract a ZIP file using .NET ZipFile via PowerShell.
+     * Fallback when Expand-Archive and tar are not available on Windows.
      */
     private async extractZipManually(archivePath: string, destDir: string): Promise<boolean> {
-        const { createReadStream } = require('fs');
-        const { pipeline } = require('stream/promises');
-        const zlib = require('zlib');
-
-        // Use the unzip-cmd approach: pipe through zlib.createUnzip()
-        // This is a simplified ZIP reader that handles the common case
-        // of a single top-level directory with files
         return new Promise((resolve) => {
             try {
-                // For ZIP files, we need a proper ZIP parser.
-                // Use the yauzl-like approach with Node.js Buffer.
-                // However, since we may not have yauzl installed,
-                // let's try using the built-in tar command first
-                // (already tried above), and if that fails, try
-                // the 'unzip' command which may be available on some systems.
+                // Replace backslashes with forward slashes for PowerShell compatibility
+                const safeArchive = archivePath.replace(/\\/g, '/');
+                const safeDest = destDir.replace(/\\/g, '/');
 
-                // Actually, let's use a different approach:
-                // Read the ZIP file and use the built-in zlib to decompress
-                // This requires understanding the ZIP format...
-
-                // Simplest reliable approach: Use Node's child_process with
-                // PowerShell but with a different syntax that handles paths better
-                const safeArchive = archivePath.replace(/\/g, '/');
-                const safeDest = destDir.replace(/\/g, '/');
-
-                // Try using .NET's ZipFile via PowerShell (more reliable than Expand-Archive)
+                // Use .NET's ZipFile via PowerShell (more reliable than Expand-Archive)
                 const psCmd =
                     `Add-Type -AssemblyName System.IO.Compression.FileSystem; ` +
                     `[System.IO.Compression.ZipFile]::ExtractToDirectory('${safeArchive}', '${safeDest}', $true)`;
