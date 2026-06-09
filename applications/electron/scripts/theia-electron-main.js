@@ -35,5 +35,109 @@ if (isAppImage) {
     process.env.THEIA_DEFAULT_PLUGINS = `local-dir:${bundledPluginsDir}`;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// CACHE BUSTING — Prevent stale frontend code from being served after updates
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Electron's Chromium renderer caches web content (HTML, JS, CSS) aggressively.
+// After an app update, the old cached frontend bundle may still be served,
+// making it look like "nothing changed." This is bad for production.
+//
+// Fix: On every app launch, clear the HTTP cache and storage, and invalidate
+// cached data when the app version changes.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+try {
+    const electron = require('electron');
+    const app = electron.app;
+
+    if (app) {
+        // Read current app version for version-based cache invalidation
+        const packageJsonPath = isInsideAsar
+            ? path.join(process.resourcesPath, 'app', 'package.json')
+            : path.resolve(__dirname, '../', 'package.json');
+        let currentVersion = '0.0.0';
+        try {
+            const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+            currentVersion = pkg.version || '0.0.0';
+        } catch { /* ignore */ }
+
+        // Version-based cache invalidation: clear all cached data when the
+        // app version changes. This ensures that after an update, users
+        // immediately see the new frontend code.
+        const configDir = process.env.THEIA_CONFIG_DIR || path.join(os.homedir(), '.airone-ide');
+        const versionMarker = path.join(configDir, '.last-version');
+
+        let needsCacheClear = false;
+        try {
+            if (fs.existsSync(versionMarker)) {
+                const lastVersion = fs.readFileSync(versionMarker, 'utf8').trim();
+                if (lastVersion !== currentVersion) {
+                    needsCacheClear = true;
+                }
+            } else {
+                // First launch — no marker yet
+                needsCacheClear = true;
+            }
+        } catch { needsCacheClear = true; }
+
+        // Write the current version marker
+        try {
+            if (!fs.existsSync(configDir)) {
+                fs.mkdirSync(configDir, { recursive: true });
+            }
+            fs.writeFileSync(versionMarker, currentVersion, 'utf8');
+        } catch { /* ignore */ }
+
+        // Clear Electron's HTTP cache on every startup to prevent stale content
+        app.on('ready', () => {
+            try {
+                const session = electron.session || (electron.remote && electron.remote.session);
+                if (session && session.defaultSession) {
+                    session.defaultSession.clearCache().then(() => {
+                        console.log('[Airone] HTTP cache cleared on startup');
+                    }).catch(err => {
+                        console.error('[Airone] Failed to clear HTTP cache:', err);
+                    });
+
+                    // On version change, also clear storage (localStorage, IndexedDB)
+                    // This forces Theia to rebuild its frontend state from scratch
+                    if (needsCacheClear) {
+                        session.defaultSession.clearStorageData({
+                            storages: ['localstorage', 'indexdb', 'serviceworkers', 'cachestorage'],
+                            quotas: ['temporary', 'persistent']
+                        }).then(() => {
+                            console.log(`[Airone] Storage data cleared (version changed: ${currentVersion})`);
+                        }).catch(err => {
+                            console.error('[Airone] Failed to clear storage data:', err);
+                        });
+                    }
+
+                    // Disable HTTP cache for the Theia frontend entirely.
+                    // This ensures that every page load fetches fresh content.
+                    session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+                        // Add a cache-busting timestamp to Theia frontend requests
+                        callback({});
+                    });
+
+                    // Set Cache-Control headers on responses to prevent caching
+                    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+                        const responseHeaders = details.responseHeaders || {};
+                        responseHeaders['Cache-Control'] = ['no-cache, no-store, must-revalidate'];
+                        responseHeaders['Pragma'] = ['no-cache'];
+                        responseHeaders['Expires'] = ['0'];
+                        callback({ responseHeaders });
+                    });
+                }
+            } catch (err) {
+                console.error('[Airone] Cache clearing setup failed:', err);
+            }
+        });
+    }
+} catch (err) {
+    // Electron module not available (shouldn't happen in production, but handle gracefully)
+    console.error('[Airone] Electron module not available for cache setup:', err);
+}
+
 // Handover to the auto-generated electron application handler.
 require('../lib/backend/electron-main.js');

@@ -20,6 +20,16 @@ import { GettingStartedWidget } from '@theia/getting-started/lib/browser/getting
 import { VSXEnvironment } from '@theia/vsx-registry/lib/common/vsx-environment';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
 
+/**
+ * Custom Getting Started widget for Airone IDE.
+ *
+ * The welcome page is DISABLED by default — Airone opens directly into the
+ * editor with a default sketch. The GettingStarted widget is kept registered
+ * so users can still access it via the Help menu, but it auto-closes on
+ * startup so the editor is the primary view.
+ *
+ * When opened manually (Help → Welcome), the full welcome page renders.
+ */
 @injectable()
 export class TheiaIDEGettingStartedWidget extends GettingStartedWidget {
 
@@ -34,15 +44,33 @@ export class TheiaIDEGettingStartedWidget extends GettingStartedWidget {
 
     protected vscodeApiVersion: string;
 
+    /** Whether this widget is being auto-opened on startup (should close immediately) */
+    protected isAutoOpened = true;
+
     protected async doInit(): Promise<void> {
         super.doInit();
         this.vscodeApiVersion = await this.environment.getVscodeApiVersion();
         await this.preferenceService.ready;
         this.update();
+
+        // If this was auto-opened on startup, close it immediately so the
+        // editor area shows instead of the welcome page.
+        // The AiroContribution will create a default sketch after this.
+        if (this.isAutoOpened) {
+            this.isAutoOpened = false;
+            // Delay close slightly to let the shell finish layout
+            setTimeout(() => {
+                try {
+                    this.close();
+                } catch { /* widget may already be disposed */ }
+            }, 100);
+        }
     }
 
     protected onActivateRequest(msg: Message): void {
         super.onActivateRequest(msg);
+        // When opened manually (not on startup), show the full welcome page
+        this.isAutoOpened = false;
         const htmlElement = document.getElementById('alwaysShowWelcomePage');
         if (htmlElement) {
             htmlElement.focus();
@@ -50,6 +78,12 @@ export class TheiaIDEGettingStartedWidget extends GettingStartedWidget {
     }
 
     protected render(): React.ReactNode {
+        // If auto-opened on startup, render nothing (will close immediately)
+        if (this.isAutoOpened) {
+            return <div style={{ display: 'none' }} />;
+        }
+
+        // Full welcome page when opened manually via Help menu
         return <div className='gs-container'>
             <div className='gs-content-container'>
                 <div className='gs-float'>

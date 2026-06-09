@@ -41,7 +41,9 @@
           "workbench.editor.showTabs": "single",
           "workbench.editor.highlightModifiedTabs": false,
           "explorer.autoReveal": true,
-          "files.autoSave": "afterDelay"
+          "files.autoSave": "afterDelay",
+          "gettingStarted.alwaysShowWelcomePage": false,
+          "workbench.startupEditor": "none"
         },
         "electron": {
           "showWindowEarly": false,

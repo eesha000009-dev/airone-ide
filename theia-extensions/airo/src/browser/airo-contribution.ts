@@ -177,17 +177,80 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     // ─── FrontendApplicationContribution ────────────────────────────────
 
     /**
-     * After the application starts, programmatically remove unwanted
-     * Theia menu items from the File menu dropdown.
-     *
-     * We use a delayed approach here because Theia's CommonFrontendContribution
-     * may register its menus AFTER our registerMenus() is called. By doing
-     * cleanup in onStart() with a delay, we ensure all contributions have
-     * been registered before we remove the ones we don't want.
+     * After the application starts:
+     * 1. Close the GettingStarted/Welcome widget (if auto-opened)
+     * 2. Create and open a default .airo sketch so the user sees the editor
+     * 3. Hide unwanted Theia menu items
      */
     onStart?(): void {
-        // Use MutationObserver to hide unwanted dropdown menu items once they appear
+        // Hide unwanted dropdown menu items via MutationObserver
         this.setupMenuItemHiding();
+
+        // Close the GettingStarted widget and open a default sketch
+        this.closeWelcomeAndOpenDefaultSketch();
+    }
+
+    /**
+     * On startup, close the GettingStarted (welcome) widget and create
+     * a default .airo sketch so the user lands in the editor — NOT the
+     * welcome page.
+     */
+    protected async closeWelcomeAndOpenDefaultSketch(): Promise<void> {
+        // Wait for the shell to finish layout before manipulating widgets
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Close the GettingStarted widget if it's open
+        try {
+            const { GettingStartedWidget } = await import('@theia/getting-started/lib/browser/getting-started-widget');
+            const widgets = this.widgetManager.getWidgets(GettingStartedWidget.ID);
+            for (const widget of widgets) {
+                widget.close();
+            }
+        } catch {
+            // GettingStarted may not be available; ignore
+        }
+
+        // Also try to find and close it by iterating all shell widgets
+        try {
+            const mainWidgets = this.shell.widgets;
+            for (const widget of mainWidgets) {
+                if (widget.id === 'gettingStarted' || widget.title.label === 'Getting Started' || widget.title.caption === 'Getting Started') {
+                    widget.close();
+                }
+            }
+        } catch { /* ignore */ }
+
+        // Check if there's already an editor open (from a previous session restore)
+        try {
+            const activeEditor = this.editorManager.activeEditor;
+            if (activeEditor) {
+                return; // An editor is already open — don't create a new sketch
+            }
+            const allEditors = this.editorManager.all;
+            if (allEditors.length > 0) {
+                return; // Editors exist from session restore
+            }
+        } catch { /* ignore */ }
+
+        // Create a default sketch
+        try {
+            const sketch = await this.sketchService.newSketch('my_sketch');
+            const fileUri = toFileUri(sketch.mainFile);
+
+            // Try to open the file in the editor
+            try {
+                const opener = await this.openerService.getOpener(fileUri);
+                await opener.open(fileUri);
+            } catch {
+                try {
+                    await this.editorManager.open(fileUri);
+                } catch {
+                    try {
+                        await this.commandService.executeCommand('core.open', fileUri);
+                    } catch { /* all open methods failed */ }
+                }
+            }
+        } catch { /* sketch creation failed — not critical */ }
     }
 
     /**
