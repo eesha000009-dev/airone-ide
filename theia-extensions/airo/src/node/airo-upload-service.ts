@@ -96,26 +96,126 @@ export class AiroUploadService {
      * List all serial ports visible to the host.
      */
     async listPorts(): Promise<SerialPortInfo[]> {
-        if (!this.serialportAvailable) {
-            console.warn('[AiroUploadService] Cannot list ports: serialport package not available.');
-            return [];
+        // Try serialport npm package first
+        if (this.serialportAvailable) {
+            try {
+                const { SerialPort } = require('serialport') as SerialPortModule;
+                const ports = await SerialPort.list();
+                if (ports.length > 0) {
+                    return ports.map(p => ({
+                        path: p.path,
+                        manufacturer: p.manufacturer || undefined,
+                        pnpId: p.pnpId || undefined,
+                        vendorId: p.vendorId || undefined,
+                        productId: p.productId || undefined,
+                    }));
+                }
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : String(err);
+                console.error('[AiroUploadService] serialport.list() failed:', message);
+            }
         }
 
+        // Fallback: Platform-specific port detection
         try {
-            const { SerialPort } = require('serialport') as SerialPortModule;
-            const ports = await SerialPort.list();
-            return ports.map(p => ({
-                path: p.path,
-                manufacturer: p.manufacturer || undefined,
-                pnpId: p.pnpId || undefined,
-                vendorId: p.vendorId || undefined,
-                productId: p.productId || undefined,
-            }));
+            const fallbackPorts = this.listPortsFallback();
+            if (fallbackPorts.length > 0) {
+                return fallbackPorts;
+            }
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            console.error('[AiroUploadService] Failed to list serial ports:', message);
+            console.error('[AiroUploadService] Fallback port listing failed:', message);
+        }
+
+        console.warn('[AiroUploadService] No serial ports detected.');
+        return [];
+    }
+
+    /**
+     * Fallback port detection using OS-native tools.
+     */
+    private listPortsFallback(): SerialPortInfo[] {
+        const isWin = process.platform === 'win32';
+
+        if (isWin) {
+            return this.listWindowsPorts();
+        } else {
+            return this.listUnixPorts();
+        }
+    }
+
+    /**
+     * List serial ports on Windows using WMI/PowerShell.
+     */
+    private listWindowsPorts(): SerialPortInfo[] {
+        try {
+            const psCmd =
+                `Get-CimInstance Win32_PnPEntity | ` +
+                `Where-Object { $_.Name -match 'COM\\d+' -and $_.Status -eq 'OK' } | ` +
+                `Select-Object Name, DeviceID, Manufacturer, PNPDeviceID | ` +
+                `ConvertTo-Json -Compress`;
+
+            const output = execSync(`powershell -NoProfile -Command "${psCmd}"`, {
+                encoding: 'utf8',
+                timeout: 10000,
+            });
+
+            if (!output || !output.trim()) return [];
+
+            let devices: any[];
+            try {
+                const parsed = JSON.parse(output);
+                devices = Array.isArray(parsed) ? parsed : [parsed];
+            } catch { return []; }
+
+            const ports: SerialPortInfo[] = [];
+            for (const dev of devices) {
+                const comMatch = (dev.Name || '').match(/\(COM(\d+)\)/);
+                if (!comMatch) continue;
+
+                const comPort = `COM${comMatch[1]}`;
+                const pnpId = dev.PNPDeviceID || '';
+                const vidMatch = pnpId.match(/VID_([0-9A-Fa-f]{4})/);
+                const pidMatch = pnpId.match(/PID_([0-9A-Fa-f]{4})/);
+
+                ports.push({
+                    path: comPort,
+                    manufacturer: dev.Manufacturer || undefined,
+                    pnpId: pnpId || undefined,
+                    vendorId: vidMatch ? vidMatch[1].toLowerCase() : undefined,
+                    productId: pidMatch ? pidMatch[1].toLowerCase() : undefined,
+                });
+            }
+
+            return ports;
+        } catch (err) {
+            console.warn('[AiroUploadService] Windows WMI port listing failed:', err instanceof Error ? err.message : String(err));
             return [];
         }
+    }
+
+    /**
+     * List serial ports on Linux/macOS.
+     */
+    private listUnixPorts(): SerialPortInfo[] {
+        try {
+            const output = execSync(
+                'ls -1 /dev/ttyUSB* /dev/ttyACM* /dev/tty.usbserial* /dev/tty.usbmodem* /dev/cu.usbserial* /dev/cu.usbmodem* 2>/dev/null || true',
+                { encoding: 'utf8', timeout: 5000 }
+            );
+
+            if (!output || !output.trim()) return [];
+
+            return output.trim().split('\n')
+                .filter(line => line.trim())
+                .map(portPath => ({
+                    path: portPath.trim(),
+                    manufacturer: undefined,
+                    pnpId: undefined,
+                    vendorId: undefined,
+                    productId: undefined,
+                }));
+        } catch { return []; }
     }
 
     /**
