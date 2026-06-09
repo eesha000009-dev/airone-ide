@@ -187,29 +187,20 @@ div[data-area="left"] {
 
 /* ═══════════════════════════════════════════════════════════════════════════════
    HIDE UNWANTED FILE MENU ITEMS
-   Hide Theia's built-in "New File" and other items we don't want.
-   Only "New Sketch" and "Examples" should appear in the File menu.
-   We target ALL known command IDs across Theia versions.
+   NOTE: We now REPURPOSE "New File" (core.newFile) as "New Sketch".
+   The command handler is overridden to open our NewSketchDialog.
+   We only hide New Folder, Open File, and New Window.
    ═══════════════════════════════════════════════════════════════════════════════ */
 
-/* Hide "New File" / "New Text File" in ALL menus — comprehensive selectors */
-[data-command="core.newFile"],
-[data-command="core:newFile"],
-[data-command="workbench.action.files.newUntitledFile"],
+/* Hide duplicate "New File" commands we don't repurpose */
 [data-command="workbench.action.files.newFile"],
 [data-command="file.newFile"],
 [data-command="file:newFile"],
 [data-command="workspace:newFile"],
 [data-command="navigator.newFile"],
-.lm-Menu-item[data-command="core.newFile"],
-.lm-Menu-item[data-command="core:newFile"],
-.lm-Menu-item[data-command="workbench.action.files.newUntitledFile"],
 .lm-Menu-item[data-command="workbench.action.files.newFile"],
 .lm-Menu-item[data-command="file.newFile"],
 .lm-Menu-item[data-command="file:newFile"],
-.p-Menu-item[data-command="core.newFile"],
-.p-Menu-item[data-command="core:newFile"],
-.p-Menu-item[data-command="workbench.action.files.newUntitledFile"],
 .p-Menu-item[data-command="workbench.action.files.newFile"],
 .p-Menu-item[data-command="file.newFile"] {
     display: none !important;
@@ -329,4 +320,41 @@ div[data-area="left"] {
     flex-shrink: 0 !important;
     position: relative !important;
     visibility: visible !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   "+" BUTTON IN EDITOR TAB BAR
+   A small button at the end of the editor tab bar that creates a new sketch.
+   Styled to match VS Code / Arduino IDE tab bar UX.
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+#airo-new-tab-btn {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    min-height: 28px !important;
+    border: none !important;
+    background: transparent !important;
+    color: var(--theia-ui-font-color1, #ccc) !important;
+    font-size: 20px !important;
+    font-weight: 300 !important;
+    cursor: pointer !important;
+    padding: 0 !important;
+    margin: 0 4px !important;
+    border-radius: 4px !important;
+    line-height: 1 !important;
+    flex-shrink: 0 !important;
+    transition: background 0.15s ease, color 0.15s ease !important;
+}
+
+#airo-new-tab-btn:hover {
+    background: var(--theia-toolbar-hoverBackground, rgba(255,255,255,0.1)) !important;
+    color: var(--theia-ui-font-color0, #fff) !important;
+}
+
+#airo-new-tab-btn:active {
+    background: var(--theia-toolbar-activeBackground, rgba(255,255,255,0.15)) !important;
 }

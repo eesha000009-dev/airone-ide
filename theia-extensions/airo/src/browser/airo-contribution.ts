@@ -188,6 +188,12 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
 
         // Close the GettingStarted widget and open a default sketch
         this.closeWelcomeAndOpenDefaultSketch();
+
+        // Inject the "+" button in the editor tab bar
+        this.injectNewTabButton();
+
+        // Rename "New File" menu labels to "New Sketch" in the DOM
+        this.renameNewFileMenuLabels();
     }
 
     /**
@@ -254,13 +260,154 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     }
 
     /**
+     * Inject a "+" button in the editor tab bar area.
+     * Clicking it creates a new .airo sketch (same as New Sketch command).
+     *
+     * The button is placed after the last tab in the main editor tab bar,
+     * matching the UX of VS Code and Arduino IDE.
+     */
+    protected injectNewTabButton(): void {
+        const injectButton = () => {
+            // Don't create duplicate buttons
+            if (document.getElementById('airo-new-tab-btn')) {
+                return;
+            }
+
+            // Find the editor tab bar — Theia uses Lumino TabBar in the main area
+            const tabBarSelectors = [
+                '#theia-main-content-panel .lm-TabBar',
+                '#theia-main-content-panel .p-TabBar',
+                '.theia-editor-area .lm-TabBar',
+                '.theia-editor-area .p-TabBar',
+            ];
+
+            for (const sel of tabBarSelectors) {
+                try {
+                    const tabBar = document.querySelector(sel);
+                    if (tabBar) {
+                        // Create the "+" button
+                        const btn = document.createElement('button');
+                        btn.id = 'airo-new-tab-btn';
+                        btn.title = 'New Sketch (Ctrl+N)';
+                        btn.textContent = '+';
+                        btn.style.cssText = [
+                            'display: flex',
+                            'align-items: center',
+                            'justify-content: center',
+                            'width: 28px',
+                            'height: 28px',
+                            'min-width: 28px',
+                            'min-height: 28px',
+                            'border: none',
+                            'background: transparent',
+                            'color: var(--theia-ui-font-color1, #ccc)',
+                            'font-size: 18px',
+                            'font-weight: 300',
+                            'cursor: pointer',
+                            'padding: 0',
+                            'margin: 0 2px',
+                            'border-radius: 4px',
+                            'line-height: 1',
+                            'flex-shrink: 0',
+                        ].join(';');
+
+                        // Hover effect
+                        btn.addEventListener('mouseenter', () => {
+                            btn.style.background = 'var(--theia-toolbar-hoverBackground, rgba(255,255,255,0.1))';
+                            btn.style.color = 'var(--theia-ui-font-color0, #fff)';
+                        });
+                        btn.addEventListener('mouseleave', () => {
+                            btn.style.background = 'transparent';
+                            btn.style.color = 'var(--theia-ui-font-color1, #ccc)';
+                        });
+
+                        // Click → New Sketch
+                        btn.addEventListener('click', (e: MouseEvent) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            this.commandService.executeCommand('airo.newSketch');
+                        });
+
+                        // Insert the button at the end of the tab bar content
+                        // The TabBar has a .lm-TabBar-content div containing tab elements
+                        const content = tabBar.querySelector('.lm-TabBar-content, .p-TabBar-content');
+                        if (content) {
+                            content.appendChild(btn);
+                        } else {
+                            // Fallback: append directly to the tab bar
+                            tabBar.appendChild(btn);
+                        }
+                        return; // Button injected successfully
+                    }
+                } catch { /* selector failed */ }
+            }
+        };
+
+        // Try immediately and on DOM changes
+        injectButton();
+
+        const observer = new MutationObserver(() => {
+            setTimeout(injectButton, 200);
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        // Also periodically re-inject in case the tab bar is recreated
+        setInterval(injectButton, 5000);
+    }
+
+    /**
+     * Rename "New File" menu labels to "New Sketch" in the DOM.
+     * This ensures that wherever Theia shows "New File" in dropdown menus,
+     * the user sees "New Sketch" instead.
+     */
+    protected renameNewFileMenuLabels(): void {
+        const renameLabels = () => {
+            // Rename in dropdown menu items
+            const menuItemSelectors = ['.lm-Menu-item', '.p-Menu-item', '.theia-Menu-item'];
+            const newFileCommands = [
+                'core.newFile', 'core:newFile',
+                'workbench.action.files.newUntitledFile',
+                'workbench.action.files.newFile',
+            ];
+
+            for (const sel of menuItemSelectors) {
+                try {
+                    document.querySelectorAll<HTMLElement>(sel).forEach(item => {
+                        const dataCommand = item.getAttribute('data-command') || '';
+                        if (newFileCommands.some(cmd => dataCommand === cmd)) {
+                            const labelEl = item.querySelector('.lm-Menu-itemLabel, .p-Menu-itemLabel, .theia-Menu-itemLabel');
+                            if (labelEl && labelEl.textContent?.trim() !== 'New Sketch') {
+                                labelEl.textContent = 'New Sketch';
+                            }
+                        }
+                    });
+                } catch { /* invalid selector */ }
+            }
+        };
+
+        // Run immediately
+        renameLabels();
+
+        // Re-run on DOM changes (menus are created dynamically)
+        const observer = new MutationObserver(() => {
+            setTimeout(renameLabels, 100);
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        // Periodic re-apply
+        setInterval(renameLabels, 3000);
+    }
+
+    /**
      * Set up DOM-based hiding of unwanted menu items in dropdown menus.
      * This is the most reliable approach since Theia's dropdown menus
      * are rendered dynamically when opened.
      */
     protected setupMenuItemHiding(): void {
         const unwantedCommands = [
-            'workbench.action.files.newUntitledFile',
+            // NOTE: We do NOT hide 'core.newFile' or 'workbench.action.files.newUntitledFile'
+            // because we repurpose the New File command to create a new .airo sketch.
+            // The command handler is overridden in registerCommands().
             'workbench.action.files.newFile',
             'workbench.action.files.newFolder',
             'workbench.action.files.openFile',
@@ -270,8 +417,6 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             'file:newFile',
             'file.newFolder',
             'file:newFolder',
-            'core.newFile',
-            'core:newFile',
             'core.newFolder',
             'core:newFolder',
             'core.openFile',
@@ -303,7 +448,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             }
 
             // Also hide by label text (in case data-command doesn't match)
-            const hiddenLabels = ['New File', 'New Text File', 'New Folder', 'Open File…', 'Open File...', 'Open Folder…', 'Open Folder...', 'New Window', 'Add Folder to Workspace'];
+            // NOTE: We do NOT hide 'New File' label — we repurpose it as 'New Sketch'
+            const hiddenLabels = ['New Text File', 'New Folder', 'Open File…', 'Open File...', 'Open Folder…', 'Open Folder...', 'New Window', 'Add Folder to Workspace'];
             const menuItemSelectors = ['.lm-Menu-item', '.p-Menu-item', '.theia-Menu-item'];
             for (const sel of menuItemSelectors) {
                 try {
@@ -908,6 +1054,25 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             execute: () => this.newSketch(),
             isEnabled: () => true
         });
+
+        // ─── Repurpose Theia's "New File" command as "New Sketch" ───────
+        // Instead of hiding the New File menu item, we override its handler
+        // so that clicking "New File" (or Ctrl+N) opens our NewSketchDialog.
+        // The .airo extension is fixed — users only enter a sketch name.
+        try {
+            commands.registerCommand({ id: 'core.newFile', label: 'New Sketch' }, {
+                execute: () => this.newSketch(),
+                isEnabled: () => true,
+                isVisible: () => true
+            });
+        } catch { /* may already be registered by Theia core */ }
+        try {
+            commands.registerCommand({ id: 'workbench.action.files.newUntitledFile', label: 'New Sketch' }, {
+                execute: () => this.newSketch(),
+                isEnabled: () => true,
+                isVisible: () => true
+            });
+        } catch { /* may already be registered */ }
         commands.registerCommand(AIRO_EXAMPLES_COMMAND, {
             execute: () => this.openExamples(),
             isEnabled: () => true

@@ -132,14 +132,13 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
      */
     protected hideUnwantedFileMenuItems(): void {
         // List of command IDs to hide from menus — comprehensive across Theia versions
+        // NOTE: We do NOT hide 'core.newFile' or 'workbench.action.files.newUntitledFile'
+        // because they are repurposed as "New Sketch" (command handler overridden in AiroContribution)
         const hiddenCommands = [
-            'core.newFile',
-            'core:newFile',
             'core.newFolder',
             'core:newFolder',
             'core.openFile',
             'core:openFile',
-            'workbench.action.files.newUntitledFile',
             'workbench.action.files.newFile',
             'workbench.action.files.newFolder',
             'workbench.action.files.openFile',
@@ -179,7 +178,8 @@ export class TheiaIDEContribution implements CommandContribution, MenuContributi
         }
 
         // Also hide by label text in case data-command is not set
-        const hiddenLabels = ['New File', 'New Text File', 'New Folder', 'Open File…', 'Open File...', 'Open Folder…', 'Open Folder...', 'New Window'];
+        // NOTE: We do NOT hide 'New File' — it is repurposed as 'New Sketch'
+        const hiddenLabels = ['New Text File', 'New Folder', 'Open File…', 'Open File...', 'Open Folder…', 'Open Folder...', 'New Window'];
         for (const sel of menuItemSelectors) {
             try {
                 document.querySelectorAll<HTMLElement>(sel).forEach(item => {
