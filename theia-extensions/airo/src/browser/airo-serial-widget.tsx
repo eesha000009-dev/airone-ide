@@ -66,7 +66,7 @@ export class AiroSerialWidget extends ReactWidget {
     private connectionStatus: 'disconnected' | 'connecting' | 'connected' | 'verifying' = 'disconnected';
     private connectedPortType: 'esp32' | 'serial' | 'unknown' = 'unknown';
     private refreshTimer: number | undefined;
-    private disconnectHandler: ((ev: Event) => void) | undefined;
+    private disconnectHandler: ((ev: SerialEvent) => void) | undefined;
 
     // ─── Web Serial API state ──────────────────────────────────────────
     private webSerialPort: SerialPort | undefined;
@@ -95,8 +95,8 @@ export class AiroSerialWidget extends ReactWidget {
 
         // Listen for USB serial device disconnection events
         if (this.isWebSerialAvailable()) {
-            this.disconnectHandler = (ev: Event) => {
-                const disconnectedPort = ev.target as SerialPort;
+            this.disconnectHandler = (ev: SerialEvent) => {
+                const disconnectedPort = ev.target;
                 if (this.webSerialPort === disconnectedPort) {
                     this.lines.push('⚠ USB device physically disconnected!');
                     this.forceDisconnect();
@@ -113,7 +113,10 @@ export class AiroSerialWidget extends ReactWidget {
         }
         // Remove disconnect listener
         if (this.disconnectHandler && this.isWebSerialAvailable()) {
-            navigator.serial.removeEventListener('disconnect', this.disconnectHandler);
+            try {
+                navigator.serial.removeEventListener('disconnect', this.disconnectHandler);
+            } catch { /* ignore */ }
+            this.disconnectHandler = undefined;
         }
         if (this.connectionStatus === 'connected' || this.connectionStatus === 'verifying') {
             this.doDisconnect().catch(() => { /* ignore */ });
@@ -421,7 +424,7 @@ export class AiroSerialWidget extends ReactWidget {
         // Web Serial API provides getSignals() to check DTR, CTS, DSR, CD, RI
         let hasSignals = false;
         try {
-            const signals = await (port as any).getSignals();
+            const signals = await port.getSignals();
             // If any signal is asserted, there's likely real hardware
             if (signals && (signals.dataCarrierDetect || signals.clearToSend ||
                 signals.dataSetReady || signals.ringIndicator)) {
