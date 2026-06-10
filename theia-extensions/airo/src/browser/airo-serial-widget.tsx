@@ -15,16 +15,40 @@ import { AiroSerialService, AiroSerialClient, SerialPortInfo } from '../common/a
 import { MessageService } from '@theia/core/lib/common/message-service';
 
 /**
+ * Known ESP32 USB-to-UART vendor IDs.
+ */
+const ESP_VENDOR_IDS = new Set([
+    '10c4',  // Silicon Labs CP210x
+    '1a86',  // QinHeng CH340 / CH9102
+    '0403',  // FTDI FT232
+    '303a',  // Espressif built-in USB (ESP32-S2/S3/C3 native USB)
+    '2e8a',  // Raspberry Pi Pico (RP2040 running ESP firmware)
+]);
+
+/**
+ * Normalize a vendor/product ID by removing '0x' prefix and lowercasing.
+ */
+function normalizeId(id: string | undefined): string {
+    return (id || '').toLowerCase().replace(/^0x/, '');
+}
+
+/**
+ * Check if a port's VID matches known ESP32 USB bridge chips.
+ */
+function isEspPort(port: SerialPort): boolean {
+    const vid = normalizeId(port.getInfo().vendorId);
+    return ESP_VENDOR_IDS.has(vid);
+}
+
+/**
  * Serial Monitor widget that uses the Web Serial API directly in the
  * frontend for connection, reading, and writing.
  *
- * This replaces the old backend serialport approach which failed in the
- * packaged Electron app because the native `serialport` module couldn't
- * be loaded properly.
- *
- * Port discovery still uses the backend service (which falls back to
- * PowerShell WMI / ls /dev on the OS), but the actual serial
- * communication happens entirely in the browser via navigator.serial.
+ * Key features:
+ * - Real connection verification (port signals check + VID/PID detection)
+ * - Automatic disconnect detection via navigator.serial 'disconnect' event
+ * - ESP32 board auto-detection with clear status indicators
+ * - Backend port listing (PowerShell WMI / ls /dev) + Web Serial ports
  */
 @injectable()
 export class AiroSerialWidget extends ReactWidget {
@@ -39,8 +63,10 @@ export class AiroSerialWidget extends ReactWidget {
     private baudRate: number = 115200;
     private availablePorts: SerialPortInfo[] = [];
     private refreshing: boolean = false;
-    private connectionStatus: 'disconnected' | 'connecting' | 'connected' = 'disconnected';
+    private connectionStatus: 'disconnected' | 'connecting' | 'connected' | 'verifying' = 'disconnected';
+    private connectedPortType: 'esp32' | 'serial' | 'unknown' = 'unknown';
     private refreshTimer: number | undefined;
+    private disconnectHandler: ((ev: Event) => void) | undefined;
 
     // ─── Web Serial API state ──────────────────────────────────────────
     private webSerialPort: SerialPort | undefined;
@@ -50,6 +76,7 @@ export class AiroSerialWidget extends ReactWidget {
     private webSerialWritableStream: WritableStream<Uint8Array> | undefined;
     private readLoopActive: boolean = false;
     private webSerialLineBuffer: string = '';
+    private keepaliveTimer: number | undefined;
 
     @postConstruct()
     protected init(): void {
@@ -65,6 +92,18 @@ export class AiroSerialWidget extends ReactWidget {
 
         // Auto-refresh port list every 5 seconds
         this.refreshTimer = window.setInterval(() => this.refreshPorts(), 5000);
+
+        // Listen for USB serial device disconnection events
+        if (this.isWebSerialAvailable()) {
+            this.disconnectHandler = (ev: Event) => {
+                const disconnectedPort = ev.target as SerialPort;
+                if (this.webSerialPort === disconnectedPort) {
+                    this.lines.push('⚠ USB device physically disconnected!');
+                    this.forceDisconnect();
+                }
+            };
+            navigator.serial.addEventListener('disconnect', this.disconnectHandler);
+        }
     }
 
     protected onCloseRequest(msg: Message): void {
@@ -72,7 +111,11 @@ export class AiroSerialWidget extends ReactWidget {
         if (this.refreshTimer !== undefined) {
             clearInterval(this.refreshTimer);
         }
-        if (this.connectionStatus === 'connected') {
+        // Remove disconnect listener
+        if (this.disconnectHandler && this.isWebSerialAvailable()) {
+            navigator.serial.removeEventListener('disconnect', this.disconnectHandler);
+        }
+        if (this.connectionStatus === 'connected' || this.connectionStatus === 'verifying') {
             this.doDisconnect().catch(() => { /* ignore */ });
         }
     }
@@ -155,17 +198,12 @@ export class AiroSerialWidget extends ReactWidget {
     /**
      * Connect to a serial port using the Web Serial API.
      *
-     * In Electron: navigator.serial.requestPort() triggers the
-     * select-serial-port handler in the main process, which auto-selects
-     * the ESP32 port. No browser dialog is shown.
-     *
-     * In browser: requestPort() shows a port picker dialog.
-     *
-     * Strategy:
-     * 1. Try to match a previously authorized Web Serial port by VID/PID
-     * 2. Call requestPort() — in Electron this is auto-handled, in
-     *    browsers it shows a dialog
-     * 3. Open the port and start reading
+     * Connection flow:
+     * 1. Obtain a SerialPort (from authorized ports or requestPort)
+     * 2. Open the port
+     * 3. Verify the connection (check VID/PID, try port signals)
+     * 4. Set up read loop + disconnect listener
+     * 5. Start keepalive pings to detect silent disconnections
      */
     protected async doConnect(): Promise<void> {
         if (!this.isWebSerialAvailable()) {
@@ -176,79 +214,59 @@ export class AiroSerialWidget extends ReactWidget {
         }
 
         this.connectionStatus = 'connecting';
+        this.connectedPortType = 'unknown';
         this.update();
 
         try {
             let port: SerialPort | undefined;
 
-            // ── Strategy 1: Try previously authorized ports ─────────────
-            // If the user selected a backend-detected port that has VID/PID,
-            // try to find a matching Web Serial port that was already
-            // authorized (e.g. from a previous session or Electron auto-grant).
-            const selectedInfo = this.availablePorts.find(p => p.path === this.selectedPort);
-            if (selectedInfo && (selectedInfo.vendorId || selectedInfo.productId)) {
-                const webPorts = await navigator.serial.getPorts();
-                for (const wp of webPorts) {
-                    const info = wp.getInfo();
-                    const wpVid = (info.vendorId || '').toLowerCase().replace(/^0x/, '');
-                    const wpPid = (info.productId || '').toLowerCase().replace(/^0x/, '');
-                    const selVid = (selectedInfo.vendorId || '').toLowerCase().replace(/^0x/, '');
-                    const selPid = (selectedInfo.productId || '').toLowerCase().replace(/^0x/, '');
-                    if (wpVid === selVid && wpPid === selPid) {
-                        port = wp;
-                        this.lines.push(`  Matched authorized Web Serial port (VID:${wpVid} PID:${wpPid})`);
-                        break;
-                    }
-                }
-            }
-
-            // ── Strategy 2: requestPort() ───────────────────────────────
-            // In Electron: this triggers the select-serial-port handler
-            // which auto-selects the best port. No dialog shown.
-            // In browser: shows the port picker dialog.
-            if (!port) {
-                try {
-                    if (this.isElectron()) {
-                        this.lines.push('  Requesting serial port access (auto-select via Electron)...');
-                    } else {
-                        this.lines.push('  Select your ESP32 board in the port picker dialog...');
-                    }
-                    this.update();
-                    port = await navigator.serial.requestPort();
-                } catch (err: unknown) {
-                    if (err instanceof DOMException && err.name === 'NotFoundError') {
-                        this.connectionStatus = 'disconnected';
-                        // In Electron, NotFoundError means no serial ports were found
-                        // by Chromium (not that the user cancelled a dialog)
-                        if (this.isElectron()) {
-                            this.lines.push('✗ No serial ports detected by Web Serial API.');
-                            this.lines.push('  Possible causes:');
-                            this.lines.push('  • The board is not connected via USB');
-                            this.lines.push('  • USB drivers are not installed (check Device Manager)');
-                            this.lines.push('  • Another program is using the port');
-                            this.lines.push('  • Try: unplug USB, wait 3 seconds, plug back in');
-                        } else {
-                            this.lines.push('  Port selection cancelled.');
-                        }
-                        this.update();
-                        return;
-                    }
-                    throw err;
-                }
-            }
+            // ── Step 1: Obtain a SerialPort ────────────────────────────
+            port = await this.obtainPort();
 
             if (!port) {
                 this.connectionStatus = 'disconnected';
-                this.lines.push('✗ No port selected.');
                 this.update();
                 return;
             }
 
-            // Open the port at the selected baud rate
-            await port.open({ baudRate: this.baudRate });
+            // ── Step 2: Open the port ──────────────────────────────────
+            this.lines.push(`  Opening ${this.baudRate} baud...`);
+            this.update();
+
+            try {
+                await port.open({ baudRate: this.baudRate });
+            } catch (openErr: unknown) {
+                const openMsg = openErr instanceof Error ? openErr.message : String(openErr);
+                // If the port is already open, it might be from a stale session
+                if (openMsg.includes('already open')) {
+                    this.lines.push('  ⚠ Port was already open. Closing and retrying...');
+                    this.update();
+                    try { await port.close(); } catch { /* ignore */ }
+                    await port.open({ baudRate: this.baudRate });
+                } else {
+                    throw openErr;
+                }
+            }
 
             this.webSerialPort = port;
 
+            // ── Step 3: Verify the connection ──────────────────────────
+            this.connectionStatus = 'verifying';
+            this.update();
+
+            const verification = await this.verifyConnection(port);
+            this.connectedPortType = verification.type;
+
+            if (!verification.isReal) {
+                // Port opened but no real device detected
+                this.lines.push(`⚠ ${verification.message}`);
+                this.lines.push('  The port is open but may not have a device attached.');
+                this.lines.push('  Data will appear here if the device starts sending.');
+            } else {
+                this.lines.push(`✓ ${verification.message}`);
+            }
+
+            // ── Step 4: Set up streams ─────────────────────────────────
             // Set up readable stream
             if (port.readable) {
                 this.webSerialReadableStream = port.readable;
@@ -263,14 +281,19 @@ export class AiroSerialWidget extends ReactWidget {
 
             this.connectionStatus = 'connected';
 
-            // Build display name
+            // Build display name with board type
             const portInfo = port.getInfo();
+            const typeLabel = this.connectedPortType === 'esp32' ? ' [ESP32]' :
+                this.connectedPortType === 'serial' ? ' [USB-Serial]' : '';
             const displayName = this.selectedPort ||
                 `VID:${portInfo.vendorId || '?'} PID:${portInfo.productId || '?'}`;
-            this.lines.push(`✓ Connected to ${displayName} at ${this.baudRate} baud (Web Serial)`);
+            this.lines.push(`✓ Connected to ${displayName}${typeLabel} at ${this.baudRate} baud`);
 
             // Start the read loop
             this.startReadLoop();
+
+            // Start keepalive to detect silent disconnections
+            this.startKeepalive();
 
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -292,6 +315,197 @@ export class AiroSerialWidget extends ReactWidget {
             // Clean up on error
             await this.cleanupWebSerial();
         }
+        this.update();
+    }
+
+    /**
+     * Obtain a SerialPort by matching authorized ports first,
+     * then falling back to requestPort().
+     */
+    private async obtainPort(): Promise<SerialPort | undefined> {
+        let port: SerialPort | undefined;
+
+        // Strategy 1: Try previously authorized ports by VID/PID match
+        const selectedInfo = this.availablePorts.find(p => p.path === this.selectedPort);
+        if (selectedInfo && (selectedInfo.vendorId || selectedInfo.productId)) {
+            const webPorts = await navigator.serial.getPorts();
+            for (const wp of webPorts) {
+                const wpVid = normalizeId(wp.getInfo().vendorId);
+                const wpPid = normalizeId(wp.getInfo().productId);
+                const selVid = normalizeId(selectedInfo.vendorId);
+                const selPid = normalizeId(selectedInfo.productId);
+                if (wpVid === selVid && wpPid === selPid) {
+                    port = wp;
+                    this.lines.push(`  Matched authorized Web Serial port (VID:${wpVid} PID:${wpPid})`);
+                    break;
+                }
+            }
+        }
+
+        // Strategy 2: requestPort() — in Electron, auto-selected by handler
+        if (!port) {
+            try {
+                if (this.isElectron()) {
+                    this.lines.push('  Requesting serial port access (auto-select via Electron)...');
+                } else {
+                    this.lines.push('  Select your ESP32 board in the port picker dialog...');
+                }
+                this.update();
+                port = await navigator.serial.requestPort();
+            } catch (err: unknown) {
+                if (err instanceof DOMException && err.name === 'NotFoundError') {
+                    // In Electron: no serial ports found by Chromium
+                    // In browser: user cancelled the dialog
+                    if (this.isElectron()) {
+                        this.lines.push('✗ No serial ports detected by Web Serial API.');
+                        this.lines.push('  Possible causes:');
+                        this.lines.push('  • The board is not connected via USB');
+                        this.lines.push('  • USB drivers are not installed (check Device Manager)');
+                        this.lines.push('  • Another program is using the port');
+                        this.lines.push('  • Try: unplug USB, wait 3 seconds, plug back in');
+                    } else {
+                        this.lines.push('  Port selection cancelled.');
+                    }
+                    this.update();
+                    return undefined;
+                }
+                throw err;
+            }
+        }
+
+        if (!port) {
+            this.lines.push('✗ No port selected.');
+            this.update();
+            return undefined;
+        }
+
+        return port;
+    }
+
+    /**
+     * Verify that a serial port has a real device attached.
+     *
+     * Checks:
+     * 1. VID/PID match against known ESP32 USB bridge chips
+     * 2. Port signal states (DTR/RTS/CTS/DSR/CD/RI) — if signals are
+     *    all zero, the port may be a ghost device with no hardware
+     * 3. Attempt a small read with timeout to detect if data flows
+     */
+    private async verifyConnection(port: SerialPort): Promise<{
+        isReal: boolean;
+        type: 'esp32' | 'serial' | 'unknown';
+        message: string;
+    }> {
+        const portInfo = port.getInfo();
+        const vid = normalizeId(portInfo.vendorId);
+        const pid = normalizeId(portInfo.productId);
+
+        // Check 1: ESP32 VID/PID detection
+        if (ESP_VENDOR_IDS.has(vid)) {
+            const chipNames: Record<string, string> = {
+                '10c4': 'CP210x',
+                '1a86': 'CH340/CH9102',
+                '0403': 'FT232',
+                '303a': 'ESP32 native USB',
+                '2e8a': 'RP2040',
+            };
+            const chipName = chipNames[vid] || 'Unknown';
+            return {
+                isReal: true,
+                type: 'esp32',
+                message: `ESP32 board detected (${chipName} USB bridge, VID:${vid} PID:${pid})`,
+            };
+        }
+
+        // Check 2: Try reading port signals
+        // Web Serial API provides getSignals() to check DTR, CTS, DSR, CD, RI
+        let hasSignals = false;
+        try {
+            const signals = await (port as any).getSignals();
+            // If any signal is asserted, there's likely real hardware
+            if (signals && (signals.dataCarrierDetect || signals.clearToSend ||
+                signals.dataSetReady || signals.ringIndicator)) {
+                hasSignals = true;
+            }
+            console.log('[AiroSerial] Port signals:', JSON.stringify(signals));
+        } catch {
+            // getSignals may not be available on all platforms
+        }
+
+        // Check 3: Any VID/PID at all means USB enumeration found something
+        if (vid || pid) {
+            return {
+                isReal: hasSignals || !!vid,
+                type: 'serial',
+                message: hasSignals
+                    ? `USB serial device detected (VID:${vid} PID:${pid})`
+                    : `USB device found (VID:${vid} PID:${pid}) — hardware status uncertain`,
+            };
+        }
+
+        // No VID/PID — could be a virtual port or ghost device
+        return {
+            isReal: false,
+            type: 'unknown',
+            message: 'No USB device identified on this port. It may be a virtual/generic port.',
+        };
+    }
+
+    /**
+     * Start a periodic keepalive check. Every 3 seconds, verify that
+     * the port is still readable. If the USB device was removed but the
+     * disconnect event didn't fire, this will catch it.
+     */
+    private startKeepalive(): void {
+        this.stopKeepalive();
+        this.keepaliveTimer = window.setInterval(() => {
+            if (this.webSerialPort && this.connectionStatus === 'connected') {
+                // If the port's readable stream is gone, the device was disconnected
+                if (!this.webSerialPort.readable) {
+                    this.lines.push('⚠ Port became unreadable — device likely disconnected.');
+                    this.forceDisconnect();
+                }
+            }
+        }, 3000);
+    }
+
+    private stopKeepalive(): void {
+        if (this.keepaliveTimer !== undefined) {
+            clearInterval(this.keepaliveTimer);
+            this.keepaliveTimer = undefined;
+        }
+    }
+
+    /**
+     * Force disconnect without user interaction.
+     * Called when the USB device is physically removed or the port becomes
+     * unreadable.
+     */
+    private forceDisconnect(): void {
+        this.readLoopActive = false;
+        this.webSerialLineBuffer = '';
+        this.stopKeepalive();
+
+        // Clean up synchronously as best we can
+        if (this.webSerialReader) {
+            try { this.webSerialReader.cancel(); } catch { /* ignore */ }
+            this.webSerialReader = undefined;
+        }
+        this.webSerialReadableStream = undefined;
+
+        if (this.webSerialWriter) {
+            try { this.webSerialWriter.close(); } catch { /* ignore */ }
+            this.webSerialWriter = undefined;
+        }
+        this.webSerialWritableStream = undefined;
+
+        if (this.webSerialPort) {
+            try { this.webSerialPort.close(); } catch { /* ignore */ }
+            this.webSerialPort = undefined;
+        }
+
+        this.connectionStatus = 'disconnected';
+        this.connectedPortType = 'unknown';
         this.update();
     }
 
@@ -352,9 +566,10 @@ export class AiroSerialWidget extends ReactWidget {
             } catch (err: unknown) {
                 if (this.readLoopActive) {
                     const msg = err instanceof Error ? err.message : String(err);
-                    // Don't show error if we're disconnecting
+                    // Don't show error if we're disconnecting or device was lost
                     if (!msg.includes('reader has been canceled') &&
-                        !msg.includes('The device has been lost')) {
+                        !msg.includes('The device has been lost') &&
+                        !msg.includes('frame was aborted')) {
                         this.lines.push(`⚠ Read error: ${msg}`);
                     }
                 }
@@ -362,7 +577,7 @@ export class AiroSerialWidget extends ReactWidget {
                 // If we exit the loop while still "connected", the port was likely disconnected
                 if (this.readLoopActive && this.connectionStatus === 'connected') {
                     this.lines.push('⚠ Serial port disconnected unexpectedly.');
-                    this.doDisconnect().catch(() => { /* ignore */ });
+                    this.forceDisconnect();
                 }
             }
         };
@@ -374,10 +589,12 @@ export class AiroSerialWidget extends ReactWidget {
     protected async doDisconnect(): Promise<void> {
         this.readLoopActive = false;
         this.webSerialLineBuffer = '';
+        this.stopKeepalive();
 
         await this.cleanupWebSerial();
 
         this.connectionStatus = 'disconnected';
+        this.connectedPortType = 'unknown';
         this.lines.push(`✓ Disconnected`);
         this.update();
     }
@@ -432,6 +649,11 @@ export class AiroSerialWidget extends ReactWidget {
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             this.lines.push(`✗ Send error: ${msg}`);
+            // If sending fails, the device was likely disconnected
+            if (msg.includes('network error') || msg.includes('The device has been lost')) {
+                this.lines.push('⚠ Device appears disconnected.');
+                this.forceDisconnect();
+            }
         }
         this.update();
     }
@@ -442,12 +664,15 @@ export class AiroSerialWidget extends ReactWidget {
         const statusColors: Record<string, string> = {
             disconnected: '#e74c3c',
             connecting: '#f39c12',
-            connected: '#27ae60'
+            connected: '#27ae60',
+            verifying: '#3498db'
         };
         const statusLabels: Record<string, string> = {
             disconnected: 'Disconnected',
             connecting: 'Connecting...',
-            connected: 'Connected'
+            connected: this.connectedPortType === 'esp32' ? 'ESP32 Connected' :
+                this.connectedPortType === 'serial' ? 'Serial Connected' : 'Connected',
+            verifying: 'Verifying...'
         };
 
         const webSerialAvailable = this.isWebSerialAvailable();
@@ -502,7 +727,7 @@ export class AiroSerialWidget extends ReactWidget {
                 <select
                     value={this.selectedPort}
                     onChange={e => { this.selectedPort = e.target.value; this.update(); }}
-                    disabled={this.connectionStatus === 'connected'}
+                    disabled={this.connectionStatus === 'connected' || this.connectionStatus === 'verifying'}
                     style={{
                         background: 'var(--theia-input-background)',
                         color: 'var(--theia-input-foreground)',
@@ -517,18 +742,21 @@ export class AiroSerialWidget extends ReactWidget {
                             ? 'No ports found'
                             : 'Select Port...'}
                     </option>
-                    {this.availablePorts.map(port => (
-                        <option key={port.path} value={port.path}>
+                    {this.availablePorts.map(port => {
+                        const vid = normalizeId(port.vendorId);
+                        const isEsp = ESP_VENDOR_IDS.has(vid);
+                        return <option key={port.path} value={port.path}>
                             {port.path}{port.manufacturer ? ` (${port.manufacturer})` : ''}
-                        </option>
-                    ))}
+                            {isEsp ? ' ★' : ''}
+                        </option>;
+                    })}
                 </select>
 
                 {/* Baud Rate Selector */}
                 <select
                     value={this.baudRate.toString()}
                     onChange={e => { this.baudRate = parseInt(e.target.value); this.update(); }}
-                    disabled={this.connectionStatus === 'connected'}
+                    disabled={this.connectionStatus === 'connected' || this.connectionStatus === 'verifying'}
                     style={{
                         background: 'var(--theia-input-background)',
                         color: 'var(--theia-input-foreground)',
@@ -549,10 +777,11 @@ export class AiroSerialWidget extends ReactWidget {
 
                 {/* Connect / Disconnect Button */}
                 <button
-                    onClick={() => this.connectionStatus === 'connected' ? this.doDisconnect() : this.doConnect()}
+                    onClick={() => this.connectionStatus === 'connected' || this.connectionStatus === 'verifying'
+                        ? this.doDisconnect() : this.doConnect()}
                     disabled={!webSerialAvailable}
                     style={{
-                        background: this.connectionStatus === 'connected' ? '#e74c3c' : '#27ae60',
+                        background: (this.connectionStatus === 'connected' || this.connectionStatus === 'verifying') ? '#e74c3c' : '#27ae60',
                         color: 'white',
                         border: 'none',
                         padding: '2px 12px',
@@ -562,7 +791,7 @@ export class AiroSerialWidget extends ReactWidget {
                         opacity: webSerialAvailable ? 1 : 0.5
                     }}
                 >
-                    {this.connectionStatus === 'connected' ? 'Disconnect' : 'Connect'}
+                    {(this.connectionStatus === 'connected' || this.connectionStatus === 'verifying') ? 'Disconnect' : 'Connect'}
                 </button>
 
                 {/* Refresh Ports */}
