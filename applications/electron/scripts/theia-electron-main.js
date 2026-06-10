@@ -136,13 +136,6 @@ try {
             // ═════════════════════════════════════════════════════════════
             // AUTO-UPDATE PROXY SUPPORT
             // ═════════════════════════════════════════════════════════════
-            // electron-updater uses Electron's net module for downloading
-            // updates. If the user is behind a proxy (common in corporate
-            // networks), the updater will fail with net::ERR_TIMED_OUT.
-            //
-            // Fix: Configure the session to respect system proxy settings
-            // and pass proxy config to electron-updater.
-            // ═════════════════════════════════════════════════════════════
             try {
                 const session = electron.session && electron.session.defaultSession;
                 if (session) {
@@ -152,8 +145,6 @@ try {
 
                         // If a proxy is detected, configure it for electron-updater
                         if (proxy && proxy !== 'DIRECT') {
-                            // Store the proxy for later use by electron-updater
-                            // electron-updater reads GH_TOKEN and proxy env vars
                             const proxyUrl = proxy.replace(/^PROXY\s+/i, '');
                             if (proxyUrl) {
                                 console.log(`[Airone] Configuring proxy for auto-updater: ${proxyUrl}`);
@@ -166,13 +157,9 @@ try {
                     });
 
                     // Also set up proxy authentication handler
-                    // This handles the case where the proxy requires credentials
                     session.on('login', (event, webContents, request, authInfo, callback) => {
-                        // If authInfo has proxy credentials requested, we can
-                        // handle it here. For now, just log it.
                         if (authInfo.isProxy) {
                             console.log(`[Airone] Proxy authentication required for: ${authInfo.host}`);
-                            // Users can set PROXY_USER and PROXY_PASS env vars
                             const proxyUser = process.env.PROXY_USER;
                             const proxyPass = process.env.PROXY_PASS;
                             if (proxyUser && proxyPass) {
@@ -185,73 +172,89 @@ try {
             } catch (err) {
                 console.error('[Airone] Proxy setup failed:', err);
             }
-        });
 
-        // ═════════════════════════════════════════════════════════════
-        // WEB SERIAL API PERMISSIONS (for esptool-js / ESP32 flashing)
-        // ═════════════════════════════════════════════════════════════
-        // Electron locks down hardware access by default. We need to
-        // explicitly allow the Web Serial API so esptool-js can detect
-        // and flash ESP32 boards from the renderer process.
-        // ═════════════════════════════════════════════════════════════
-        try {
-            // Grant permission automatically to use serial ports
-            electron.session.defaultSession.setPermissionCheckHandler((_webContents, permission, _requestingOrigin, _details) => {
-                if (permission === 'serial') {
-                    return true;
-                }
-                return false;
-            });
+            // ═════════════════════════════════════════════════════════════
+            // WEB SERIAL API PERMISSIONS (for esptool-js / ESP32 flashing)
+            // ═════════════════════════════════════════════════════════════
+            // IMPORTANT: These handlers MUST be registered inside app.on('ready')
+            // because session.defaultSession is only fully initialized after
+            // the app is ready. Registering them before ready causes the
+            // select-serial-port handler to silently fail, resulting in
+            // requestPort() rejecting with NotFoundError.
+            // ═════════════════════════════════════════════════════════════
+            try {
+                const ses = electron.session.defaultSession;
 
-            electron.session.defaultSession.setDevicePermissionHandler((_details) => {
-                return true;
-            });
-
-            // Auto-select ESP32 serial port when the browser requests one
-            electron.session.defaultSession.on('select-serial-port', (event, portList, _webContents, callback) => {
-                event.preventDefault();
-
-                // Known ESP32 USB-to-UART vendor IDs
-                const ESP_VENDOR_IDS = new Set([
-                    '10c4',  // Silicon Labs CP210x
-                    '1a86',  // QinHeng CH340 / CH9102
-                    '0403',  // FTDI FT232
-                    '303a',  // Espressif built-in USB (ESP32-S2/S3/C3)
-                    '2e8a',  // Raspberry Pi Pico (RP2040 running ESP firmware)
-                ]);
-
-                // Try to find an ESP32 port first
-                const espPort = portList.find(device => {
-                    const vid = device.vendorId ? device.vendorId.toLowerCase().replace(/^0x/, '') : '';
-                    return ESP_VENDOR_IDS.has(vid);
+                // Grant permission automatically to use serial ports
+                ses.setPermissionCheckHandler((_webContents, permission, _requestingOrigin, _details) => {
+                    if (permission === 'serial') {
+                        return true;
+                    }
+                    return false;
                 });
 
-                if (espPort) {
-                    console.log(`[Airone] Auto-selected ESP32 port: ${espPort.portName || espPort.portId}`);
-                    callback(espPort.portId);
-                } else if (portList.length > 0) {
-                    // Fallback to first available port
-                    console.log(`[Airone] No ESP32-specific port found, using first available: ${portList[0].portName || portList[0].portId}`);
-                    callback(portList[0].portId);
-                } else {
-                    console.log('[Airone] No serial ports found for Web Serial selection');
-                    callback('');
-                }
-            });
+                ses.setDevicePermissionHandler((_details) => {
+                    return true;
+                });
 
-            // Handle serial port addition/removal events
-            electron.session.defaultSession.on('serial-port-added', (event, port) => {
-                console.log(`[Airone] Serial port added: ${port.portName}`);
-            });
+                // Auto-select ESP32 serial port when the browser requests one.
+                // In Electron, navigator.serial.requestPort() triggers this event
+                // instead of showing a browser dialog. We auto-select the best
+                // matching port programmatically.
+                ses.on('select-serial-port', (event, portList, _webContents, callback) => {
+                    event.preventDefault();
 
-            electron.session.defaultSession.on('serial-port-removed', (event, port) => {
-                console.log(`[Airone] Serial port removed: ${port.portName}`);
-            });
+                    console.log(`[Airone] select-serial-port triggered, ${portList.length} ports available:`);
+                    portList.forEach((p, i) => {
+                        console.log(`[Airone]   [${i}] portId=${p.portId} portName=${p.portName} vendorId=${p.vendorId} productId=${p.productId}`);
+                    });
 
-            console.log('[Airone] Web Serial API permissions configured successfully');
-        } catch (err) {
-            console.error('[Airone] Failed to configure Web Serial API permissions:', err);
-        }
+                    if (portList.length === 0) {
+                        console.log('[Airone] No serial ports found for Web Serial selection');
+                        callback('');
+                        return;
+                    }
+
+                    // Known ESP32 USB-to-UART vendor IDs
+                    const ESP_VENDOR_IDS = new Set([
+                        '10c4',  // Silicon Labs CP210x
+                        '1a86',  // QinHeng CH340 / CH9102
+                        '0403',  // FTDI FT232
+                        '303a',  // Espressif built-in USB (ESP32-S2/S3/C3)
+                        '2e8a',  // Raspberry Pi Pico (RP2040 running ESP firmware)
+                    ]);
+
+                    // Try to find an ESP32 port first
+                    const espPort = portList.find(device => {
+                        const vid = device.vendorId ? device.vendorId.toLowerCase().replace(/^0x/, '') : '';
+                        return ESP_VENDOR_IDS.has(vid);
+                    });
+
+                    if (espPort) {
+                        console.log(`[Airone] Auto-selected ESP32 port: ${espPort.portName || espPort.portId}`);
+                        callback(espPort.portId);
+                    } else {
+                        // Fallback to first available port
+                        const firstPort = portList[0];
+                        console.log(`[Airone] No ESP32-specific port found, using first available: ${firstPort.portName || firstPort.portId}`);
+                        callback(firstPort.portId);
+                    }
+                });
+
+                // Handle serial port addition/removal events
+                ses.on('serial-port-added', (event, port) => {
+                    console.log(`[Airone] Serial port added: ${port.portName} (vendorId=${port.vendorId}, productId=${port.productId})`);
+                });
+
+                ses.on('serial-port-removed', (event, port) => {
+                    console.log(`[Airone] Serial port removed: ${port.portName}`);
+                });
+
+                console.log('[Airone] Web Serial API permissions configured successfully (inside app.ready)');
+            } catch (err) {
+                console.error('[Airone] Failed to configure Web Serial API permissions:', err);
+            }
+        });
     }
 } catch (err) {
     // Electron module not available (shouldn't happen in production, but handle gracefully)

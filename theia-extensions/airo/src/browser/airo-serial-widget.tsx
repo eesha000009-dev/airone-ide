@@ -82,6 +82,12 @@ export class AiroSerialWidget extends ReactWidget {
         return typeof navigator !== 'undefined' && 'serial' in navigator;
     }
 
+    /** Detect if running inside Electron */
+    private isElectron(): boolean {
+        return typeof navigator !== 'undefined' &&
+            (navigator.userAgent.includes('Electron') || navigator.userAgent.includes('airone'));
+    }
+
     // ─── Port Discovery ────────────────────────────────────────────────
 
     /** Fetch available ports from the backend (PowerShell WMI / ls /dev) */
@@ -149,12 +155,17 @@ export class AiroSerialWidget extends ReactWidget {
     /**
      * Connect to a serial port using the Web Serial API.
      *
-     * Two flows:
-     * 1. If the selected port starts with "WebSerial:" — use the matching
-     *    previously-authorized Web Serial port directly.
-     * 2. Otherwise — show the browser's port picker dialog and let the
-     *    user select the correct port. We map the backend port path
-     *    (e.g. "COM12") to the Web Serial port by VID/PID if possible.
+     * In Electron: navigator.serial.requestPort() triggers the
+     * select-serial-port handler in the main process, which auto-selects
+     * the ESP32 port. No browser dialog is shown.
+     *
+     * In browser: requestPort() shows a port picker dialog.
+     *
+     * Strategy:
+     * 1. Try to match a previously authorized Web Serial port by VID/PID
+     * 2. Call requestPort() — in Electron this is auto-handled, in
+     *    browsers it shows a dialog
+     * 3. Open the port and start reading
      */
     protected async doConnect(): Promise<void> {
         if (!this.isWebSerialAvailable()) {
@@ -170,30 +181,55 @@ export class AiroSerialWidget extends ReactWidget {
         try {
             let port: SerialPort | undefined;
 
-            // Strategy 1: Try to match a previously authorized Web Serial port
+            // ── Strategy 1: Try previously authorized ports ─────────────
+            // If the user selected a backend-detected port that has VID/PID,
+            // try to find a matching Web Serial port that was already
+            // authorized (e.g. from a previous session or Electron auto-grant).
             const selectedInfo = this.availablePorts.find(p => p.path === this.selectedPort);
             if (selectedInfo && (selectedInfo.vendorId || selectedInfo.productId)) {
                 const webPorts = await navigator.serial.getPorts();
                 for (const wp of webPorts) {
                     const info = wp.getInfo();
-                    if (info.vendorId === selectedInfo.vendorId && info.productId === selectedInfo.productId) {
+                    const wpVid = (info.vendorId || '').toLowerCase().replace(/^0x/, '');
+                    const wpPid = (info.productId || '').toLowerCase().replace(/^0x/, '');
+                    const selVid = (selectedInfo.vendorId || '').toLowerCase().replace(/^0x/, '');
+                    const selPid = (selectedInfo.productId || '').toLowerCase().replace(/^0x/, '');
+                    if (wpVid === selVid && wpPid === selPid) {
                         port = wp;
+                        this.lines.push(`  Matched authorized Web Serial port (VID:${wpVid} PID:${wpPid})`);
                         break;
                     }
                 }
             }
 
-            // Strategy 2: Ask the user to pick a port via the browser dialog
+            // ── Strategy 2: requestPort() ───────────────────────────────
+            // In Electron: this triggers the select-serial-port handler
+            // which auto-selects the best port. No dialog shown.
+            // In browser: shows the port picker dialog.
             if (!port) {
                 try {
-                    this.lines.push('  Select your ESP32 board in the port picker dialog...');
+                    if (this.isElectron()) {
+                        this.lines.push('  Requesting serial port access (auto-select via Electron)...');
+                    } else {
+                        this.lines.push('  Select your ESP32 board in the port picker dialog...');
+                    }
                     this.update();
                     port = await navigator.serial.requestPort();
                 } catch (err: unknown) {
-                    // User cancelled the dialog
                     if (err instanceof DOMException && err.name === 'NotFoundError') {
                         this.connectionStatus = 'disconnected';
-                        this.lines.push('  Port selection cancelled.');
+                        // In Electron, NotFoundError means no serial ports were found
+                        // by Chromium (not that the user cancelled a dialog)
+                        if (this.isElectron()) {
+                            this.lines.push('✗ No serial ports detected by Web Serial API.');
+                            this.lines.push('  Possible causes:');
+                            this.lines.push('  • The board is not connected via USB');
+                            this.lines.push('  • USB drivers are not installed (check Device Manager)');
+                            this.lines.push('  • Another program is using the port');
+                            this.lines.push('  • Try: unplug USB, wait 3 seconds, plug back in');
+                        } else {
+                            this.lines.push('  Port selection cancelled.');
+                        }
                         this.update();
                         return;
                     }
@@ -248,6 +284,9 @@ export class AiroSerialWidget extends ReactWidget {
                 this.lines.push('  • On Windows: close Arduino IDE, Putty, or other serial tools');
             } else if (msg.includes('not supported') || msg.includes('network error')) {
                 this.lines.push('  • The port may not support serial communication');
+            } else if (msg.includes('open') && msg.includes('already')) {
+                this.lines.push('  • The port is already open in another connection');
+                this.lines.push('  • Disconnect first, then try again');
             }
 
             // Clean up on error

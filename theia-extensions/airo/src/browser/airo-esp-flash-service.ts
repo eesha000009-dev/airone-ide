@@ -63,9 +63,9 @@ export class AiroEspFlashService {
     /**
      * Request a serial port from the user via the browser's built-in
      * port picker dialog. On Electron, the select-serial-port handler
-     * in the main process auto-selects ESP32 ports.
+     * in the main process auto-selects ESP32 ports — no dialog is shown.
      *
-     * @returns The selected SerialPort, or undefined if the user cancelled.
+     * @returns The selected SerialPort, or undefined if no port was found.
      */
     async requestPort(): Promise<SerialPort | undefined> {
         if (!this.isWebSerialAvailable()) {
@@ -77,7 +77,8 @@ export class AiroEspFlashService {
             const port = await navigator.serial.requestPort();
             return port;
         } catch (err: unknown) {
-            // User cancelled the port selection dialog
+            // In Electron: NotFoundError means no serial ports found by Chromium
+            // In browser: NotFoundError means user cancelled the dialog
             if (err instanceof DOMException && err.name === 'NotFoundError') {
                 return undefined;
             }
@@ -190,9 +191,10 @@ export class AiroEspFlashService {
             // Dynamically import esptool-js (handles both ESM and CJS)
             const { ESPLoader, Transport } = await import('esptool-js');
 
-            // Open the serial port
-            await port.open({ baudRate: 115200 });
-
+            // IMPORTANT: Do NOT call port.open() before ESPLoader.main()!
+            // ESPLoader.main() → ESPLoader.connect() → Transport.connect()
+            // which calls port.open() internally. Pre-opening the port
+            // causes "Failed to connect" because the port is already open.
             const transport = new Transport(port, true);
 
             // Create the ESP loader with terminal output callbacks
@@ -221,7 +223,9 @@ export class AiroEspFlashService {
             this.currentLoader = esploader;
             this.connectedPort = port;
 
-            // Connect and detect the chip
+            // Connect and detect the chip.
+            // main() internally calls connect() which calls Transport.connect()
+            // which opens the serial port and performs the bootloader handshake.
             onProgress?.(5, 'Connecting to board...');
             const chipName = await esploader.main();
             log(`✓ Connected to: ${chipName}`);
