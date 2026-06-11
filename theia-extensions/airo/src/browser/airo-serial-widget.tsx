@@ -33,14 +33,6 @@ function normalizeId(id: string | undefined): string {
 }
 
 /**
- * Check if a port's VID matches known ESP32 USB bridge chips.
- */
-function isEspPort(port: SerialPort): boolean {
-    const vid = normalizeId(port.getInfo().vendorId);
-    return ESP_VENDOR_IDS.has(vid);
-}
-
-/**
  * Serial Monitor widget that uses the Web Serial API directly in the
  * frontend for connection, reading, and writing.
  *
@@ -260,14 +252,7 @@ export class AiroSerialWidget extends ReactWidget {
             const verification = await this.verifyConnection(port);
             this.connectedPortType = verification.type;
 
-            if (!verification.isReal) {
-                // Port opened but no real device detected
-                this.lines.push(`⚠ ${verification.message}`);
-                this.lines.push('  The port is open but may not have a device attached.');
-                this.lines.push('  Data will appear here if the device starts sending.');
-            } else {
-                this.lines.push(`✓ ${verification.message}`);
-            }
+            this.lines.push(`✓ ${verification.message}`);
 
             // ── Step 4: Set up streams ─────────────────────────────────
             // Set up readable stream
@@ -386,71 +371,97 @@ export class AiroSerialWidget extends ReactWidget {
     }
 
     /**
+     * Chip name lookup for known ESP32 USB bridge VIDs.
+     */
+    private static readonly CHIP_NAMES: Record<string, string> = {
+        '10c4': 'CP210x',
+        '1a86': 'CH340/CH9102',
+        '0403': 'FT232',
+        '303a': 'ESP32 native USB',
+        '2e8a': 'RP2040',
+    };
+
+    /**
      * Verify that a serial port has a real device attached.
+     *
+     * Uses multiple VID/PID sources for reliability:
+     *   - Web Serial API port.getInfo() (primary)
+     *   - Backend port list from WMI/lsusb (fallback — critical for
+     *     Electron where requestPort() may not populate VID/PID)
      *
      * Checks:
      * 1. VID/PID match against known ESP32 USB bridge chips
-     * 2. Port signal states (DTR/RTS/CTS/DSR/CD/RI) — if signals are
-     *    all zero, the port may be a ghost device with no hardware
-     * 3. Attempt a small read with timeout to detect if data flows
+     * 2. Any VID/PID at all means USB enumeration found real hardware
+     * 3. Port signal states as a last-resort hint
      */
     private async verifyConnection(port: SerialPort): Promise<{
         isReal: boolean;
         type: 'esp32' | 'serial' | 'unknown';
         message: string;
     }> {
-        const portInfo = port.getInfo();
-        const vid = normalizeId(portInfo.vendorId);
-        const pid = normalizeId(portInfo.productId);
+        // ── Gather VID/PID from multiple sources ──────────────────────
+        const webInfo = port.getInfo();
+        const webVid = normalizeId(webInfo.vendorId);
+        const webPid = normalizeId(webInfo.productId);
 
-        // Check 1: ESP32 VID/PID detection
+        // Cross-reference with the backend port list (WMI / lsusb).
+        // In Electron, requestPort() often returns a port whose getInfo()
+        // has empty VID/PID, but the backend enumeration already has them.
+        const selectedBackend = this.availablePorts.find(p => p.path === this.selectedPort);
+        const backendVid = normalizeId(selectedBackend?.vendorId);
+        const backendPid = normalizeId(selectedBackend?.productId);
+
+        // Use whichever source actually has data
+        const vid = webVid || backendVid;
+        const pid = webPid || backendPid;
+
+        console.log(`[AiroSerial] verifyConnection — Web VID:${webVid || '(empty)'} PID:${webPid || '(empty)'}, ` +
+            `Backend VID:${backendVid || '(empty)'} PID:${backendPid || '(empty)'}, ` +
+            `Resolved VID:${vid || '(empty)'} PID:${pid || '(empty)'}`);
+
+        // ── Check 1: ESP32 VID/PID detection ─────────────────────────
         if (ESP_VENDOR_IDS.has(vid)) {
-            const chipNames: Record<string, string> = {
-                '10c4': 'CP210x',
-                '1a86': 'CH340/CH9102',
-                '0403': 'FT232',
-                '303a': 'ESP32 native USB',
-                '2e8a': 'RP2040',
-            };
-            const chipName = chipNames[vid] || 'Unknown';
+            const chipName = AiroSerialWidget.CHIP_NAMES[vid] || 'Unknown';
             return {
                 isReal: true,
                 type: 'esp32',
-                message: `ESP32 board detected (${chipName} USB bridge, VID:${vid} PID:${pid})`,
+                message: `ESP32 board detected — ${chipName} USB bridge (VID:${vid} PID:${pid})`,
             };
         }
 
-        // Check 2: Try reading port signals
-        // Web Serial API provides getSignals() to check DTR, CTS, DSR, CD, RI
-        let hasSignals = false;
+        // ── Check 2: Any VID/PID at all = USB-enumerated device ───────
+        if (vid || pid) {
+            return {
+                isReal: true,
+                type: 'serial',
+                message: `USB serial device (VID:${vid} PID:${pid})`,
+            };
+        }
+
+        // ── Check 3: Try port signals as a last resort ───────────────
         try {
             const signals = await port.getSignals();
-            // If any signal is asserted, there's likely real hardware
             if (signals && (signals.dataCarrierDetect || signals.clearToSend ||
                 signals.dataSetReady || signals.ringIndicator)) {
-                hasSignals = true;
+                return {
+                    isReal: true,
+                    type: 'serial',
+                    message: 'Serial device detected (port signals active)',
+                };
             }
             console.log('[AiroSerial] Port signals:', JSON.stringify(signals));
         } catch {
             // getSignals may not be available on all platforms
         }
 
-        // Check 3: Any VID/PID at all means USB enumeration found something
-        if (vid || pid) {
-            return {
-                isReal: hasSignals || !!vid,
-                type: 'serial',
-                message: hasSignals
-                    ? `USB serial device detected (VID:${vid} PID:${pid})`
-                    : `USB device found (VID:${vid} PID:${pid}) — hardware status uncertain`,
-            };
-        }
-
-        // No VID/PID — could be a virtual port or ghost device
+        // ── No identification possible ───────────────────────────────
+        // Port opened but we can't confirm real hardware — still allow
+        // the connection (port.open() itself already requires a real OS
+        // device), just flag it as uncertain.
         return {
-            isReal: false,
+            isReal: true,  // port.open() would fail on a ghost port
             type: 'unknown',
-            message: 'No USB device identified on this port. It may be a virtual/generic port.',
+            message: 'Connected (device identity could not be verified — no VID/PID reported)',
         };
     }
 
