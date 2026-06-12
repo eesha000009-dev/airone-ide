@@ -2,9 +2,9 @@
  * Copyright (C) 2025 Airone and others.
  *
  * This program and the accompanying materials are made available under the
- * terms of the MIT License, which is available in the project root.
+ * terms of the Airone Proprietary License, which is available in the project root.
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Proprietary
  ********************************************************************************/
 
 import { injectable, inject } from '@theia/core/shared/inversify';

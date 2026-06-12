@@ -2,9 +2,9 @@
  * Copyright (C) 2025 Airone and others.
  *
  * This program and the accompanying materials are made available under the
- * terms of the MIT License, which is available in the project root.
+ * terms of the Airone Proprietary License, which is available in the project root.
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Proprietary
  ********************************************************************************/
 
 import { ContainerModule } from '@theia/core/shared/inversify';
@@ -33,7 +33,7 @@ export default new ContainerModule(bind => {
     // .airo → C++ transpiler (always available, no external dependencies)
     bind(AiroTranspiler).toSelf().inSingletonScope();
 
-    // Main compiler service (4-step TRUSTED pipeline: syntax check → transpile → Python → Arduino CLI)
+    // Main compiler service (3-step pipeline: syntax check → transpile → PlatformIO build)
     bind(AiroCompilerService).toSelf().inSingletonScope();
 
     bind(AiroSerialService).toSelf().inSingletonScope();

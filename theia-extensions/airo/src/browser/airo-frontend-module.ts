@@ -2,9 +2,9 @@
  * Copyright (C) 2025 Airone and others.
  *
  * This program and the accompanying materials are made available under the
- * terms of the MIT License, which is available in the project root.
+ * terms of the Airone Proprietary License, which is available in the project root.
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Proprietary
  ********************************************************************************/
 
 import '../../src/browser/style/airo-sidebar.css';
@@ -81,7 +81,7 @@ export default new ContainerModule((bind, _unbind, isBound, rebind) => {
 
     // ─── ESP32 Flash Service (esptool-js + Web Serial API) ────────────
     // Frontend-only service that uses esptool-js for ESP32 detection
-    // and flashing via the Web Serial API. No Python or Arduino CLI needed.
+    // and flashing via the Web Serial API. No Python or Arduino CLI needed for flashing (PlatformIO for compilation).
 
     bind(AiroEspFlashService).toSelf().inSingletonScope();
 

@@ -1,0 +1,999 @@
+     1→/********************************************************************************
+     2→ * Copyright (C) 2025 Airone and others.
+     3→ *
+     4→ * This program and the accompanying materials are made available under the
+     5→ * terms of the MIT License, which is available in the project root.
+     6→ *
+     7→ * SPDX-License-Identifier: MIT
+     8→ ********************************************************************************/
+     9→
+    10→import { injectable, inject } from '@theia/core/shared/inversify';
+    11→import { spawn, execSync } from 'child_process';
+    12→import * as path from 'path';
+    13→import * as fs from 'fs';
+    14→import { SerialPortInfo, FlashRequest, FlashResult, CompileResultBinary } from '../common/airo-protocol';
+    15→import { AiroCompilerService } from './airo-compiler-service';
+    16→
+    17→// Re-export for convenience so consumers can import from either location
+    18→export { FlashRequest, FlashResult } from '../common/airo-protocol';
+    19→
+    20→export type ProgressCallback = (percent: number, message: string) => void;
+    21→
+    22→// ─── Internal Constants ───────────────────────────────────────────────────────
+    23→
+    24→/** Known ESP32 USB-to-UART vendor IDs (lowercase hex, no prefix) */
+    25→const ESP_VENDOR_IDS = new Set([
+    26→    '10c4',  // Silicon Labs CP210x
+    27→    '1a86',  // QinHeng CH340 / CH9102
+    28→    '0403',  // FTDI FT232
+    29→    '303a',  // Espressif built-in USB (ESP32-S2/S3/C3 native USB)
+    30→    '2e8a',  // Raspberry Pi Pico (RP2040 running ESP firmware)
+    31→]);
+    32→
+    33→/** Flash offset for each chip family */
+    34→const CHIP_FLASH_OFFSETS: Record<string, string> = {
+    35→    esp32:    '0x10000',
+    36→    esp32s2:  '0x10000',
+    37→    esp32s3:  '0x0',
+    38→    esp32c3:  '0x0',
+    39→    esp8266:  '0x10000',
+    40→};
+    41→
+    42→/** Default baud rate for flashing */
+    43→const DEFAULT_BAUD_RATE = 460800;
+    44→
+    45→/** Maximum time (ms) to wait for a flash operation to complete */
+    46→const FLASH_TIMEOUT_MS = 120_000;
+    47→
+    48→// ─── serialport dynamic‑load shim ────────────────────────────────────────────
+    49→
+    50→interface SerialPortListEntry {
+    51→    path: string;
+    52→    manufacturer?: string;
+    53→    pnpId?: string;
+    54→    vendorId?: string;
+    55→    productId?: string;
+    56→}
+    57→
+    58→interface SerialPortModule {
+    59→    SerialPort: {
+    60→        list(): Promise<SerialPortListEntry[]>;
+    61→    };
+    62→}
+    63→
+    64→/**
+    65→ * ESP32 firmware upload service.
+    66→ *
+    67→ * Responsibilities:
+    68→ *  1. Detect serial ports that likely host an ESP32 board.
+    69→ *  2. Locate `esptool.py` (or `esptool`) on the host system.
+    70→ *  3. Execute the flash command and stream progress back to the caller.
+    71→ *  4. Optionally install esptool via pip.
+    72→ */
+    73→@injectable()
+    74→export class AiroUploadService {
+    75→
+    76→    @inject(AiroCompilerService)
+    77→    protected readonly compilerService!: AiroCompilerService;
+    78→
+    79→    private serialportAvailable = false;
+    80→    private cachedEsptoolPath: string | undefined;
+    81→
+    82→    constructor() {
+    83→        // Detect serialport availability at construction time
+    84→        try {
+    85→            require('serialport');
+    86→            this.serialportAvailable = true;
+    87→        } catch {
+    88→            this.serialportAvailable = false;
+    89→            console.warn('[AiroUploadService] serialport package not available. Port detection will be limited.');
+    90→        }
+    91→    }
+    92→
+    93→    // ─── Port Detection ──────────────────────────────────────────────────
+    94→
+    95→    /**
+    96→     * List all serial ports visible to the host.
+    97→     */
+    98→    async listPorts(): Promise<SerialPortInfo[]> {
+    99→        // Try serialport npm package first
+   100→        if (this.serialportAvailable) {
+   101→            try {
+   102→                const { SerialPort } = require('serialport') as SerialPortModule;
+   103→                const ports = await SerialPort.list();
+   104→                if (ports.length > 0) {
+   105→                    return ports.map(p => ({
+   106→                        path: p.path,
+   107→                        manufacturer: p.manufacturer || undefined,
+   108→                        pnpId: p.pnpId || undefined,
+   109→                        vendorId: p.vendorId || undefined,
+   110→                        productId: p.productId || undefined,
+   111→                    }));
+   112→                }
+   113→            } catch (err: unknown) {
+   114→                const message = err instanceof Error ? err.message : String(err);
+   115→                console.error('[AiroUploadService] serialport.list() failed:', message);
+   116→            }
+   117→        }
+   118→
+   119→        // Fallback: Platform-specific port detection
+   120→        try {
+   121→            const fallbackPorts = this.listPortsFallback();
+   122→            if (fallbackPorts.length > 0) {
+   123→                return fallbackPorts;
+   124→            }
+   125→        } catch (err: unknown) {
+   126→            const message = err instanceof Error ? err.message : String(err);
+   127→            console.error('[AiroUploadService] Fallback port listing failed:', message);
+   128→        }
+   129→
+   130→        console.warn('[AiroUploadService] No serial ports detected.');
+   131→        return [];
+   132→    }
+   133→
+   134→    /**
+   135→     * Fallback port detection using OS-native tools.
+   136→     */
+   137→    private listPortsFallback(): SerialPortInfo[] {
+   138→        const isWin = process.platform === 'win32';
+   139→
+   140→        if (isWin) {
+   141→            return this.listWindowsPorts();
+   142→        } else {
+   143→            return this.listUnixPorts();
+   144→        }
+   145→    }
+   146→
+   147→    /**
+   148→     * List serial ports on Windows using WMI/PowerShell.
+   149→     */
+   150→    private listWindowsPorts(): SerialPortInfo[] {
+   151→        try {
+   152→            const psCmd =
+   153→                `Get-CimInstance Win32_PnPEntity | ` +
+   154→                `Where-Object { $_.Name -match 'COM\\d+' -and $_.Status -eq 'OK' } | ` +
+   155→                `Select-Object Name, DeviceID, Manufacturer, PNPDeviceID | ` +
+   156→                `ConvertTo-Json -Compress`;
+   157→
+   158→            const output = execSync(`powershell -NoProfile -Command "${psCmd}"`, {
+   159→                encoding: 'utf8',
+   160→                timeout: 10000,
+   161→            });
+   162→
+   163→            if (!output || !output.trim()) return [];
+   164→
+   165→            let devices: any[];
+   166→            try {
+   167→                const parsed = JSON.parse(output);
+   168→                devices = Array.isArray(parsed) ? parsed : [parsed];
+   169→            } catch { return []; }
+   170→
+   171→            const ports: SerialPortInfo[] = [];
+   172→            for (const dev of devices) {
+   173→                const comMatch = (dev.Name || '').match(/\(COM(\d+)\)/);
+   174→                if (!comMatch) continue;
+   175→
+   176→                const comPort = `COM${comMatch[1]}`;
+   177→                const pnpId = dev.PNPDeviceID || '';
+   178→                const vidMatch = pnpId.match(/VID_([0-9A-Fa-f]{4})/);
+   179→                const pidMatch = pnpId.match(/PID_([0-9A-Fa-f]{4})/);
+   180→
+   181→                ports.push({
+   182→                    path: comPort,
+   183→                    manufacturer: dev.Manufacturer || undefined,
+   184→                    pnpId: pnpId || undefined,
+   185→                    vendorId: vidMatch ? vidMatch[1].toLowerCase() : undefined,
+   186→                    productId: pidMatch ? pidMatch[1].toLowerCase() : undefined,
+   187→                });
+   188→            }
+   189→
+   190→            return ports;
+   191→        } catch (err) {
+   192→            console.warn('[AiroUploadService] Windows WMI port listing failed:', err instanceof Error ? err.message : String(err));
+   193→            return [];
+   194→        }
+   195→    }
+   196→
+   197→    /**
+   198→     * List serial ports on Linux/macOS.
+   199→     */
+   200→    private listUnixPorts(): SerialPortInfo[] {
+   201→        try {
+   202→            const output = execSync(
+   203→                'ls -1 /dev/ttyUSB* /dev/ttyACM* /dev/tty.usbserial* /dev/tty.usbmodem* /dev/cu.usbserial* /dev/cu.usbmodem* 2>/dev/null || true',
+   204→                { encoding: 'utf8', timeout: 5000 }
+   205→            );
+   206→
+   207→            if (!output || !output.trim()) return [];
+   208→
+   209→            return output.trim().split('\n')
+   210→                .filter(line => line.trim())
+   211→                .map(portPath => ({
+   212→                    path: portPath.trim(),
+   213→                    manufacturer: undefined,
+   214→                    pnpId: undefined,
+   215→                    vendorId: undefined,
+   216→                    productId: undefined,
+   217→                }));
+   218→        } catch { return []; }
+   219→    }
+   220→
+   221→    /**
+   222→     * Find the best candidate serial port for an ESP32 board.
+   223→     *
+   224→     * Priority:
+   225→     *  1. Ports whose vendorId is in the known ESP32 vendor ID set.
+   226→     *  2. Ports whose path contains common ESP32 identifiers (usbserial, usbmodem, cu.usb, COM).
+   227→     *  3. Any available port (fallback).
+   228→     *  4. undefined — no ports at all.
+   229→     */
+   230→    async detectEspPort(): Promise<SerialPortInfo | undefined> {
+   231→        const ports = await this.listPorts();
+   232→        if (ports.length === 0) {
+   233→            return undefined;
+   234→        }
+   235→
+   236→        // Priority 1: Known ESP32 vendor IDs
+   237→        const espPort = ports.find(p =>
+   238→            ESP_VENDOR_IDS.has(p.vendorId?.toLowerCase() || '')
+   239→        );
+   240→        if (espPort) {
+   241→            return espPort;
+   242→        }
+   243→
+   244→        // Priority 2: Port path contains common ESP32 identifiers
+   245→        const pathMatch = ports.find(p => {
+   246→            const lower = p.path.toLowerCase();
+   247→            return (
+   248→                lower.includes('usbserial') ||
+   249→                lower.includes('usbmodem') ||
+   250→                lower.includes('cu.usb') ||
+   251→                lower.startsWith('com') // Windows COM ports
+   252→            );
+   253→        });
+   254→        if (pathMatch) {
+   255→            return pathMatch;
+   256→        }
+   257→
+   258→        // Priority 3: Any available port
+   259→        return ports[0];
+   260→    }
+   261→
+   262→    // ─── esptool Detection & Installation ────────────────────────────────
+   263→
+   264→    /**
+   265→     * Check whether esptool.py (or the `esptool` command) is available.
+   266→     */
+   267→    async isEsptoolAvailable(): Promise<boolean> {
+   268→        const found = await this.findEsptool();
+   269→        return found !== undefined;
+   270→    }
+   271→
+   272→    /**
+   273→     * Locate esptool on the host system.
+   274→     *
+   275→     * Search order:
+   276→     *  1. `esptool.py` in system PATH
+   277→     *  2. `esptool` in system PATH (newer pip versions)
+   278→     *  3. Bundled `esptool.py` in a `resources/esptool/` directory
+   279→     *  4. Python module invocation (`python3 -m esptool`)
+   280→     *
+   281→     * Returns the *command* to invoke (may include arguments like `-m esptool`).
+   282→     */
+   283→    async findEsptool(): Promise<string | undefined> {
+   284→        // Return cached result if we already looked
+   285→        if (this.cachedEsptoolPath !== undefined) {
+   286→            return this.cachedEsptoolPath;
+   287→        }
+   288→
+   289→        const pythonCmd = this.resolvePythonPath();
+   290→
+   291→        // 1. esptool.py in PATH
+   292→        if (this.commandExists('esptool.py')) {
+   293→            this.cachedEsptoolPath = 'esptool.py';
+   294→            return this.cachedEsptoolPath;
+   295→        }
+   296→
+   297→        // 2. esptool in PATH (newer versions drop the .py suffix)
+   298→        if (this.commandExists('esptool')) {
+   299→            this.cachedEsptoolPath = 'esptool';
+   300→            return this.cachedEsptoolPath;
+   301→        }
+   302→
+   303→        // 3. Bundled esptool
+   304→        const bundled = this.findBundledEsptool();
+   305→        if (bundled) {
+   306→            this.cachedEsptoolPath = bundled;
+   307→            return this.cachedEsptoolPath;
+   308→        }
+   309→
+   310→        // 4. python3 -m esptool (or python -m esptool on Windows)
+   311→        if (await this.pythonModuleExists(pythonCmd, 'esptool')) {
+   312→            this.cachedEsptoolPath = `${pythonCmd} -m esptool`;
+   313→            return this.cachedEsptoolPath;
+   314→        }
+   315→
+   316→        return undefined;
+   317→    }
+   318→
+   319→    /**
+   320→     * Install esptool.py via pip.
+   321→     *
+   322→     * Returns true if the installation succeeded (exit code 0).
+   323→     */
+   324→    async installEsptool(): Promise<boolean> {
+   325→        const pythonCmd = this.resolvePythonPath();
+   326→        // Clear cache so we re-detect after installation
+   327→        this.cachedEsptoolPath = undefined;
+   328→
+   329→        return new Promise(resolve => {
+   330→            const args = ['-m', 'pip', 'install', 'esptool'];
+   331→            const proc = spawn(pythonCmd, args, { stdio: 'pipe' });
+   332→
+   333→            let stderr = '';
+   334→
+   335→            proc.stderr.on('data', (data: Buffer) => {
+   336→                stderr += data.toString();
+   337→            });
+   338→
+   339→            proc.on('close', (code: number | null) => {
+   340→                if (code === 0) {
+   341→                    console.log('[AiroUploadService] esptool installed successfully.');
+   342→                    resolve(true);
+   343→                } else {
+   344→                    console.error('[AiroUploadService] esptool installation failed:', stderr);
+   345→                    resolve(false);
+   346→                }
+   347→            });
+   348→
+   349→            proc.on('error', (err: Error) => {
+   350→                console.error('[AiroUploadService] esptool installation error:', err.message);
+   351→                resolve(false);
+   352→            });
+   353→        });
+   354→    }
+   355→
+   356→    // ─── Flash ───────────────────────────────────────────────────────────
+   357→
+   358→    /**
+   359→     * Flash a .bin firmware file to an ESP32 board.
+   360→     *
+   361→     * @param request  Flash parameters (binary path, chip type, optional port/baud/offset).
+   362→     * @param onProgress  Optional callback invoked with progress percentage (0‑100) and a message.
+   363→     * @returns A {@link FlashResult} indicating success or failure.
+   364→     */
+   365→    async flash(request: FlashRequest, onProgress?: ProgressCallback): Promise<FlashResult> {
+   366→        // ── Validate binary file ──────────────────────────────────────────
+   367→        if (!request.binaryPath) {
+   368→            return {
+   369→                success: false,
+   370→                output: '',
+   371→                error: 'No binary path specified.',
+   372→            };
+   373→        }
+   374→
+   375→        try {
+   376→            if (!fs.existsSync(request.binaryPath)) {
+   377→                return {
+   378→                    success: false,
+   379→                    output: '',
+   380→                    error: `Firmware file not found: ${request.binaryPath}`,
+   381→                };
+   382→            }
+   383→        } catch (err: unknown) {
+   384→            return {
+   385→                success: false,
+   386→                output: '',
+   387→                error: `Cannot access firmware file: ${err instanceof Error ? err.message : String(err)}`,
+   388→            };
+   389→        }
+   390→
+   391→        // ── Resolve serial port ───────────────────────────────────────────
+   392→        let portPath = request.portPath;
+   393→        if (!portPath) {
+   394→            const detected = await this.detectEspPort();
+   395→            if (!detected) {
+   396→                return {
+   397→                    success: false,
+   398→                    output: '',
+   399→                    error: 'No serial port detected. Please connect an ESP32 board and try again.',
+   400→                };
+   401→            }
+   402→            portPath = detected.path;
+   403→        }
+   404→
+   405→        // ── Locate esptool ────────────────────────────────────────────────
+   406→        const esptoolCmd = await this.findEsptool();
+   407→        if (!esptoolCmd) {
+   408→            return {
+   409→                success: false,
+   410→                output: '',
+   411→                error: 'esptool.py is not installed. Install it with: pip install esptool',
+   412→            };
+   413→        }
+   414→
+   415→        // ── Resolve chip type & flash offset ──────────────────────────────
+   416→        const chipType = this.normalizeChipType(request.chipType);
+   417→        if (!chipType) {
+   418→            return {
+   419→                success: false,
+   420→                output: '',
+   421→                error: `Unsupported chip type: "${request.chipType}". Supported: esp32, esp32s2, esp32s3, esp32c3, esp8266`,
+   422→            };
+   423→        }
+   424→
+   425→        const flashOffset = request.flashOffset || CHIP_FLASH_OFFSETS[chipType] || '0x10000';
+   426→        const baudRate = request.baudRate || DEFAULT_BAUD_RATE;
+   427→
+   428→        // ── Build command ─────────────────────────────────────────────────
+   429→        const useModule = esptoolCmd.includes('-m esptool');
+   430→        let cmd: string;
+   431→        let args: string[];
+   432→
+   433→        if (useModule) {
+   434→            // e.g. "python3 -m esptool" → cmd="python3", args=["-m","esptool",...]
+   435→            const parts = esptoolCmd.split(' ');
+   436→            cmd = parts[0];
+   437→            args = [
+   438→                ...parts.slice(1),
+   439→                '--chip', chipType,
+   440→                '--port', portPath,
+   441→                '--baud', String(baudRate),
+   442→                'write_flash',
+   443→                '-z',
+   444→                flashOffset,
+   445→                request.binaryPath,
+   446→            ];
+   447→        } else {
+   448→            // e.g. "esptool.py" or "esptool"
+   449→            cmd = esptoolCmd;
+   450→            args = [
+   451→                '--chip', chipType,
+   452→                '--port', portPath,
+   453→                '--baud', String(baudRate),
+   454→                'write_flash',
+   455→                '-z',
+   456→                flashOffset,
+   457→                request.binaryPath,
+   458→            ];
+   459→        }
+   460→
+   461→        // ── Execute ───────────────────────────────────────────────────────
+   462→        return this.executeFlash(cmd, args, portPath, onProgress);
+   463→    }
+   464→
+   465→    // ─── Full Pipeline: Compile + Flash ──────────────────────────────────
+   466→
+   467→    /**
+   468→     * Compile an .airo file and flash the resulting firmware to an ESP32 board.
+   469→     *
+   470→     * This method handles the full TRUSTED pipeline on the backend:
+   471→     * 1. Compile the .airo file → C++ (via AiroCompilerService)
+   472→     * 2. Build C++ → .bin (via Arduino CLI, if available)
+   473→     * 3. Flash .bin → ESP32 (via esptool)
+   474→     *
+   475→     * @param airoFilePath  Absolute path to the .airo file (or file:// URI)
+   476→     * @param chipType      Target chip: esp32, esp32s2, esp32s3, esp32c3, esp8266
+   477→     * @param portPath      Optional serial port path. Auto-detected if omitted.
+   478→     */
+   479→    async flashAiroFile(airoFilePath: string, chipType: string, portPath?: string): Promise<FlashResult> {
+   480→        // ── Resolve filesystem path ───────────────────────────────────
+   481→        const fsPath = airoFilePath.startsWith('file://')
+   482→            ? this.fsPathFromUri(airoFilePath)
+   483→            : airoFilePath;
+   484→
+   485→        if (!fs.existsSync(fsPath)) {
+   486→            return {
+   487→                success: false,
+   488→                output: '',
+   489→                error: `File not found: ${fsPath}`,
+   490→            };
+   491→        }
+   492→
+   493→        const sketchName = path.basename(fsPath, '.airo');
+   494→        const buildDir = path.join(path.dirname(fsPath), 'build');
+   495→
+   496→        // ── Step 1: Compile .airo → C++ → .bin ────────────────────────
+   497→        const fqbn = chipType === 'esp8266'
+   498→            ? 'esp8266:esp8266:generic'
+   499→            : 'esp32:esp32:esp32';
+   500→
+   501→        const compileResult = await this.compilerService.compile({
+   502→            filePath: fsPath,
+   503→            target: chipType,
+   504→            outputDir: buildDir,
+   505→        });
+   506→
+   507→        if (!compileResult.success) {
+   508→            return {
+   509→                success: false,
+   510→                output: compileResult.output,
+   511→                error: compileResult.error || 'Compilation failed',
+   512→            };
+   513→        }
+   514→
+   515→        // ── Step 2: Locate the .bin firmware ──────────────────────────
+   516→        let binaryPath = compileResult.binaryPath;
+   517→
+   518→        if (!binaryPath) {
+   519→            // The compile result didn't include binaryPath — check the build directory
+   520→            const expectedBin = path.join(buildDir, `${sketchName}.ino.bin`);
+   521→            if (fs.existsSync(expectedBin)) {
+   522→                binaryPath = expectedBin;
+   523→            } else {
+   524→                // Try Arduino CLI build directly if it wasn't attempted during compile
+   525→                const arduinoResult = await this.compilerService.tryArduinoBuild(buildDir, sketchName, fqbn);
+   526→                if (arduinoResult && arduinoResult.success && arduinoResult.binaryPath) {
+   527→                    binaryPath = arduinoResult.binaryPath;
+   528→                } else {
+   529→                    const arduinoAvailable = this.compilerService.findArduinoCli() !== undefined;
+   530→                    if (arduinoAvailable) {
+   531→                        return {
+   532→                            success: false,
+   533→                            output: compileResult.output,
+   534→                            error: 'Firmware binary (.bin) not found. Arduino CLI build failed. ' +
+   535→                                'Check the compiler output for errors. Ensure ESP32 board support is installed: ' +
+   536→                                'arduino-cli core install esp32:esp32',
+   537→                        };
+   538→                    }
+   539→                    return {
+   540→                        success: false,
+   541→                        output: compileResult.output,
+   542→                        error: 'Firmware binary (.bin) not found. Install Arduino CLI for full compilation: ' +
+   543→                            'https://arduino.github.io/arduino-cli/latest/',
+   544→                    };
+   545→                }
+   546→            }
+   547→        }
+   548→
+   549→        // ── Step 3: Flash the firmware ────────────────────────────────
+   550→        const flashRequest: FlashRequest = {
+   551→            binaryPath,
+   552→            chipType,
+   553→            baudRate: 460800,
+   554→        };
+   555→
+   556→        if (portPath) {
+   557→            flashRequest.portPath = portPath;
+   558→        }
+   559→
+   560→        return this.flash(flashRequest);
+   561→    }
+   562→
+   563→    // ─── Compile-Only (for esptool-js frontend flashing) ──────────────
+   564→
+   565→    /**
+   566→     * Compile an .airo file to produce a .bin firmware binary without flashing.
+   567→     * This is used by the frontend esptool-js flash flow:
+   568→     *   1. Backend compiles .airo → C++ → .bin
+   569→     *   2. Frontend reads the .bin via readBinaryFile()
+   570→     *   3. Frontend flashes using esptool-js + Web Serial API
+   571→     *
+   572→     * No Python, esptool.py, or serialport needed on the frontend side.
+   573→     */
+   574→    async compileAiroFile(airoFilePath: string, chipType: string): Promise<CompileResultBinary> {
+   575→        // ── Resolve filesystem path ───────────────────────────────────
+   576→        const fsPath = airoFilePath.startsWith('file://')
+   577→            ? this.fsPathFromUri(airoFilePath)
+   578→            : airoFilePath;
+   579→
+   580→        if (!fs.existsSync(fsPath)) {
+   581→            return {
+   582→                success: false,
+   583→                output: '',
+   584→                error: `File not found: ${fsPath}`,
+   585→            };
+   586→        }
+   587→
+   588→        const sketchName = path.basename(fsPath, '.airo');
+   589→        const buildDir = path.join(path.dirname(fsPath), 'build');
+   590→
+   591→        // ── Compile .airo → C++ → .bin ────────────────────────────────
+   592→        const compileResult = await this.compilerService.compile({
+   593→            filePath: fsPath,
+   594→            target: chipType,
+   595→            outputDir: buildDir,
+   596→        });
+   597→
+   598→        if (!compileResult.success) {
+   599→            return {
+   600→                success: false,
+   601→                output: compileResult.output,
+   602→                error: compileResult.error || 'Compilation failed',
+   603→            };
+   604→        }
+   605→
+   606→        // ── Locate the .bin firmware ──────────────────────────────────
+   607→        let binaryPath = compileResult.binaryPath;
+   608→
+   609→        if (!binaryPath) {
+   610→            // Check the build directory directly
+   611→            const expectedBin = path.join(buildDir, `${sketchName}.ino.bin`);
+   612→            if (fs.existsSync(expectedBin)) {
+   613→                binaryPath = expectedBin;
+   614→            } else {
+   615→                // Try Arduino CLI build directly
+   616→                const fqbn = chipType === 'esp8266'
+   617→                    ? 'esp8266:esp8266:generic'
+   618→                    : 'esp32:esp32:esp32';
+   619→                const arduinoResult = await this.compilerService.tryArduinoBuild(buildDir, sketchName, fqbn);
+   620→                if (arduinoResult && arduinoResult.success && arduinoResult.binaryPath) {
+   621→                    binaryPath = arduinoResult.binaryPath;
+   622→                }
+   623→            }
+   624→        }
+   625→
+   626→        return {
+   627→            success: true,
+   628→            output: compileResult.output,
+   629→            binaryPath,
+   630→            generatedFiles: compileResult.generatedFiles,
+   631→        };
+   632→    }
+   633→
+   634→    /**
+   635→     * Read a binary file and return it as a base64-encoded string.
+   636→     * The frontend can decode this to an ArrayBuffer for esptool-js.
+   637→     */
+   638→    async readBinaryFile(filePath: string): Promise<string | undefined> {
+   639→        try {
+   640→            if (!fs.existsSync(filePath)) {
+   641→                return undefined;
+   642→            }
+   643→            const data = fs.readFileSync(filePath);
+   644→            return data.toString('base64');
+   645→        } catch {
+   646→            return undefined;
+   647→        }
+   648→    }
+   649→
+   650→    // ─── Private Helpers ─────────────────────────────────────────────────
+   651→
+   652→    /**
+   653→     * Run the flash subprocess and parse its output for progress.
+   654→     */
+   655→    private executeFlash(
+   656→        cmd: string,
+   657→        args: string[],
+   658→        portUsed: string,
+   659→        onProgress?: ProgressCallback,
+   660→    ): Promise<FlashResult> {
+   661→        return new Promise(resolve => {
+   662→            const proc = spawn(cmd, args, { stdio: 'pipe' });
+   663→
+   664→            let stdout = '';
+   665→            let stderr = '';
+   666→            let resolved = false;
+   667→
+   668→            const finish = (result: FlashResult) => {
+   669→                if (resolved) {
+   670→                    return;
+   671→                }
+   672→                resolved = true;
+   673→                resolve(result);
+   674→            };
+   675→
+   676→            proc.stdout.on('data', (data: Buffer) => {
+   677→                const text = data.toString();
+   678→                stdout += text;
+   679→                this.parseProgress(text, onProgress);
+   680→            });
+   681→
+   682→            proc.stderr.on('data', (data: Buffer) => {
+   683→                const text = data.toString();
+   684→                stderr += text;
+   685→                // esptool writes most of its output to stderr
+   686→                this.parseProgress(text, onProgress);
+   687→            });
+   688→
+   689→            proc.on('close', (code: number | null) => {
+   690→                const fullOutput = stdout + '\n' + stderr;
+   691→
+   692→                if (code === 0) {
+   693→                    finish({
+   694→                        success: true,
+   695→                        output: fullOutput.trim(),
+   696→                        portUsed,
+   697→                    });
+   698→                } else {
+   699→                    const error = this.classifyFlashError(stderr || stdout, code);
+   700→                    finish({
+   701→                        success: false,
+   702→                        output: fullOutput.trim(),
+   703→                        error,
+   704→                        portUsed,
+   705→                    });
+   706→                }
+   707→            });
+   708→
+   709→            proc.on('error', (err: Error) => {
+   710→                if (err.message.includes('ENOENT')) {
+   711→                    finish({
+   712→                        success: false,
+   713→                        output: '',
+   714→                        error: `esptool command not found: ${cmd}. Please install esptool (pip install esptool).`,
+   715→                        portUsed,
+   716→                    });
+   717→                } else {
+   718→                    finish({
+   719→                        success: false,
+   720→                        output: '',
+   721→                        error: `Failed to start esptool: ${err.message}`,
+   722→                        portUsed,
+   723→                    });
+   724→                }
+   725→            });
+   726→
+   727→            // Timeout
+   728→            setTimeout(() => {
+   729→                if (!resolved) {
+   730→                    proc.kill();
+   731→                    finish({
+   732→                        success: false,
+   733→                        output: (stdout + '\n' + stderr).trim(),
+   734→                        error: `Flash operation timed out after ${FLASH_TIMEOUT_MS / 1000} seconds. ` +
+   735→                               'The board may not be responding. Try pressing the BOOT button while flashing.',
+   736→                        portUsed,
+   737→                    });
+   738→                }
+   739→            }, FLASH_TIMEOUT_MS);
+   740→        });
+   741→    }
+   742→
+   743→    /**
+   744→     * Parse esptool output lines for progress information.
+   745→     *
+   746→     * Recognised patterns:
+   747→     *  - "Writing at 0x... (N%)"   → writing progress
+   748→     *  - "Hash of data verified"    → 100 % verification step
+   749→     *  - "A fatal error occurred"   → fatal failure
+   750→     *  - "Chip is ESP32..."         → chip detection confirmation
+   751→     */
+   752→    private parseProgress(text: string, onProgress?: ProgressCallback): void {
+   753→        if (!onProgress) {
+   754→            return;
+   755→        }
+   756→
+   757→        // Split on newlines — esptool often uses \r for progress updates
+   758→        const lines = text.split(/\r?\n|\r/);
+   759→
+   760→        for (const line of lines) {
+   761→            const trimmed = line.trim();
+   762→            if (!trimmed) {
+   763→                continue;
+   764→            }
+   765→
+   766→            // Writing progress: "Writing at 0x00010000... (12%)"
+   767→            const writeMatch = trimmed.match(/Writing at 0x[0-9a-fA-F]+\s*\((\d+)%\)/);
+   768→            if (writeMatch) {
+   769→                const percent = parseInt(writeMatch[1], 10);
+   770→                // Writing is roughly 0‑80 % of the total operation
+   771→                const scaled = Math.round(percent * 0.8);
+   772→                onProgress(scaled, `Writing firmware... ${percent}%`);
+   773→                continue;
+   774→            }
+   775→
+   776→            // Verification: "Hash of data verified."
+   777→            if (trimmed.includes('Hash of data verified')) {
+   778→                onProgress(100, 'Firmware verified successfully.');
+   779→                continue;
+   780→            }
+   781→
+   782→            // Chip detection: "Chip is ESP32-D0WDQ6 (revision v1.0)"
+   783→            const chipMatch = trimmed.match(/Chip is (ESP[^\(]+)/i);
+   784→            if (chipMatch) {
+   785→                onProgress(5, `Detected chip: ${chipMatch[1].trim()}`);
+   786→                continue;
+   787→            }
+   788→
+   789→            // Connecting: "Connecting...."
+   790→            if (trimmed.includes('Connecting')) {
+   791→                onProgress(2, 'Connecting to board...');
+   792→                continue;
+   793→            }
+   794→
+   795→            // Erasing flash
+   796→            if (trimmed.toLowerCase().includes('erasing') || trimmed.toLowerCase().includes('erase')) {
+   797→                onProgress(10, 'Erasing flash...');
+   798→                continue;
+   799→            }
+   800→
+   801→            // Compressed size info
+   802→            const compMatch = trimmed.match(/Wrote (\d+) bytes.*compressed/);
+   803→            if (compMatch) {
+   804→                onProgress(85, `Wrote ${compMatch[1]} bytes (compressed), verifying...`);
+   805→                continue;
+   806→            }
+   807→
+   808→            // Leaving...
+   809→            if (trimmed.includes('Leaving...')) {
+   810→                onProgress(95, 'Finishing up...');
+   811→                continue;
+   812→            }
+   813→
+   814→            // Fatal error
+   815→            if (trimmed.includes('A fatal error occurred')) {
+   816→                onProgress(-1, `Error: ${trimmed}`);
+   817→                continue;
+   818→            }
+   819→        }
+   820→    }
+   821→
+   822→    /**
+   823→     * Classify a flash failure into a user-friendly error message.
+   824→     */
+   825→    private classifyFlashError(output: string, exitCode: number | null): string {
+   826→        if (!output) {
+   827→            return `esptool exited with code ${exitCode} (no output).`;
+   828→        }
+   829→
+   830→        const lower = output.toLowerCase();
+   831→
+   832→        // Board not found / no serial data
+   833→        if (lower.includes('failed to connect') || lower.includes('no serial data received')) {
+   834→            return (
+   835→                'Could not connect to the ESP32 board. Please ensure:\n' +
+   836→                '  • The board is connected via USB.\n' +
+   837→                '  • The correct port is selected.\n' +
+   838→                '  • No other program (serial monitor, IDE) is using the port.\n' +
+   839→                '  • Try pressing and holding the BOOT button while flashing.'
+   840→            );
+   841→        }
+   842→
+   843→        // Port access denied
+   844→        if (lower.includes('permission denied') || lower.includes('access is denied') || lower.includes('could not open port')) {
+   845→            return (
+   846→                'Serial port access denied. You may need to:\n' +
+   847→                '  • Add your user to the dialout group (Linux): sudo usermod -aG dialout $USER\n' +
+   848→                '  • Close other programs using the port.\n' +
+   849→                '  • Run the IDE as administrator (Windows).'
+   850→            );
+   851→        }
+   852→
+   853→        // Chip not in bootloader mode
+   854→        if (lower.includes('wrong boot mode') || lower.includes('download mode')) {
+   855→            return (
+   856→                'The chip is not in download mode. Try:\n' +
+   857→                '  • Hold the BOOT button, then click Upload, and release BOOT after "Connecting..." appears.\n' +
+   858→                '  • Check that EN/RST and BOOT pins are correctly wired.'
+   859→            );
+   860→        }
+   861→
+   862→        // Flash verification failure
+   863→        if (lower.includes('verify failed') || lower.includes('md5') && lower.includes('mismatch')) {
+   864→            return (
+   865→                'Flash verification failed. The firmware was written but the read-back did not match.\n' +
+   866→                'Possible causes: bad USB cable, unstable power supply, or defective flash chip.'
+   867→            );
+   868→        }
+   869→
+   870→        // Generic fatal error from esptool
+   871→        const fatalMatch = output.match(/A fatal error occurred:\s*(.*)/i);
+   872→        if (fatalMatch) {
+   873→            return `esptool error: ${fatalMatch[1].trim()}`;
+   874→        }
+   875→
+   876→        // Timed out
+   877→        if (lower.includes('timeout') || lower.includes('timed out')) {
+   878→            return 'Connection timed out. The board may not be responding. Try pressing the BOOT button while flashing.';
+   879→        }
+   880→
+   881→        // Fallback — return the last few lines of output
+   882→        const lastLines = output.split('\n').filter(l => l.trim()).slice(-3).join('\n');
+   883→        return `Flash failed (exit code ${exitCode}):\n${lastLines}`;
+   884→    }
+   885→
+   886→    /**
+   887→     * Normalise a chip type string to one of the supported values.
+   888→     * Accepts case-insensitive input with or without hyphens/spaces.
+   889→     */
+   890→    private normalizeChipType(raw: string): string | undefined {
+   891→        const normalized = raw.toLowerCase().replace(/[\s\-_]/g, '');
+   892→        const knownTypes = ['esp32', 'esp32s2', 'esp32s3', 'esp32c3', 'esp8266'];
+   893→
+   894→        // Direct match
+   895→        if (knownTypes.includes(normalized)) {
+   896→            return normalized;
+   897→        }
+   898→
+   899→        // Handle "esp32-s2" → "esp32s2" (already handled by the replace above)
+   900→        // Handle just "s2" / "s3" / "c3"
+   901→        if (['s2', 's3', 'c3'].includes(normalized)) {
+   902→            return `esp32${normalized}`;
+   903→        }
+   904→
+   905→        return undefined;
+   906→    }
+   907→
+   908→    /**
+   909→     * Determine the platform-appropriate Python command.
+   910→     */
+   911→    private resolvePythonPath(): string {
+   912→        return process.platform === 'win32' ? 'python' : 'python3';
+   913→    }
+   914→
+   915→    /**
+   916→     * Check whether a command exists in the system PATH.
+   917→     */
+   918→    private commandExists(command: string): boolean {
+   919→        try {
+   920→            const isWin = process.platform === 'win32';
+   921→            const checkCmd = isWin ? 'where' : 'which';
+   922→            execSync(`${checkCmd} ${command}`, { stdio: 'ignore', timeout: 5000 });
+   923→            return true;
+   924→        } catch {
+   925→            return false;
+   926→        }
+   927→    }
+   928→
+   929→    /**
+   930→     * Check whether a Python module is importable.
+   931→     */
+   932→    private async pythonModuleExists(python: string, module: string): Promise<boolean> {
+   933→        return new Promise(resolve => {
+   934→            const proc = spawn(python, ['-c', `import ${module}`], { stdio: 'ignore' });
+   935→            proc.on('close', (code: number | null) => {
+   936→                resolve(code === 0);
+   937→            });
+   938→            proc.on('error', () => {
+   939→                resolve(false);
+   940→            });
+   941→            // Bail after 5 s
+   942→            setTimeout(() => {
+   943→                proc.kill();
+   944→                resolve(false);
+   945→            }, 5000);
+   946→        });
+   947→    }
+   948→
+   949→    /**
+   950→     * Convert a file:// URI to a filesystem path.
+   951→     */
+   952→    private fsPathFromUri(uri: string): string {
+   953→        const parsed = new URL(uri);
+   954→        let filePath = decodeURIComponent(parsed.pathname);
+   955→        if (process.platform === 'win32' && filePath.match(/^\/[A-Za-z]:/)) {
+   956→            filePath = filePath.substring(1);
+   957→        }
+   958→        return filePath;
+   959→    }
+   960→
+   961→    /**
+   962→     * Search for a bundled esptool.py in known resource locations.
+   963→     *
+   964→     * Returns the full path to esptool.py if found, or undefined.
+   965→     */
+   966→    private findBundledEsptool(): string | undefined {
+   967→        const candidates: string[] = [];
+   968→
+   969→        // Packaged Electron app: resources/esptool/esptool.py
+   970→        if (typeof process.resourcesPath !== 'undefined') {
+   971→            candidates.push(path.join(process.resourcesPath, 'esptool', 'esptool.py'));
+   972→        }
+   973→
+   974→        // ASAR-packed path
+   975→        if (typeof __dirname !== 'undefined' && __dirname.includes('.asar')) {
+   976→            candidates.push(path.join(process.resourcesPath!, 'esptool', 'esptool.py'));
+   977→        }
+   978→
+   979→        // Dev mode: project-relative locations
+   980→        candidates.push(
+   981→            path.resolve(__dirname, '../../../../resources/esptool/esptool.py'),
+   982→            path.resolve(__dirname, '../../../../../resources/esptool/esptool.py'),
+   983→            path.resolve(process.cwd(), 'resources/esptool/esptool.py'),
+   984→        );
+   985→
+   986→        try {
+   987→            for (const candidate of candidates) {
+   988→                if (fs.existsSync(candidate)) {
+   989→                    return candidate;
+   990→                }
+   991→            }
+   992→        } catch {
+   993→            // ignore FS errors
+   994→        }
+   995→
+   996→        return undefined;
+   997→    }
+   998→}
+   999→

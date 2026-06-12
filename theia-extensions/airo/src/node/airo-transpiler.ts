@@ -2,9 +2,9 @@
  * Copyright (C) 2025 Airone and others.
  *
  * This program and the accompanying materials are made available under the
- * terms of the MIT License, which is available in the project root.
+ * terms of the Airone Proprietary License, which is available in the project root.
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Proprietary
  ********************************************************************************/
 
 // ─── Public Result Interface ───────────────────────────────────────────────
@@ -827,27 +827,34 @@ export class AiroTranspiler {
                 const L: string[] = [];
                 const dur = this.translateRvalue(stmt.duration, ctx.pins, ctx.variables);
                 L.push(`${I(0)}// actfor(${stmt.duration})`);
-                L.push(`${I(0)}{`);
-                L.push(`${I(1)}unsigned long _act_start = millis();`);
-                L.push(`${I(1)}while (millis() - _act_start < ${dur}) {`);
-                for (const s of stmt.body) {
-                    if (s.kind === 'pin_ref') {
-                        const pinDef = ctx.pins.find(p => p.name === s.pin);
-                        if (pinDef && pinDef.mode === 'output') {
-                            if (servoPins.includes(pinDef)) {
-                                L.push(`${I(2)}servo_${s.pin}.write(90); // default angle`);
-                            } else {
-                                L.push(`${I(2)}digitalWrite(pin_${s.pin}, HIGH);`);
-                            }
+                if (stmt.duration === '0' || stmt.duration.trim() === '0') {
+                    // Act once, no loop
+                    L.push(`${I(0)}{`);
+                    for (const s of stmt.body) {
+                        if (s.kind === 'pin_ref') {
+                            L.push(this.generatePinActuate(s.pin, indent + 1, ctx, servoPins));
+                        } else {
+                            // Process all other statement types (pin_write, ask, senddatato, etc.)
+                            L.push(this.generateStmt(s, indent + 1, ctx));
                         }
-                    } else {
-                        // Process all other statement types (pin_write, ask, senddatato, etc.)
-                        L.push(this.generateStmt(s, indent + 2, ctx));
                     }
+                    L.push(`${I(0)}}`);
+                } else {
+                    L.push(`${I(0)}{`);
+                    L.push(`${I(1)}unsigned long _act_start = millis();`);
+                    L.push(`${I(1)}while (millis() - _act_start < ${dur}) {`);
+                    for (const s of stmt.body) {
+                        if (s.kind === 'pin_ref') {
+                            L.push(this.generatePinActuate(s.pin, indent + 2, ctx, servoPins));
+                        } else {
+                            // Process all other statement types (pin_write, ask, senddatato, etc.)
+                            L.push(this.generateStmt(s, indent + 2, ctx));
+                        }
+                    }
+                    L.push(`${I(2)}yield();`);
+                    L.push(`${I(1)}}`);
+                    L.push(`${I(0)}}`);
                 }
-                L.push(`${I(2)}yield();`);
-                L.push(`${I(1)}}`);
-                L.push(`${I(0)}}`);
                 return L.join('\n');
             }
 
@@ -980,6 +987,30 @@ export class AiroTranspiler {
 
         // Default: analogRead (ESP32 ADC)
         return `${I(0)}var_${pinName} = analogRead(pin_${pinName});`;
+    }
+
+    /**
+     * Generate C++ code to actuate a pin (used in actfor blocks).
+     * For output pins: writes HIGH for digital, default angle for servo.
+     * For input pins: reads the pin value (same as generatePinRead).
+     */
+    private generatePinActuate(pinName: string, indent: number, ctx: GenContext, servoPins: ParsedPin[]): string {
+        const I = (n: number) => '    '.repeat(n + indent);
+        const pinDef = ctx.pins.find(p => p.name === pinName);
+        if (!pinDef) {
+            return `${I(0)}// pin_ref: ${pinName} (unknown pin)`;
+        }
+
+        if (pinDef.mode === 'output') {
+            if (servoPins.includes(pinDef)) {
+                return `${I(0)}servo_${pinName}.write(90); // default angle`;
+            } else {
+                return `${I(0)}digitalWrite(pin_${pinName}, HIGH);`;
+            }
+        }
+
+        // Input pins in actfor context: read their value
+        return this.generatePinRead(pinName, indent, ctx);
     }
 
     // ─── Translation Helpers ───────────────────────────────────────────────

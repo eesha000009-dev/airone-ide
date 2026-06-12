@@ -2,9 +2,9 @@
  * Copyright (C) 2025 Airone and others.
  *
  * This program and the accompanying materials are made available under the
- * terms of the MIT License, which is available in the project root.
+ * terms of the Airone Proprietary License, which is available in the project root.
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Proprietary
  ********************************************************************************/
 
 export const AIRO_COMPILER_PATH = '/services/airo-compiler';
@@ -27,7 +27,7 @@ export interface CompileResult {
     output: string;
     error?: string;
     generatedFiles?: string[];
-    /** Path to the compiled .bin firmware file (produced by Arduino CLI) */
+    /** Path to the compiled .bin firmware file (produced by PlatformIO) */
     binaryPath?: string;
 }
 
@@ -146,7 +146,7 @@ export interface AiroUploadClient {
     installEsptool(): Promise<boolean>;
     /**
      * Compile an .airo file and flash the resulting firmware to an ESP32 board.
-     * Handles the full pipeline: compile → Arduino CLI build (if available) → esptool flash.
+     * Handles the full pipeline: compile → PlatformIO build → esptool flash.
      */
     flashAiroFile(airoFilePath: string, chipType: string, portPath?: string): Promise<FlashResult>;
     /**

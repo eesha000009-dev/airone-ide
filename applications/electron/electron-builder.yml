@@ -28,6 +28,13 @@ extraResources:
     to: app/plugins
   - from: ../../airo-compiler
     to: airo-compiler
+  # PlatformIO Core + ESP32 toolchain for offline compilation
+  # Download/extract to vendor/ before packaging
+  - from: ../../vendor
+    to: vendor
+    filter:
+      - "**/*"
+      - "!**/.git/**"
 
 # ─── Auto-Update Configuration ──────────────────────────────────────────────
 # Publishing to GitHub Releases for auto-update support via electron-updater

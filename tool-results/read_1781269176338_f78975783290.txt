@@ -1,0 +1,1050 @@
+     1→     1→/********************************************************************************
+     2→     2→ * Copyright (C) 2025 Airone and others.
+     3→     3→ *
+     4→     4→ * This program and the accompanying materials are made available under the
+     5→     5→ * terms of the MIT License, which is available in the project root.
+     6→     6→ *
+     7→     7→ * SPDX-License-Identifier: MIT
+     8→     8→ ********************************************************************************/
+     9→     9→
+    10→    10→// ─── Public Result Interface ───────────────────────────────────────────────
+    11→    11→
+    12→    12→export interface TranspileResult {
+    13→    13→    success: boolean;
+    14→    14→    cppCode: string;
+    15→    15→    requiredLibraries: string[];
+    16→    16→    errors: string[];
+    17→    17→}
+    18→    18→
+    19→    19→// ─── Internal AST Types ────────────────────────────────────────────────────
+    20→    20→
+    21→    21→interface ParsedPin {
+    22→    22→    name: string;
+    23→    23→    number: number;
+    24→    24→    mode: 'input' | 'output' | 'INPUT_PULLUP';
+    25→    25→}
+    26→    26→
+    27→    27→interface ParsedVariable {
+    28→    28→    name: string;
+    29→    29→    rawValue: string;       // The literal value as written in .airo
+    30→    30→    isString: boolean;
+    31→    31→    isFloat: boolean;
+    32→    32→}
+    33→    33→
+    34→    34→// Loop-body statement types
+    35→    35→
+    36→    36→type LoopStmt =
+    37→    37→    | ReadForStmt
+    38→    38→    | ActForStmt
+    39→    39→    | AskStmt
+    40→    40→    | SendDataStmt
+    41→    41→    | SaveToStmt
+    42→    42→    | CallStmt
+    43→    43→    | PinWriteStmt
+    44→    44→    | PinRefStmt;
+    45→    45→
+    46→    46→interface ReadForStmt   { kind: 'read_for';  duration: string; body: LoopStmt[]; }
+    47→    47→interface ActForStmt    { kind: 'actfor';    duration: string; body: LoopStmt[]; }
+    48→    48→interface AskStmt       { kind: 'ask';       condition: string; thenBody: LoopStmt[]; elseBody: LoopStmt[]; }
+    49→    49→interface SendDataStmt  { kind: 'senddatato'; urlVar: string; }
+    50→    50→interface SaveToStmt    { kind: 'saveto';    target: string; value: string; }
+    51→    51→interface CallStmt      { kind: 'call';      variable: string; }
+    52→    52→interface PinWriteStmt  { kind: 'pin_write';  pin: string; value: string; }
+    53→    53→interface PinRefStmt    { kind: 'pin_ref';    pin: string; }   // bare pin name ending with "."
+    54→    54→
+    55→    55→// ─── Library / Include Mapping ─────────────────────────────────────────────
+    56→    56→
+    57→    57→interface LibMapping {
+    58→    58→    includes: string[];     // C++ #include paths (e.g. '<WiFi.h>')
+    59→    59→    arduinoLibs: string[];  // Arduino library names for install
+    60→    60→}
+    61→    61→
+    62→    62→const LIBRARY_MAP: Record<string, LibMapping> = {
+    63→    63→    'body/comm/wifi.airo': {
+    64→    64→        includes: ['<WiFi.h>', '<WebSocketsClient.h>', '<ArduinoJson.h>'],
+    65→    65→        arduinoLibs: ['WebSockets', 'ArduinoJson'],
+    66→    66→    },
+    67→    67→    'body/actuation/servo.airo': {
+    68→    68→        includes: ['<Servo.h>'],
+    69→    69→        arduinoLibs: [],
+    70→    70→    },
+    71→    71→    'body/actuation/upper-right-hands.airo': {
+    72→    72→        includes: ['<Servo.h>'],
+    73→    73→        arduinoLibs: [],
+    74→    74→    },
+    75→    75→    'body/sight/eyes.airo': {
+    76→    76→        includes: ['<esp_camera.h>'],
+    77→    77→        arduinoLibs: ['esp32-camera'],
+    78→    78→    },
+    79→    79→    'body/hearing/ears.airo': {
+    80→    80→        includes: ['<driver/i2s.h>'],
+    81→    81→        arduinoLibs: [],
+    82→    82→    },
+    83→    83→    'body/other_sensors/ultrasonic.airo': {
+    84→    84→        includes: [],
+    85→    85→        arduinoLibs: [],
+    86→    86→    },
+    87→    87→};
+    88→    88→
+    89→    89→// ─── WebSocket URL Parts ───────────────────────────────────────────────────
+    90→    90→
+    91→    91→interface WsUrlParts {
+    92→    92→    host: string;
+    93→    93→    port: number;
+    94→    94→    path: string;
+    95→    95→    useSSL: boolean;
+    96→    96→}
+    97→    97→
+    98→    98→// ─── Generation Context ────────────────────────────────────────────────────
+    99→    99→
+   100→   100→interface GenContext {
+   101→   101→    sketchName: string;
+   102→   102→    includes: string[];
+   103→   103→    pins: ParsedPin[];
+   104→   104→    variables: ParsedVariable[];
+   105→   105→    loopStmts: LoopStmt[];
+   106→   106→    needsWifi: boolean;
+   107→   107→    needsWebSocket: boolean;
+   108→   108→    hasUltrasonic: boolean;
+   109→   109→    libraryCalls: string[];
+   110→   110→    usesServo: boolean;
+   111→   111→}
+   112→   112→
+   113→   113→// ─── Extracted Sections ────────────────────────────────────────────────────
+   114→   114→
+   115→   115→interface Sections {
+   116→   116→    library: string;
+   117→   117→    pins: string;
+   118→   118→    variables: string;
+   119→   119→    loop: string;
+   120→   120→}
+   121→   121→
+   122→   122→// ═══════════════════════════════════════════════════════════════════════════
+   123→   123→//  AiroTranspiler
+   124→   124→// ═══════════════════════════════════════════════════════════════════════════
+   125→   125→
+   126→   126→export class AiroTranspiler {
+   127→   127→
+   128→   128→    // ─── Public API ────────────────────────────────────────────────────────
+   129→   129→
+   130→   130→    transpile(airoCode: string, sketchName: string): TranspileResult {
+   131→   131→        const errors: string[] = [];
+   132→   132→        const requiredLibraries: string[] = [];
+   133→   133→
+   134→   134→        // 1. Extract sections
+   135→   135→        const sections = this.extractSections(airoCode);
+   136→   136→        if (!sections.library.trim()) {
+   137→   137→            errors.push('Warning: Missing #library# section — no body modules imported');
+   138→   138→        }
+   139→   139→        if (!sections.pins.trim()) {
+   140→   140→            errors.push('Error: Missing Pin defi section — every .airo file must define pins');
+   141→   141→        }
+   142→   142→        if (!sections.loop.trim()) {
+   143→   143→            errors.push('Error: Missing loop section — every .airo file must have a main loop');
+   144→   144→        }
+   145→   145→
+   146→   146→        // 2. Parse library calls
+   147→   147→        const libraryCalls = this.parseLibrarySection(sections.library);
+   148→   148→
+   149→   149→        // 3. Parse pin definitions
+   150→   150→        const pins = this.parsePinSection(sections.pins, errors);
+   151→   151→
+   152→   152→        // 4. Parse variables
+   153→   153→        const variables = this.parseVariableSection(sections.variables, errors);
+   154→   154→
+   155→   155→        // 5. Parse loop body
+   156→   156→        const loopStmts = this.parseLoopBody(sections.loop, pins, variables);
+   157→   157→
+   158→   158→        // 6. Determine features
+   159→   159→        const needsWifi = variables.some(v => v.name === 'wifi_ssid')
+   160→   160→            || libraryCalls.includes('body/comm/wifi.airo');
+   161→   161→        const needsWebSocket = variables.some(v => v.name === 'brain_url')
+   162→   162→            || this.treeHasSendData(loopStmts);
+   163→   163→        const hasUltrasonic = pins.some(p => p.name === 'trig' && p.mode === 'output')
+   164→   164→            && pins.some(p => p.name === 'echo' && p.mode === 'input');
+   165→   165→        const usesServo = libraryCalls.some(l =>
+   166→   166→            l === 'body/actuation/servo.airo' || l === 'body/actuation/upper-right-hands.airo'
+   167→   167→        );
+   168→   168→
+   169→   169→        // 7. Resolve includes and required libraries
+   170→   170→        const includes = new Set<string>();
+   171→   171→        includes.add('<Arduino.h>');
+   172→   172→
+   173→   173→        for (const call of libraryCalls) {
+   174→   174→            const mapping = LIBRARY_MAP[call];
+   175→   175→            if (mapping) {
+   176→   176→                for (const inc of mapping.includes) includes.add(inc);
+   177→   177→                for (const lib of mapping.arduinoLibs) {
+   178→   178→                    if (!requiredLibraries.includes(lib)) requiredLibraries.push(lib);
+   179→   179→                }
+   180→   180→            }
+   181→   181→        }
+   182→   182→
+   183→   183→        if (needsWifi) includes.add('<WiFi.h>');
+   184→   184→        if (needsWebSocket) {
+   185→   185→            includes.add('<WebSocketsClient.h>');
+   186→   186→            includes.add('<ArduinoJson.h>');
+   187→   187→            if (!requiredLibraries.includes('WebSockets')) requiredLibraries.push('WebSockets');
+   188→   188→            if (!requiredLibraries.includes('ArduinoJson')) requiredLibraries.push('ArduinoJson');
+   189→   189→        }
+   190→   190→
+   191→   191→        // 8. Generate C++ code
+   192→   192→        const ctx: GenContext = {
+   193→   193→            sketchName,
+   194→   194→            includes: Array.from(includes),
+   195→   195→            pins,
+   196→   196→            variables,
+   197→   197→            loopStmts,
+   198→   198→            needsWifi,
+   199→   199→            needsWebSocket,
+   200→   200→            hasUltrasonic,
+   201→   201→            libraryCalls,
+   202→   202→            usesServo,
+   203→   203→        };
+   204→   204→
+   205→   205→        const cppCode = this.generateCpp(ctx);
+   206→   206→
+   207→   207→        const hasErrors = errors.some(e => e.startsWith('Error:'));
+   208→   208→        return {
+   209→   209→            success: !hasErrors,
+   210→   210→            cppCode,
+   211→   211→            requiredLibraries,
+   212→   212→            errors,
+   213→   213→        };
+   214→   214→    }
+   215→   215→
+   216→   216→    // ─── Section Extraction ────────────────────────────────────────────────
+   217→   217→
+   218→   218→    private extractSections(code: string): Sections {
+   219→   219→        const lines = code.split('\n');
+   220→   220→
+   221→   221→        let libraryStart = -1;
+   222→   222→        let pinStart = -1;
+   223→   223→        let variablesStart = -1;
+   224→   224→        let loopStart = -1;
+   225→   225→
+   226→   226→        for (let i = 0; i < lines.length; i++) {
+   227→   227→            const trimmed = lines[i].trim();
+   228→   228→            if (trimmed === '#library#' || trimmed.startsWith('#library#')) {
+   229→   229→                if (libraryStart === -1) libraryStart = i;
+   230→   230→            } else if (trimmed.startsWith('Pin defi')) {
+   231→   231→                if (pinStart === -1) pinStart = i;
+   232→   232→            } else if (trimmed === '#variables#' || trimmed.startsWith('#variables#')) {
+   233→   233→                if (variablesStart === -1) variablesStart = i;
+   234→   234→            } else if (/^loop\s*\{/.test(trimmed) || trimmed === 'loop' || trimmed.startsWith('loop ')) {
+   235→   235→                if (loopStart === -1) loopStart = i;
+   236→   236→            }
+   237→   237→        }
+   238→   238→
+   239→   239→        // Library section: from #library# to next section
+   240→   240→        const libraryEnd = this.earliestPositive([pinStart, variablesStart, loopStart], lines.length);
+   241→   241→        const libraryContent = libraryStart >= 0
+   242→   242→            ? lines.slice(libraryStart + 1, libraryEnd).join('\n')
+   243→   243→            : '';
+   244→   244→
+   245→   245→        // Pin section: between braces of Pin defi
+   246→   246→        const pinContent = pinStart >= 0
+   247→   247→            ? this.extractBraceBlockContent(lines, pinStart)
+   248→   248→            : '';
+   249→   249→
+   250→   250→        // Variables section: from #variables# to next section
+   251→   251→        const variablesEnd = this.earliestPositive([loopStart], lines.length);
+   252→   252→        const variablesContent = variablesStart >= 0
+   253→   253→            ? lines.slice(variablesStart + 1, variablesEnd).join('\n')
+   254→   254→            : '';
+   255→   255→
+   256→   256→        // Loop section: between braces of loop
+   257→   257→        const loopContent = loopStart >= 0
+   258→   258→            ? this.extractBraceBlockContent(lines, loopStart)
+   259→   259→            : '';
+   260→   260→
+   261→   261→        return { library: libraryContent, pins: pinContent, variables: variablesContent, loop: loopContent };
+   262→   262→    }
+   263→   263→
+   264→   264→    /** Returns the smallest value from `candidates` that is > 0, or `fallback`. */
+   265→   265→    private earliestPositive(candidates: number[], fallback: number): number {
+   266→   266→        const positive = candidates.filter(c => c > 0);
+   267→   267→        return positive.length > 0 ? Math.min(...positive) : fallback;
+   268→   268→    }
+   269→   269→
+   270→   270→    /** Extract text between the first pair of matching braces starting at `startLine`. */
+   271→   271→    private extractBraceBlockContent(lines: string[], startLine: number): string {
+   272→   272→        let depth = 0;
+   273→   273→        let started = false;
+   274→   274→        let blockStart = -1;
+   275→   275→        let blockEnd = -1;
+   276→   276→
+   277→   277→        for (let i = startLine; i < lines.length; i++) {
+   278→   278→            for (const ch of lines[i]) {
+   279→   279→                if (ch === '{') {
+   280→   280→                    if (!started) blockStart = i;
+   281→   281→                    depth++;
+   282→   282→                    started = true;
+   283→   283→                } else if (ch === '}') {
+   284→   284→                    depth--;
+   285→   285→                    if (depth === 0 && started) {
+   286→   286→                        blockEnd = i;
+   287→   287→                        break;
+   288→   288→                    }
+   289→   289→                }
+   290→   290→            }
+   291→   291→            if (blockEnd >= 0) break;
+   292→   292→        }
+   293→   293→
+   294→   294→        if (blockStart < 0 || blockEnd < 0) return '';
+   295→   295→
+   296→   296→        // Re-join and extract content between the first { and last }
+   297→   297→        const blockLines = lines.slice(blockStart, blockEnd + 1);
+   298→   298→        const joined = blockLines.join('\n');
+   299→   299→        const openIdx = joined.indexOf('{');
+   300→   300→        const closeIdx = joined.lastIndexOf('}');
+   301→   301→        if (openIdx < 0 || closeIdx < 0) return '';
+   302→   302→        return joined.substring(openIdx + 1, closeIdx);
+   303→   303→    }
+   304→   304→
+   305→   305→    // ─── Library Section Parsing ───────────────────────────────────────────
+   306→   306→
+   307→   307→    private parseLibrarySection(text: string): string[] {
+   308→   308→        const calls: string[] = [];
+   309→   309→        const lines = text.split('\n');
+   310→   310→        for (const line of lines) {
+   311→   311→            const trimmed = line.trim();
+   312→   312→            // Match: # call body/comm/wifi.airo.
+   313→   313→            const match = trimmed.match(/^#\s*call\s+(.+?)\.airo\.\s*$/);
+   314→   314→            if (match) {
+   315→   315→                calls.push(match[1] + '.airo');
+   316→   316→            }
+   317→   317→        }
+   318→   318→        return calls;
+   319→   319→    }
+   320→   320→
+   321→   321→    // ─── Pin Section Parsing ───────────────────────────────────────────────
+   322→   322→
+   323→   323→    private parsePinSection(text: string, errors: string[]): ParsedPin[] {
+   324→   324→        const pins: ParsedPin[] = [];
+   325→   325→        const lines = text.split('\n');
+   326→   326→
+   327→   327→        for (const line of lines) {
+   328→   328→            const trimmed = line.trim();
+   329→   329→            if (!trimmed || trimmed.startsWith('#') || trimmed === '{' || trimmed === '}') continue;
+   330→   330→
+   331→   331→            // Format: name = number; mode.
+   332→   332→            const match = trimmed.match(/^(\w+)\s*=\s*(\d+)\s*;\s*(input|output|INPUT_PULLUP)\s*\.\s*$/);
+   333→   333→            if (match) {
+   334→   334→                const mode = match[3].toLowerCase() as 'input' | 'output' | 'input_pullup';
+   335→   335→                pins.push({
+   336→   336→                    name: match[1],
+   337→   337→                    number: parseInt(match[2], 10),
+   338→   338→                    mode: mode === 'input_pullup' ? 'INPUT_PULLUP' : (mode as 'input' | 'output'),
+   339→   339→                });
+   340→   340→            } else if (trimmed.includes('=') && !trimmed.startsWith('#')) {
+   341→   341→                // Looks like a pin def but doesn't match the pattern
+   342→   342→                errors.push(`Warning: Unrecognized pin definition: "${trimmed}"`);
+   343→   343→            }
+   344→   344→        }
+   345→   345→
+   346→   346→        return pins;
+   347→   347→    }
+   348→   348→
+   349→   349→    // ─── Variable Section Parsing ──────────────────────────────────────────
+   350→   350→
+   351→   351→    private parseVariableSection(text: string, errors: string[]): ParsedVariable[] {
+   352→   352→        const vars: ParsedVariable[] = [];
+   353→   353→        const lines = text.split('\n');
+   354→   354→
+   355→   355→        for (const line of lines) {
+   356→   356→            const trimmed = line.trim();
+   357→   357→            if (!trimmed || trimmed.startsWith('#')) continue;
+   358→   358→
+   359→   359→            // Format: name = value.
+   360→   360→            const match = trimmed.match(/^(\w+)\s*=\s*(.+?)\s*\.\s*$/);
+   361→   361→            if (match) {
+   362→   362→                const name = match[1];
+   363→   363→                const raw = match[2].trim();
+   364→   364→                const isString = raw.startsWith('"') && raw.endsWith('"');
+   365→   365→                const isFloat = !isString && /^\d+\.\d+$/.test(raw);
+   366→   366→                vars.push({ name, rawValue: raw, isString, isFloat });
+   367→   367→            } else if (trimmed.includes('=') && !trimmed.startsWith('#')) {
+   368→   368→                errors.push(`Warning: Unrecognized variable definition: "${trimmed}"`);
+   369→   369→            }
+   370→   370→        }
+   371→   371→
+   372→   372→        return vars;
+   373→   373→    }
+   374→   374→
+   375→   375→    // ─── Loop Body Parsing ─────────────────────────────────────────────────
+   376→   376→
+   377→   377→    private parseLoopBody(text: string, pins: ParsedPin[], vars: ParsedVariable[]): LoopStmt[] {
+   378→   378→        const cleaned = this.stripComments(text);
+   379→   379→        return this.scanStatements(cleaned, pins, vars);
+   380→   380→    }
+   381→   381→
+   382→   382→    private stripComments(text: string): string {
+   383→   383→        return text.split('\n')
+   384→   384→            .filter(line => {
+   385→   385→                const trimmed = line.trim();
+   386→   386→                // Keep section markers (shouldn't appear in loop body, but be safe)
+   387→   387→                if (trimmed === '#library#' || trimmed === '#variables#') return false;
+   388→   388→                // Drop full-line comments
+   389→   389→                if (trimmed.startsWith('#')) return false;
+   390→   390→                return true;
+   391→   391→            })
+   392→   392→            .join('\n');
+   393→   393→    }
+   394→   394→
+   395→   395→    private scanStatements(text: string, pins: ParsedPin[], vars: ParsedVariable[]): LoopStmt[] {
+   396→   396→        const stmts: LoopStmt[] = [];
+   397→   397→        let pos = 0;
+   398→   398→
+   399→   399→        const skipWs = (): void => {
+   400→   400→            while (pos < text.length && /\s/.test(text[pos])) pos++;
+   401→   401→        };
+   402→   402→
+   403→   403→        while (pos < text.length) {
+   404→   404→            skipWs();
+   405→   405→            if (pos >= text.length) break;
+   406→   406→
+   407→   407→            const remaining = text.substring(pos);
+   408→   408→
+   409→   409→            // ── read_for(N) { ... } ──────────────────────────────────
+   410→   410→            const readForMatch = remaining.match(/^read_for\s*\(\s*([^)]+?)\s*\)\s*\{/);
+   411→   411→            if (readForMatch) {
+   412→   412→                const duration = readForMatch[1].trim();
+   413→   413→                pos += readForMatch[0].length;
+   414→   414→                const openBrace = pos - 1;
+   415→   415→                const closeBrace = this.findMatchingBrace(text, openBrace);
+   416→   416→                const bodyText = text.substring(pos, closeBrace);
+   417→   417→                stmts.push({
+   418→   418→                    kind: 'read_for',
+   419→   419→                    duration,
+   420→   420→                    body: this.scanStatements(bodyText, pins, vars),
+   421→   421→                });
+   422→   422→                pos = closeBrace + 1;
+   423→   423→                continue;
+   424→   424→            }
+   425→   425→
+   426→   426→            // ── actfor(N) { ... } ────────────────────────────────────
+   427→   427→            const actForMatch = remaining.match(/^actfor\s*\(\s*([^)]+?)\s*\)\s*\{/);
+   428→   428→            if (actForMatch) {
+   429→   429→                const duration = actForMatch[1].trim();
+   430→   430→                pos += actForMatch[0].length;
+   431→   431→                const openBrace = pos - 1;
+   432→   432→                const closeBrace = this.findMatchingBrace(text, openBrace);
+   433→   433→                const bodyText = text.substring(pos, closeBrace);
+   434→   434→                stmts.push({
+   435→   435→                    kind: 'actfor',
+   436→   436→                    duration,
+   437→   437→                    body: this.scanStatements(bodyText, pins, vars),
+   438→   438→                });
+   439→   439→                pos = closeBrace + 1;
+   440→   440→                continue;
+   441→   441→            }
+   442→   442→
+   443→   443→            // ── ask condition { ... } [else { ... }] ─────────────────
+   444→   444→            const askMatch = remaining.match(/^ask\s+(.+?)\s*\{/);
+   445→   445→            if (askMatch) {
+   446→   446→                const condition = askMatch[1].trim();
+   447→   447→                pos += askMatch[0].length;
+   448→   448→                const thenOpen = pos - 1;
+   449→   449→                const thenClose = this.findMatchingBrace(text, thenOpen);
+   450→   450→                const thenText = text.substring(pos, thenClose);
+   451→   451→                const thenBody = this.scanStatements(thenText, pins, vars);
+   452→   452→                pos = thenClose + 1;
+   453→   453→
+   454→   454→                let elseBody: LoopStmt[] = [];
+   455→   455→                skipWs();
+   456→   456→                const afterThen = text.substring(pos).trimStart();
+   457→   457→                if (afterThen.startsWith('else')) {
+   458→   458→                    pos += text.substring(pos).indexOf('else') + 4;
+   459→   459→                    skipWs();
+   460→   460→                    if (pos < text.length && text[pos] === '{') {
+   461→   461→                        pos++; // skip {
+   462→   462→                        const elseOpen = pos - 1;
+   463→   463→                        const elseClose = this.findMatchingBrace(text, elseOpen);
+   464→   464→                        const elseText = text.substring(pos, elseClose);
+   465→   465→                        elseBody = this.scanStatements(elseText, pins, vars);
+   466→   466→                        pos = elseClose + 1;
+   467→   467→                    }
+   468→   468→                }
+   469→   469→
+   470→   470→                stmts.push({ kind: 'ask', condition, thenBody, elseBody });
+   471→   471→                continue;
+   472→   472→            }
+   473→   473→
+   474→   474→            // ── senddatato(url). ─────────────────────────────────────
+   475→   475→            const sendMatch = remaining.match(/^senddatato\s*\(\s*([^)]+?)\s*\)\s*\./);
+   476→   476→            if (sendMatch) {
+   477→   477→                stmts.push({ kind: 'senddatato', urlVar: sendMatch[1].trim() });
+   478→   478→                pos += sendMatch[0].length;
+   479→   479→                continue;
+   480→   480→            }
+   481→   481→
+   482→   482→            // ── saveto var = value. ──────────────────────────────────
+   483→   483→            const saveMatch = remaining.match(/^saveto\s+(\w+)\s*=\s*(.+?)\s*\./);
+   484→   484→            if (saveMatch) {
+   485→   485→                stmts.push({ kind: 'saveto', target: saveMatch[1], value: saveMatch[2].trim() });
+   486→   486→                pos += saveMatch[0].length;
+   487→   487→                continue;
+   488→   488→            }
+   489→   489→
+   490→   490→            // ── call var. ────────────────────────────────────────────
+   491→   491→            const callMatch = remaining.match(/^call\s+(\w+)\s*\./);
+   492→   492→            if (callMatch) {
+   493→   493→                stmts.push({ kind: 'call', variable: callMatch[1] });
+   494→   494→                pos += callMatch[0].length;
+   495→   495→                continue;
+   496→   496→            }
+   497→   497→
+   498→   498→            // ── pin = value.  (pin write: led = HIGH.) ───────────────
+   499→   499→            const pinWriteMatch = remaining.match(/^(\w+)\s*=\s*(\w+)\s*\./);
+   500→   500→            if (pinWriteMatch) {
+   501→   501→                stmts.push({ kind: 'pin_write', pin: pinWriteMatch[1], value: pinWriteMatch[2] });
+   502→   502→                pos += pinWriteMatch[0].length;
+   503→   503→                continue;
+   504→   504→            }
+   505→   505→
+   506→   506→            // ── pin.  (bare pin reference: sensor.) ──────────────────
+   507→   507→            const pinRefMatch = remaining.match(/^(\w+)\s*\./);
+   508→   508→            if (pinRefMatch) {
+   509→   509→                stmts.push({ kind: 'pin_ref', pin: pinRefMatch[1] });
+   510→   510→                pos += pinRefMatch[0].length;
+   511→   511→                continue;
+   512→   512→            }
+   513→   513→
+   514→   514→            // Skip unrecognized character
+   515→   515→            pos++;
+   516→   516→        }
+   517→   517→
+   518→   518→        return stmts;
+   519→   519→    }
+   520→   520→
+   521→   521→    /** Find the position of the `}` that matches the `{` at `openPos`. */
+   522→   522→    private findMatchingBrace(text: string, openPos: number): number {
+   523→   523→        let depth = 0;
+   524→   524→        for (let i = openPos; i < text.length; i++) {
+   525→   525→            if (text[i] === '{') depth++;
+   526→   526→            else if (text[i] === '}') {
+   527→   527→                depth--;
+   528→   528→                if (depth === 0) return i;
+   529→   529→            }
+   530→   530→        }
+   531→   531→        return text.length; // unmatched — return end
+   532→   532→    }
+   533→   533→
+   534→   534→    // ─── Feature Detection ─────────────────────────────────────────────────
+   535→   535→
+   536→   536→    private treeHasSendData(stmts: LoopStmt[]): boolean {
+   537→   537→        for (const s of stmts) {
+   538→   538→            if (s.kind === 'senddatato') return true;
+   539→   539→            if (s.kind === 'read_for' && this.treeHasSendData(s.body)) return true;
+   540→   540→            if (s.kind === 'actfor' && this.treeHasSendData(s.body)) return true;
+   541→   541→            if (s.kind === 'ask') {
+   542→   542→                if (this.treeHasSendData(s.thenBody) || this.treeHasSendData(s.elseBody)) return true;
+   543→   543→            }
+   544→   544→        }
+   545→   545→        return false;
+   546→   546→    }
+   547→   547→
+   548→   548→    // ─── C++ Code Generation ───────────────────────────────────────────────
+   549→   549→
+   550→   550→    private generateCpp(ctx: GenContext): string {
+   551→   551→        const L: string[] = [];
+   552→   552→        const I = (n: number) => '    '.repeat(n);
+   553→   553→
+   554→   554→        // ── File header ───────────────────────────────────────────────
+   555→   555→        L.push('/*');
+   556→   556→        L.push(` * Generated by Airone IDE from ${ctx.sketchName}.airo`);
+   557→   557→        L.push(' * Target: ESP32 (Arduino framework)');
+   558→   558→        L.push(' *');
+   559→   559→        L.push(' * DO NOT EDIT — regenerate from the .airo source.');
+   560→   560→        L.push(' */');
+   561→   561→
+   562→   562→        // ── Includes ──────────────────────────────────────────────────
+   563→   563→        L.push('');
+   564→   564→        L.push('// ─── Includes ─────────────────────────────────────────────────────────────');
+   565→   565→        for (const inc of ctx.includes) {
+   566→   566→            L.push(`#include ${inc}`);
+   567→   567→        }
+   568→   568→
+   569→   569→        // ── Pin definitions ───────────────────────────────────────────
+   570→   570→        if (ctx.pins.length > 0) {
+   571→   571→            L.push('');
+   572→   572→            L.push('// ─── Pin Definitions ──────────────────────────────────────────────────────');
+   573→   573→            for (const pin of ctx.pins) {
+   574→   574→                L.push(`const int pin_${pin.name} = ${pin.number};`);
+   575→   575→            }
+   576→   576→        }
+   577→   577→
+   578→   578→        // ── Servo objects ─────────────────────────────────────────────
+   579→   579→        const servoPins = ctx.usesServo
+   580→   580→            ? ctx.pins.filter(p =>
+   581→   581→                p.mode === 'output' &&
+   582→   582→                /servo|motor|hand|arm|leg/i.test(p.name)
+   583→   583→              )
+   584→   584→            : [];
+   585→   585→        if (servoPins.length > 0) {
+   586→   586→            L.push('');
+   587→   587→            L.push('// ─── Servo Objects ────────────────────────────────────────────────────────');
+   588→   588→            for (const sp of servoPins) {
+   589→   589→                L.push(`Servo servo_${sp.name};`);
+   590→   590→            }
+   591→   591→        }
+   592→   592→
+   593→   593→        // ── User variables ────────────────────────────────────────────
+   594→   594→        if (ctx.variables.length > 0) {
+   595→   595→            L.push('');
+   596→   596→            L.push('// ─── Variables ────────────────────────────────────────────────────────────');
+   597→   597→            for (const v of ctx.variables) {
+   598→   598→                const cppType = v.isString ? 'String' : (v.isFloat ? 'float' : 'int');
+   599→   599→                L.push(`${cppType} ${v.name} = ${v.rawValue};`);
+   600→   600→            }
+   601→   601→        }
+   602→   602→
+   603→   603→        // ── Sensor variables ──────────────────────────────────────────
+   604→   604→        const inputPins = ctx.pins.filter(p => p.mode === 'input');
+   605→   605→        if (inputPins.length > 0) {
+   606→   606→            L.push('');
+   607→   607→            L.push('// ─── Sensor Variables ─────────────────────────────────────────────────────');
+   608→   608→            for (const ip of inputPins) {
+   609→   609→                L.push(`int var_${ip.name} = 0;`);
+   610→   610→            }
+   611→   611→        }
+   612→   612→
+   613→   613→        // ── WebSocket client ──────────────────────────────────────────
+   614→   614→        if (ctx.needsWebSocket) {
+   615→   615→            L.push('');
+   616→   616→            L.push('// ─── WebSocket Client ─────────────────────────────────────────────────────');
+   617→   617→            L.push('WebSocketsClient webSocket;');
+   618→   618→        }
+   619→   619→
+   620→   620→        // ── Helper: ultrasonic distance ───────────────────────────────
+   621→   621→        if (ctx.hasUltrasonic) {
+   622→   622→            L.push('');
+   623→   623→            L.push('// ─── Helper: Ultrasonic Distance ──────────────────────────────────────────');
+   624→   624→            L.push('long measureDistance(int trigPin, int echoPin) {');
+   625→   625→            L.push(`${I(1)}digitalWrite(trigPin, LOW);`);
+   626→   626→            L.push(`${I(1)}delayMicroseconds(2);`);
+   627→   627→            L.push(`${I(1)}digitalWrite(trigPin, HIGH);`);
+   628→   628→            L.push(`${I(1)}delayMicroseconds(10);`);
+   629→   629→            L.push(`${I(1)}digitalWrite(trigPin, LOW);`);
+   630→   630→            L.push(`${I(1)}long duration = pulseIn(echoPin, HIGH, 30000);`);
+   631→   631→            L.push(`${I(1)}if (duration == 0) return -1;`);
+   632→   632→            L.push(`${I(1)}return duration * 0.034 / 2;`);
+   633→   633→            L.push('}');
+   634→   634→        }
+   635→   635→
+   636→   636→        // ── WebSocket event handler ───────────────────────────────────
+   637→   637→        if (ctx.needsWebSocket) {
+   638→   638→            L.push('');
+   639→   639→            L.push('// ─── WebSocket Event Handler ──────────────────────────────────────────────');
+   640→   640→            L.push('void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {');
+   641→   641→            L.push(`${I(1)}switch(type) {`);
+   642→   642→            L.push(`${I(2)}case WStype_DISCONNECTED:`);
+   643→   643→            L.push(`${I(3)}Serial.println("[WS] Disconnected!");`);
+   644→   644→            L.push(`${I(3)}break;`);
+   645→   645→            L.push(`${I(2)}case WStype_CONNECTED:`);
+   646→   646→            L.push(`${I(3)}Serial.println("[WS] Connected!");`);
+   647→   647→            L.push(`${I(3)}break;`);
+   648→   648→            L.push(`${I(2)}case WStype_TEXT: {`);
+   649→   649→            L.push(`${I(3)}JsonDocument _cmd;`);
+   650→   650→            L.push(`${I(3)}deserializeJson(_cmd, payload, length);`);
+   651→   651→            // Generate command handlers for output pins
+   652→   652→            const outputPins = ctx.pins.filter(p => p.mode === 'output');
+   653→   653→            for (const op of outputPins) {
+   654→   654→                if (servoPins.includes(op)) {
+   655→   655→                    L.push(`${I(3)}if (_cmd.containsKey("${op.name}")) {`);
+   656→   656→                    L.push(`${I(4)}int _val = _cmd["${op.name}"].as<int>();`);
+   657→   657→                    L.push(`${I(4)}servo_${op.name}.write(_val);`);
+   658→   658→                    L.push(`${I(3)}}`);
+   659→   659→                } else {
+   660→   660→                    L.push(`${I(3)}if (_cmd.containsKey("${op.name}")) {`);
+   661→   661→                    L.push(`${I(4)}int _val = _cmd["${op.name}"].as<int>();`);
+   662→   662→                    L.push(`${I(4)}digitalWrite(pin_${op.name}, _val);`);
+   663→   663→                    L.push(`${I(3)}}`);
+   664→   664→                }
+   665→   665→            }
+   666→   666→            L.push(`${I(3)}break;`);
+   667→   667→            L.push(`${I(2)}}`);
+   668→   668→            L.push(`${I(2)}default:`);
+   669→   669→            L.push(`${I(3)}break;`);
+   670→   670→            L.push(`${I(1)}}`);
+   671→   671→            L.push('}');
+   672→   672→        }
+   673→   673→
+   674→   674→        // ── setup() ──────────────────────────────────────────────────
+   675→   675→        L.push('');
+   676→   676→        L.push('// ─── Setup ────────────────────────────────────────────────────────────────');
+   677→   677→        L.push('void setup() {');
+   678→   678→        L.push(`${I(1)}Serial.begin(115200);`);
+   679→   679→        L.push(`${I(1)}delay(100);`);
+   680→   680→        L.push('');
+   681→   681→
+   682→   682→        // Pin modes
+   683→   683→        if (ctx.pins.length > 0) {
+   684→   684→            L.push(`${I(1)}// Pin modes`);
+   685→   685→            for (const pin of ctx.pins) {
+   686→   686→                const modeStr = pin.mode === 'INPUT_PULLUP' ? 'INPUT_PULLUP'
+   687→   687→                    : pin.mode === 'input' ? 'INPUT' : 'OUTPUT';
+   688→   688→                L.push(`${I(1)}pinMode(pin_${pin.name}, ${modeStr});`);
+   689→   689→            }
+   690→   690→            L.push('');
+   691→   691→        }
+   692→   692→
+   693→   693→        // Servo attach
+   694→   694→        if (servoPins.length > 0) {
+   695→   695→            L.push(`${I(1)}// Servo attach`);
+   696→   696→            for (const sp of servoPins) {
+   697→   697→                L.push(`${I(1)}servo_${sp.name}.attach(pin_${sp.name});`);
+   698→   698→            }
+   699→   699→            L.push('');
+   700→   700→        }
+   701→   701→
+   702→   702→        // WiFi
+   703→   703→        if (ctx.needsWifi) {
+   704→   704→            const ssidVar = ctx.variables.find(v => v.name === 'wifi_ssid');
+   705→   705→
+   706→   706→            L.push(`${I(1)}// WiFi connection`);
+   707→   707→            if (ssidVar) {
+   708→   708→                L.push(`${I(1)}WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());`);
+   709→   709→            } else {
+   710→   710→                L.push(`${I(1)}// WARNING: wifi_ssid not defined in .airo variables`);
+   711→   711→                L.push(`${I(1)}WiFi.begin("", "");`);
+   712→   712→            }
+   713→   713→            L.push(`${I(1)}Serial.print("Connecting to WiFi");`);
+   714→   714→            L.push(`${I(1)}int _wifiTimeout = 0;`);
+   715→   715→            L.push(`${I(1)}while (WiFi.status() != WL_CONNECTED && _wifiTimeout < 40) {`);
+   716→   716→            L.push(`${I(2)}delay(500);`);
+   717→   717→            L.push(`${I(2)}Serial.print(".");`);
+   718→   718→            L.push(`${I(2)}_wifiTimeout++;`);
+   719→   719→            L.push(`${I(1)}}`);
+   720→   720→            L.push(`${I(1)}if (WiFi.status() == WL_CONNECTED) {`);
+   721→   721→            L.push(`${I(2)}Serial.println();`);
+   722→   722→            L.push(`${I(2)}Serial.print("WiFi connected! IP: ");`);
+   723→   723→            L.push(`${I(2)}Serial.println(WiFi.localIP());`);
+   724→   724→
+   725→   725→            // WebSocket
+   726→   726→            if (ctx.needsWebSocket) {
+   727→   727→                const brainVar = ctx.variables.find(v => v.name === 'brain_url');
+   728→   728→                L.push('');
+   729→   729→                L.push(`${I(2)}// WebSocket connection`);
+   730→   730→                if (brainVar) {
+   731→   731→                    const urlStr = brainVar.rawValue.replace(/^"|"$/g, '');
+   732→   732→                    const urlParts = this.parseWebSocketUrl(urlStr);
+   733→   733→                    if (urlParts) {
+   734→   734→                        if (urlParts.useSSL) {
+   735→   735→                            L.push(`${I(2)}webSocket.beginSSL("${urlParts.host}", ${urlParts.port}, "${urlParts.path}");`);
+   736→   736→                        } else {
+   737→   737→                            L.push(`${I(2)}webSocket.begin("${urlParts.host}", ${urlParts.port}, "${urlParts.path}");`);
+   738→   738→                        }
+   739→   739→                    } else {
+   740→   740→                        L.push(`${I(2)}// WARNING: Could not parse brain_url — falling back to direct string`);
+   741→   741→                        L.push(`${I(2)}webSocket.beginSSL(brain_url.c_str(), 443, "/");`);
+   742→   742→                    }
+   743→   743→                } else {
+   744→   744→                    L.push(`${I(2)}// WARNING: brain_url not defined in .airo variables`);
+   745→   745→                }
+   746→   746→                L.push(`${I(2)}webSocket.onEvent(webSocketEvent);`);
+   747→   747→                L.push(`${I(2)}webSocket.setReconnectInterval(5000);`);
+   748→   748→            }
+   749→   749→
+   750→   750→            L.push(`${I(1)}} else {`);
+   751→   751→            L.push(`${I(2)}Serial.println();`);
+   752→   752→            L.push(`${I(2)}Serial.println("WiFi connection failed!");`);
+   753→   753→            L.push(`${I(1)}}`);
+   754→   754→        }
+   755→   755→
+   756→   756→        L.push('}');
+   757→   757→
+   758→   758→        // ── loop() ──────────────────────────────────────────────────
+   759→   759→        L.push('');
+   760→   760→        L.push('// ─── Loop ─────────────────────────────────────────────────────────────────');
+   761→   761→        L.push('void loop() {');
+   762→   762→
+   763→   763→        // WebSocket.loop() must be called every iteration
+   764→   764→        if (ctx.needsWebSocket) {
+   765→   765→            L.push(`${I(1)}webSocket.loop();`);
+   766→   766→        }
+   767→   767→
+   768→   768→        // Generate loop body statements
+   769→   769→        for (const stmt of ctx.loopStmts) {
+   770→   770→            L.push(this.generateStmt(stmt, 1, ctx));
+   771→   771→        }
+   772→   772→
+   773→   773→        L.push('}');
+   774→   774→
+   775→   775→        return L.join('\n');
+   776→   776→    }
+   777→   777→
+   778→   778→    // ─── Statement Code Generation ─────────────────────────────────────────
+   779→   779→
+   780→   780→    private generateStmt(stmt: LoopStmt, indent: number, ctx: GenContext): string {
+   781→   781→        const I = (n: number) => '    '.repeat(n + indent);
+   782→   782→        const inputPins = ctx.pins.filter(p => p.mode === 'input');
+   783→   783→        const servoPins = ctx.usesServo
+   784→   784→            ? ctx.pins.filter(p => p.mode === 'output' && /servo|motor|hand|arm|leg/i.test(p.name))
+   785→   785→            : [];
+   786→   786→
+   787→   787→        switch (stmt.kind) {
+   788→   788→
+   789→   789→            // ── read_for ──────────────────────────────────────────────
+   790→   790→            case 'read_for': {
+   791→   791→                const L: string[] = [];
+   792→   792→                const dur = this.translateRvalue(stmt.duration, ctx.pins, ctx.variables);
+   793→   793→                L.push(`${I(0)}// read_for(${stmt.duration})`);
+   794→   794→                if (stmt.duration === '0' || stmt.duration.trim() === '0') {
+   795→   795→                    // Read once, no loop
+   796→   796→                    L.push(`${I(0)}{`);
+   797→   797→                    for (const s of stmt.body) {
+   798→   798→                        if (s.kind === 'pin_ref') {
+   799→   799→                            L.push(this.generatePinRead(s.pin, indent + 1, ctx));
+   800→   800→                        } else {
+   801→   801→                            // Process all other statements (senddatato, ask, saveto, pin_write, call)
+   802→   802→                            L.push(this.generateStmt(s, indent + 1, ctx));
+   803→   803→                        }
+   804→   804→                    }
+   805→   805→                    L.push(`${I(0)}}`);
+   806→   806→                } else {
+   807→   807→                    L.push(`${I(0)}{`);
+   808→   808→                    L.push(`${I(1)}unsigned long _read_start = millis();`);
+   809→   809→                    L.push(`${I(1)}while (millis() - _read_start < ${dur}) {`);
+   810→   810→                    for (const s of stmt.body) {
+   811→   811→                        if (s.kind === 'pin_ref') {
+   812→   812→                            L.push(this.generatePinRead(s.pin, indent + 2, ctx));
+   813→   813→                        } else {
+   814→   814→                            // Process all other statements (senddatato, ask, saveto, pin_write, call)
+   815→   815→                            L.push(this.generateStmt(s, indent + 2, ctx));
+   816→   816→                        }
+   817→   817→                    }
+   818→   818→                    L.push(`${I(2)}yield();`);
+   819→   819→                    L.push(`${I(1)}}`);
+   820→   820→                    L.push(`${I(0)}}`);
+   821→   821→                }
+   822→   822→                return L.join('\n');
+   823→   823→            }
+   824→   824→
+   825→   825→            // ── actfor ────────────────────────────────────────────────
+   826→   826→            case 'actfor': {
+   827→   827→                const L: string[] = [];
+   828→   828→                const dur = this.translateRvalue(stmt.duration, ctx.pins, ctx.variables);
+   829→   829→                L.push(`${I(0)}// actfor(${stmt.duration})`);
+   830→   830→                L.push(`${I(0)}{`);
+   831→   831→                L.push(`${I(1)}unsigned long _act_start = millis();`);
+   832→   832→                L.push(`${I(1)}while (millis() - _act_start < ${dur}) {`);
+   833→   833→                for (const s of stmt.body) {
+   834→   834→                    if (s.kind === 'pin_ref') {
+   835→   835→                        const pinDef = ctx.pins.find(p => p.name === s.pin);
+   836→   836→                        if (pinDef && pinDef.mode === 'output') {
+   837→   837→                            if (servoPins.includes(pinDef)) {
+   838→   838→                                L.push(`${I(2)}servo_${s.pin}.write(90); // default angle`);
+   839→   839→                            } else {
+   840→   840→                                L.push(`${I(2)}digitalWrite(pin_${s.pin}, HIGH);`);
+   841→   841→                            }
+   842→   842→                        }
+   843→   843→                    } else {
+   844→   844→                        // Process all other statement types (pin_write, ask, senddatato, etc.)
+   845→   845→                        L.push(this.generateStmt(s, indent + 2, ctx));
+   846→   846→                    }
+   847→   847→                }
+   848→   848→                L.push(`${I(2)}yield();`);
+   849→   849→                L.push(`${I(1)}}`);
+   850→   850→                L.push(`${I(0)}}`);
+   851→   851→                return L.join('\n');
+   852→   852→            }
+   853→   853→
+   854→   854→            // ── ask ───────────────────────────────────────────────────
+   855→   855→            case 'ask': {
+   856→   856→                const L: string[] = [];
+   857→   857→                const cond = this.translateCondition(stmt.condition, ctx.pins);
+   858→   858→                L.push(`${I(0)}if (${cond}) {`);
+   859→   859→                for (const s of stmt.thenBody) {
+   860→   860→                    L.push(this.generateStmt(s, indent + 1, ctx));
+   861→   861→                }
+   862→   862→                if (stmt.elseBody.length > 0) {
+   863→   863→                    L.push(`${I(0)}} else {`);
+   864→   864→                    for (const s of stmt.elseBody) {
+   865→   865→                        L.push(this.generateStmt(s, indent + 1, ctx));
+   866→   866→                    }
+   867→   867→                }
+   868→   868→                L.push(`${I(0)}}`);
+   869→   869→                return L.join('\n');
+   870→   870→            }
+   871→   871→
+   872→   872→            // ── senddatato ────────────────────────────────────────────
+   873→   873→            case 'senddatato': {
+   874→   874→                const L: string[] = [];
+   875→   875→                L.push(`${I(0)}// senddatato(${stmt.urlVar})`);
+   876→   876→                L.push(`${I(0)}{`);
+   877→   877→                L.push(`${I(1)}JsonDocument _doc;`);
+   878→   878→                for (const ip of inputPins) {
+   879→   879→                    L.push(`${I(1)}_doc["${ip.name}"] = var_${ip.name};`);
+   880→   880→                }
+   881→   881→                L.push(`${I(1)}String _json;`);
+   882→   882→                L.push(`${I(1)}serializeJson(_doc, _json);`);
+   883→   883→                L.push(`${I(1)}webSocket.sendTXT(_json);`);
+   884→   884→                L.push(`${I(0)}}`);
+   885→   885→                return L.join('\n');
+   886→   886→            }
+   887→   887→
+   888→   888→            // ── saveto ────────────────────────────────────────────────
+   889→   889→            case 'saveto': {
+   890→   890→                const L: string[] = [];
+   891→   891→                const targetPin = ctx.pins.find(p => p.name === stmt.target);
+   892→   892→                const valueCpp = this.translateRvalue(stmt.value, ctx.pins, ctx.variables);
+   893→   893→
+   894→   894→                if (targetPin) {
+   895→   895→                    if (targetPin.mode === 'output') {
+   896→   896→                        if (servoPins.includes(targetPin)) {
+   897→   897→                            L.push(`${I(0)}servo_${stmt.target}.write(map(${valueCpp}, 0, 4095, 0, 180));`);
+   898→   898→                        } else {
+   899→   899→                            L.push(`${I(0)}analogWrite(pin_${stmt.target}, ${valueCpp});`);
+   900→   900→                        }
+   901→   901→                    } else {
+   902→   902→                        L.push(`${I(0)}var_${stmt.target} = ${valueCpp};`);
+   903→   903→                    }
+   904→   904→                } else {
+   905→   905→                    L.push(`${I(0)}${stmt.target} = ${valueCpp};`);
+   906→   906→                }
+   907→   907→                return L.join('\n');
+   908→   908→            }
+   909→   909→
+   910→   910→            // ── call ──────────────────────────────────────────────────
+   911→   911→            case 'call': {
+   912→   912→                const L: string[] = [];
+   913→   913→                const v = ctx.variables.find(vr => vr.name === stmt.variable);
+   914→   914→                if (v && !v.isString) {
+   915→   915→                    L.push(`${I(0)}delay(${stmt.variable});`);
+   916→   916→                } else if (v && v.isString) {
+   917→   917→                    // call on a string variable doesn't make sense as delay — skip
+   918→   918→                    L.push(`${I(0)}// call ${stmt.variable} — skipped (not a number variable)`);
+   919→   919→                } else {
+   920→   920→                    // Might be a pin or unknown — treat as delay
+   921→   921→                    L.push(`${I(0)}delay(${stmt.variable});`);
+   922→   922→                }
+   923→   923→                return L.join('\n');
+   924→   924→            }
+   925→   925→
+   926→   926→            // ── pin_write ─────────────────────────────────────────────
+   927→   927→            case 'pin_write': {
+   928→   928→                const L: string[] = [];
+   929→   929→                const pinDef = ctx.pins.find(p => p.name === stmt.pin);
+   930→   930→                const valueCpp = this.translateRvalue(stmt.value, ctx.pins, ctx.variables);
+   931→   931→
+   932→   932→                if (pinDef && pinDef.mode === 'output') {
+   933→   933→                    if (servoPins.includes(pinDef) && (stmt.value === 'HIGH' || stmt.value === 'LOW')) {
+   934→   934→                        const angle = stmt.value === 'HIGH' ? '180' : '0';
+   935→   935→                        L.push(`${I(0)}servo_${stmt.pin}.write(${angle});`);
+   936→   936→                    } else {
+   937→   937→                        L.push(`${I(0)}digitalWrite(pin_${stmt.pin}, ${valueCpp});`);
+   938→   938→                    }
+   939→   939→                } else if (pinDef && pinDef.mode === 'input') {
+   940→   940→                    L.push(`${I(0)}var_${stmt.pin} = ${valueCpp};`);
+   941→   941→                } else {
+   942→   942→                    L.push(`${I(0)}${stmt.pin} = ${valueCpp};`);
+   943→   943→                }
+   944→   944→                return L.join('\n');
+   945→   945→            }
+   946→   946→
+   947→   947→            // ── pin_ref (bare reference) ──────────────────────────────
+   948→   948→            case 'pin_ref': {
+   949→   949→                // Outside read_for/actfor, a bare pin reference is ambiguous.
+   950→   950→                // For input pins, do a read; for output pins, do a write (toggle).
+   951→   951→                const pinDef = ctx.pins.find(p => p.name === stmt.pin);
+   952→   952→                if (pinDef && pinDef.mode === 'input') {
+   953→   953→                    return this.generatePinRead(stmt.pin, indent, ctx);
+   954→   954→                } else if (pinDef && pinDef.mode === 'output') {
+   955→   955→                    if (servoPins.includes(pinDef)) {
+   956→   956→                        return `${I(0)}servo_${stmt.pin}.write(90); // activate`;
+   957→   957→                    }
+   958→   958→                    return `${I(0)}digitalWrite(pin_${stmt.pin}, HIGH);`;
+   959→   959→                }
+   960→   960→                return `${I(0)}// pin_ref: ${stmt.pin}`;
+   961→   961→            }
+   962→   962→
+   963→   963→            default:
+   964→   964→                return `${I(0)}// unknown statement`;
+   965→   965→        }
+   966→   966→    }
+   967→   967→
+   968→   968→    /** Generate a single sensor-read line for a pin name. */
+   969→   969→    private generatePinRead(pinName: string, indent: number, ctx: GenContext): string {
+   970→   970→        const I = (n: number) => '    '.repeat(n + indent);
+   971→   971→        const pinDef = ctx.pins.find(p => p.name === pinName);
+   972→   972→        if (!pinDef || pinDef.mode !== 'input') {
+   973→   973→            return `${I(0)}// pin_ref: ${pinName} (not an input pin)`;
+   974→   974→        }
+   975→   975→
+   976→   976→        // Special case: ultrasonic echo pin
+   977→   977→        if (pinName === 'echo' && ctx.hasUltrasonic) {
+   978→   978→            return `${I(0)}var_echo = measureDistance(pin_trig, pin_echo);`;
+   979→   979→        }
+   980→   980→
+   981→   981→        // Default: analogRead (ESP32 ADC)
+   982→   982→        return `${I(0)}var_${pinName} = analogRead(pin_${pinName});`;
+   983→   983→    }
+   984→   984→
+   985→   985→    // ─── Translation Helpers ───────────────────────────────────────────────
+   986→   986→
+   987→   987→    /** Translate a .airo condition expression to a C++ expression. */
+   988→   988→    private translateCondition(condition: string, pins: ParsedPin[]): string {
+   989→   989→        let result = condition;
+   990→   990→
+   991→   991→        // Replace input pin names with var_ references (word-boundary safe)
+   992→   992→        const inputPins = pins.filter(p => p.mode === 'input');
+   993→   993→        // Sort longest-first so e.g. "sensor_a" is replaced before "sensor"
+   994→   994→        const sorted = [...inputPins].sort((a, b) => b.name.length - a.name.length);
+   995→   995→        for (const pin of sorted) {
+   996→   996→            result = result.replace(new RegExp(`\\b${this.escapeRegex(pin.name)}\\b`, 'g'), `var_${pin.name}`);
+   997→   997→        }
+   998→   998→
+   999→   999→        return result;
+  1000→  1000→    }
+  1001→  1001→
+  1002→  1002→    /** Translate a right-hand value (variable name, literal, HIGH/LOW, pin ref) to C++. */
+  1003→  1003→    private translateRvalue(value: string, pins: ParsedPin[], vars: ParsedVariable[]): string {
+  1004→  1004→        // Constants pass through
+  1005→  1005→        if (value === 'HIGH' || value === 'LOW') return value;
+  1006→  1006→
+  1007→  1007→        // Numeric literal
+  1008→  1008→        if (/^-?\d+(\.\d+)?$/.test(value)) return value;
+  1009→  1009→
+  1010→  1010→        // String literal
+  1011→  1011→        if (value.startsWith('"') && value.endsWith('"')) return value;
+  1012→  1012→
+  1013→  1013→        // Input pin reference → var_name
+  1014→  1014→        const inputPin = pins.find(p => p.name === value && p.mode === 'input');
+  1015→  1015→        if (inputPin) return `var_${value}`;
+  1016→  1016→
+  1017→  1017→        // Output pin reference → pin_name (the const int)
+  1018→  1018→        const outputPin = pins.find(p => p.name === value && p.mode === 'output');
+  1019→  1019→        if (outputPin) return `pin_${value}`;
+  1020→  1020→
+  1021→  1021→        // Known variable
+  1022→  1022→        const v = vars.find(vr => vr.name === value);
+  1023→  1023→        if (v) return value;
+  1024→  1024→
+  1025→  1025→        // Fallback: return as-is (could be an expression or unknown identifier)
+  1026→  1026→        return value;
+  1027→  1027→    }
+  1028→  1028→
+  1029→  1029→    /** Parse a WebSocket URL into host, port, path, and SSL flag. */
+  1030→  1030→    private parseWebSocketUrl(url: string): WsUrlParts | null {
+  1031→  1031→        const wssMatch = url.match(/^wss:\/\/([^\/:]+)(?::(\d+))?(\/.*)?$/);
+  1032→  1032→        const wsMatch  = url.match(/^ws:\/\/([^\/:]+)(?::(\d+))?(\/.*)?$/);
+  1033→  1033→
+  1034→  1034→        const match = wssMatch || wsMatch;
+  1035→  1035→        if (!match) return null;
+  1036→  1036→
+  1037→  1037→        const useSSL = !!wssMatch;
+  1038→  1038→        const host = match[1];
+  1039→  1039→        const port = match[2] ? parseInt(match[2], 10) : (useSSL ? 443 : 80);
+  1040→  1040→        const path = match[3] || '/';
+  1041→  1041→
+  1042→  1042→        return { host, port, path, useSSL };
+  1043→  1043→    }
+  1044→  1044→
+  1045→  1045→    /** Escape special regex characters in a string. */
+  1046→  1046→    private escapeRegex(str: string): string {
+  1047→  1047→        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  1048→  1048→    }
+  1049→  1049→}
+  1050→  1050→

@@ -1,0 +1,1142 @@
+     1→     1→/********************************************************************************
+     2→     2→ * Copyright (C) 2025 Airone and others.
+     3→     3→ *
+     4→     4→ * This program and the accompanying materials are made available under the
+     5→     5→ * terms of the MIT License, which is available in the project root.
+     6→     6→ *
+     7→     7→ * SPDX-License-Identifier: MIT
+     8→     8→ ********************************************************************************/
+     9→     9→
+    10→    10→import { injectable, inject } from '@theia/core/shared/inversify';
+    11→    11→import { spawn, execSync } from 'child_process';
+    12→    12→import * as path from 'path';
+    13→    13→import * as fs from 'fs';
+    14→    14→import * as os from 'os';
+    15→    15→import * as https from 'https';
+    16→    16→import * as http from 'http';
+    17→    17→import { CompileRequest, CompileResult } from '../common/airo-protocol';
+    18→    18→import { AiroBuiltInCompiler } from './airo-built-in-compiler';
+    19→    19→import { AiroTranspiler } from './airo-transpiler';
+    20→    20→
+    21→    21→/**
+    22→    22→ * Compiler service that provides a four-step TRUSTED compilation pipeline:
+    23→    23→ *
+    24→    24→ * **Step 1 – Built-in (TypeScript)**: Fast, no-dependency syntax checking.
+    25→    25→ *
+    26→    26→ * **Step 2 – Transpiler (TypeScript)**: Converts .airo code to C++ Arduino/ESP32 code.
+    27→    27→ *
+    28→    28→ * **Step 3 – Python (airo_compiler)**: Full compilation pipeline using Python.
+    29→    29→ *    If Python is not installed, the TypeScript transpiler output is used.
+    30→    30→ *
+    31→    31→ * **Step 4 – Arduino CLI build**: Compiles the C++ into a .bin firmware file.
+    32→    32→ *    Auto-downloads Arduino CLI to ~/.airone/tools/ if not found in PATH.
+    33→    33→ *    Auto-installs ESP32 board support and required libraries.
+    34→    34→ *    Produces <sketchName>.ino.bin in the build directory.
+    35→    35→ */
+    36→    36→@injectable()
+    37→    37→export class AiroCompilerService {
+    38→    38→
+    39→    39→    @inject(AiroBuiltInCompiler)
+    40→    40→    protected readonly builtInCompiler!: AiroBuiltInCompiler;
+    41→    41→
+    42→    42→    @inject(AiroTranspiler)
+    43→    43→    protected readonly transpiler!: AiroTranspiler;
+    44→    44→
+    45→    45→    private pythonPath: string;
+    46→    46→    private compilerDir: string;
+    47→    47→    private cachedArduinoCli: string | undefined;
+    48→    48→    private _arduinoCliInstalling: boolean = false;
+    49→    49→
+    50→    50→    /** Directory where Airone stores tooling (Arduino CLI, esptool, etc.) */
+    51→    51→    private readonly toolsDir: string;
+    52→    52→
+    53→    53→    constructor() {
+    54→    54→        this.compilerDir = this.resolveCompilerDir();
+    55→    55→        this.pythonPath = this.resolvePythonPath();
+    56→    56→        this.toolsDir = path.join(os.homedir(), '.airone', 'tools');
+    57→    57→    }
+    58→    58→
+    59→    59→    private resolveCompilerDir(): string {
+    60→    60→        // In packaged app: resources/airo-compiler
+    61→    61→        if (typeof __dirname !== 'undefined' && __dirname.includes('.asar')) {
+    62→    62→            return path.join(process.resourcesPath!, 'airo-compiler');
+    63→    63→        }
+    64→    64→
+    65→    65→        // Dev mode - look for airo-compiler in common locations
+    66→    66→        const possibleLocations = [
+    67→    67→            path.resolve(__dirname, '../../../../../../airo-compiler'),
+    68→    68→            path.resolve(process.cwd(), 'airo-compiler'),
+    69→    69→            path.resolve(process.cwd(), '../airo-compiler'),
+    70→    70→        ];
+    71→    71→
+    72→    72→        try {
+    73→    73→            for (const loc of possibleLocations) {
+    74→    74→                if (fs.existsSync(path.join(loc, 'airo_compiler', '__init__.py'))) {
+    75→    75→                    return loc;
+    76→    76→                }
+    77→    77→            }
+    78→    78→        } catch {
+    79→    79→            // ignore
+    80→    80→        }
+    81→    81→
+    82→    82→        // Fallback
+    83→    83→        return possibleLocations[0];
+    84→    84→    }
+    85→    85→
+    86→    86→    private resolvePythonPath(): string {
+    87→    87→        return process.platform === 'win32' ? 'python' : 'python3';
+    88→    88→    }
+    89→    89→
+    90→    90→    /**
+    91→    91→     * Compile a .airo file through the full TRUSTED pipeline.
+    92→    92→     */
+    93→    93→    async compile(request: CompileRequest): Promise<CompileResult> {
+    94→    94→        // ─── Step 1: Built-in syntax check (always runs, no dependencies) ──
+    95→    95→        const builtInResult = await this.builtInCompiler.verify(request.filePath);
+    96→    96→
+    97→    97→        if (!builtInResult.success) {
+    98→    98→            return {
+    99→    99→                success: false,
+   100→   100→                output: builtInResult.output,
+   101→   101→                error: builtInResult.error || builtInResult.errors?.map(e => e.message).join('\n'),
+   102→   102→            };
+   103→   103→        }
+   104→   104→
+   105→   105→        // ─── Step 2: Transpile .airo → C++ (always runs) ──────────────
+   106→   106→        let airoCode: string;
+   107→   107→        const fsPath = request.filePath.startsWith('file://')
+   108→   108→            ? this.fsPathFromUri(request.filePath)
+   109→   109→            : request.filePath;
+   110→   110→
+   111→   111→        try {
+   112→   112→            airoCode = fs.readFileSync(fsPath, { encoding: 'utf8' });
+   113→   113→        } catch (err: unknown) {
+   114→   114→            return {
+   115→   115→                success: false,
+   116→   116→                output: '',
+   117→   117→                error: `Cannot read .airo file: ${err instanceof Error ? err.message : String(err)}`,
+   118→   118→            };
+   119→   119→        }
+   120→   120→
+   121→   121→        const sketchName = path.basename(fsPath, '.airo');
+   122→   122→        const transpileResult = this.transpiler.transpile(airoCode, sketchName);
+   123→   123→
+   124→   124→        // Write the generated C++ code to the output directory
+   125→   125→        const outputDir = request.outputDir || path.join(path.dirname(fsPath), 'build');
+   126→   126→        try {
+   127→   127→            if (!fs.existsSync(outputDir)) {
+   128→   128→                fs.mkdirSync(outputDir, { recursive: true });
+   129→   129→            }
+   130→   130→
+   131→   131→            // Arduino CLI requires the .ino file to be in a directory with the same name
+   132→   132→            // e.g., for sketch "titled", we need: build/titled/titled.ino
+   133→   133→            const sketchDir = path.join(outputDir, sketchName);
+   134→   134→            if (!fs.existsSync(sketchDir)) {
+   135→   135→                fs.mkdirSync(sketchDir, { recursive: true });
+   136→   136→            }
+   137→   137→
+   138→   138→            const cppPath = path.join(sketchDir, `${sketchName}.ino.cpp`);
+   139→   139→            fs.writeFileSync(cppPath, transpileResult.cppCode, { encoding: 'utf8' });
+   140→   140→
+   141→   141→            // Also write a minimal Arduino sketch .ino file
+   142→   142→            const inoPath = path.join(sketchDir, `${sketchName}.ino`);
+   143→   143→            if (!fs.existsSync(inoPath)) {
+   144→   144→                fs.writeFileSync(inoPath, `#include "${sketchName}.ino.cpp"\n`, { encoding: 'utf8' });
+   145→   145→            }
+   146→   146→
+   147→   147→            const generatedFiles = [cppPath, inoPath];
+   148→   148→            let combinedOutput = builtInResult.output + '\n' +
+   149→   149→                `✓ Step 2 — Transpiled to C++: ${cppPath}\n` +
+   150→   150→                `  Required libraries: ${transpileResult.requiredLibraries.join(', ') || 'none'}\n` +
+   151→   151→                (transpileResult.errors.length > 0 ? `  Warnings: ${transpileResult.errors.join('; ')}\n` : '');
+   152→   152→
+   153→   153→            // ─── Step 3: Python airo_compiler (always attempt) ────────
+   154→   154→            const pythonResult = await this.tryPythonCompile(request);
+   155→   155→
+   156→   156→            if (pythonResult) {
+   157→   157→                if (pythonResult.success) {
+   158→   158→                    combinedOutput += '\n✓ Step 3 — Python airo_compiler succeeded.\n' + pythonResult.output;
+   159→   159→                    if (pythonResult.generatedFiles) {
+   160→   160→                        generatedFiles.push(...pythonResult.generatedFiles);
+   161→   161→                    }
+   162→   162→                } else {
+   163→   163→                    combinedOutput +=
+   164→   164→                        '\n⚠ Step 3 — Python airo_compiler failed (using TypeScript transpiler output as fallback):\n' +
+   165→   165→                        `  ${pythonResult.error || pythonResult.output}\n` +
+   166→   166→                        '  The C++ file from Step 2 is ready for Arduino CLI.\n';
+   167→   167→                }
+   168→   168→            } else {
+   169→   169→                combinedOutput +=
+   170→   170→                    '\n⚠ Step 3 — Python airo_compiler not available.\n' +
+   171→   171→                    '  The TypeScript transpiler C++ output will be used (this is fine).\n';
+   172→   172→            }
+   173→   173→
+   174→   174→            // ─── Step 4: Arduino CLI build (auto-install if needed) ────
+   175→   175→            const fqbn = request.target === 'esp8266'
+   176→   176→                ? 'esp8266:esp8266:generic'
+   177→   177→                : 'esp32:esp32:esp32';
+   178→   178→
+   179→   179→            // Try to find or auto-install Arduino CLI
+   180→   180→            let arduinoCli = this.findArduinoCli();
+   181→   181→
+   182→   182→            if (!arduinoCli) {
+   183→   183→                combinedOutput += '\n⏳ Step 4 — Arduino CLI not found. Auto-installing...\n';
+   184→   184→                const installResult = await this.ensureArduinoCli(combinedOutput);
+   185→   185→                combinedOutput = installResult.output;
+   186→   186→
+   187→   187→                if (installResult.cliPath) {
+   188→   188→                    arduinoCli = installResult.cliPath;
+   189→   189→                } else {
+   190→   190→                    combinedOutput +=
+   191→   191→                        '\n⚠ Step 4 — Could not auto-install Arduino CLI.\n' +
+   192→   192→                        '  Firmware binary (.bin) not produced.\n' +
+   193→   193→                        '  Install manually: https://arduino.github.io/arduino-cli/latest/\n' +
+   194→   194→                        '  Then: arduino-cli core install esp32:esp32\n' +
+   195→   195→                        `  Then: arduino-cli compile --fqbn ${fqbn} "${outputDir}"\n`;
+   196→   196→
+   197→   197→                    return {
+   198→   198→                        success: true,
+   199→   199→                        output: combinedOutput,
+   200→   200→                        generatedFiles,
+   201→   201→                    };
+   202→   202→                }
+   203→   203→            }
+   204→   204→
+   205→   205→            // Ensure ESP32 board support is installed
+   206→   206→            const coreCheck = await this.ensureEsp32Core(arduinoCli, fqbn, combinedOutput);
+   207→   207→            combinedOutput = coreCheck.output;
+   208→   208→
+   209→   209→            // Install required libraries
+   210→   210→            if (transpileResult.requiredLibraries.length > 0) {
+   211→   211→                const libResult = await this.installRequiredLibs(
+   212→   212→                    arduinoCli, transpileResult.requiredLibraries, combinedOutput
+   213→   213→                );
+   214→   214→                combinedOutput = libResult.output;
+   215→   215→            }
+   216→   216→
+   217→   217→            // Now run the Arduino CLI build
+   218→   218→            const arduinoResult = await this.tryArduinoBuildWithCli(arduinoCli, outputDir, sketchName, fqbn);
+   219→   219→
+   220→   220→            if (arduinoResult.success) {
+   221→   221→                combinedOutput += '\n✓ Step 4 — Arduino CLI build succeeded.\n' + arduinoResult.output;
+   222→   222→                if (arduinoResult.generatedFiles) {
+   223→   223→                    generatedFiles.push(...arduinoResult.generatedFiles);
+   224→   224→                }
+   225→   225→                return {
+   226→   226→                    success: true,
+   227→   227→                    output: combinedOutput,
+   228→   228→                    generatedFiles,
+   229→   229→                    binaryPath: arduinoResult.binaryPath,
+   230→   230→                };
+   231→   231→            }
+   232→   232→
+   233→   233→            // Arduino CLI ran but build failed
+   234→   234→            combinedOutput +=
+   235→   235→                '\n✗ Step 4 — Arduino CLI build failed:\n' +
+   236→   236→                `  ${arduinoResult.error || arduinoResult.output}\n`;
+   237→   237→
+   238→   238→            return {
+   239→   239→                success: true, // C++ was generated even if Arduino build failed
+   240→   240→                output: combinedOutput,
+   241→   241→                generatedFiles,
+   242→   242→            };
+   243→   243→        } catch (err: unknown) {
+   244→   244→            const message = err instanceof Error ? err.message : String(err);
+   245→   245→            return {
+   246→   246→                success: false,
+   247→   247→                output: '',
+   248→   248→                error: `Failed to write compiled output: ${message}`,
+   249→   249→            };
+   250→   250→        }
+   251→   251→    }
+   252→   252→
+   253→   253→    /**
+   254→   254→     * Verify using the built-in TypeScript compiler (fast, no dependencies).
+   255→   255→     */
+   256→   256→    async verifyBuiltIn(filePath: string): Promise<import('../common/airo-protocol').VerifyResult> {
+   257→   257→        return this.builtInCompiler.verify(filePath);
+   258→   258→    }
+   259→   259→
+   260→   260→    /**
+   261→   261→     * Check if arduino-cli is available — first in PATH, then in ~/.airone/tools/.
+   262→   262→     * Returns the command/path string if found, or undefined.
+   263→   263→     */
+   264→   264→    findArduinoCli(): string | undefined {
+   265→   265→        if (this.cachedArduinoCli !== undefined) {
+   266→   266→            return this.cachedArduinoCli;
+   267→   267→        }
+   268→   268→
+   269→   269→        // 1. Check system PATH
+   270→   270→        try {
+   271→   271→            const isWin = process.platform === 'win32';
+   272→   272→            const checkCmd = isWin ? 'where' : 'which';
+   273→   273→            execSync(`${checkCmd} arduino-cli`, { stdio: 'ignore', timeout: 5000 });
+   274→   274→            this.cachedArduinoCli = 'arduino-cli';
+   275→   275→            return this.cachedArduinoCli;
+   276→   276→        } catch {
+   277→   277→            // not in PATH
+   278→   278→        }
+   279→   279→
+   280→   280→        // 2. Check local tools directory
+   281→   281→        const localCliPath = this.getLocalArduinoCliPath();
+   282→   282→        if (localCliPath && fs.existsSync(localCliPath)) {
+   283→   283→            this.cachedArduinoCli = localCliPath;
+   284→   284→            return this.cachedArduinoCli;
+   285→   285→        }
+   286→   286→
+   287→   287→        this.cachedArduinoCli = undefined;
+   288→   288→        return undefined;
+   289→   289→    }
+   290→   290→
+   291→   291→    /**
+   292→   292→     * Get the expected path for a locally-installed Arduino CLI.
+   293→   293→     */
+   294→   294→    private getLocalArduinoCliPath(): string {
+   295→   295→        const isWin = process.platform === 'win32';
+   296→   296→        return path.join(this.toolsDir, isWin ? 'arduino-cli.exe' : 'arduino-cli');
+   297→   297→    }
+   298→   298→
+   299→   299→    /**
+   300→   300→     * Auto-download and install Arduino CLI to ~/.airone/tools/.
+   301→   301→     *
+   302→   302→     * Downloads the latest stable release from GitHub releases API.
+   303→   303→     * Returns the path to the installed binary, or undefined on failure.
+   304→   304→     */
+   305→   305→    async ensureArduinoCli(currentOutput: string): Promise<{ cliPath: string | undefined; output: string }> {
+   306→   306→        let output = currentOutput;
+   307→   307→
+   308→   308→        // Prevent concurrent installations
+   309→   309→        if (this._arduinoCliInstalling) {
+   310→   310→            output += '  Arduino CLI installation already in progress...\n';
+   311→   311→            return { cliPath: undefined, output };
+   312→   312→        }
+   313→   313→
+   314→   314→        // Check if already installed locally
+   315→   315→        const localPath = this.getLocalArduinoCliPath();
+   316→   316→        if (fs.existsSync(localPath)) {
+   317→   317→            this.cachedArduinoCli = localPath;
+   318→   318→            output += `  ✓ Found local Arduino CLI: ${localPath}\n`;
+   319→   319→            return { cliPath: localPath, output };
+   320→   320→        }
+   321→   321→
+   322→   322→        this._arduinoCliInstalling = true;
+   323→   323→
+   324→   324→        try {
+   325→   325→            // Create tools directory
+   326→   326→            if (!fs.existsSync(this.toolsDir)) {
+   327→   327→                fs.mkdirSync(this.toolsDir, { recursive: true });
+   328→   328→            }
+   329→   329→
+   330→   330→            // Determine platform-specific download URL
+   331→   331→            const platform = this.getArduinoCliPlatform();
+   332→   332→            const isWindows = platform.toLowerCase().includes('windows');
+   333→   333→            const ext = isWindows ? '.zip' : '.tar.gz';
+   334→   334→
+   335→   335→            // Step 1: Get the latest version tag from GitHub releases API
+   336→   336→            output += '  Fetching latest Arduino CLI version from GitHub...\n';
+   337→   337→            let version: string | undefined;
+   338→   338→            try {
+   339→   339→                version = await this.getLatestArduinoCliVersion();
+   340→   340→                output += `  Latest version: ${version}\n`;
+   341→   341→            } catch {
+   342→   342→                output += '  ⚠ Could not fetch version from GitHub API, trying direct download...\n';
+   343→   343→            }
+   344→   344→
+   345→   345→            // Construct download URL — prefer GitHub releases with version
+   346→   346→            // NOTE: The tag path uses the version WITH 'v' (e.g. v1.5.0),
+   347→   347→            // but the asset FILENAME uses version WITHOUT 'v' (e.g. 1.5.0).
+   348→   348→            // Actual URL: https://github.com/arduino/arduino-cli/releases/download/v1.5.0/arduino-cli_1.5.0_Windows_64bit.zip
+   349→   349→            let downloadUrl: string;
+   350→   350→            if (version) {
+   351→   351→                const versionNum = version.replace(/^v/, ''); // Strip 'v' prefix for filename
+   352→   352→                downloadUrl = `https://github.com/arduino/arduino-cli/releases/download/${version}/arduino-cli_${versionNum}_${platform}${ext}`;
+   353→   353→            } else {
+   354→   354→                // Fallback: try downloads.arduino.cc with .zip for Windows
+   355→   355→                downloadUrl = `https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_${platform}${ext}`;
+   356→   356→            }
+   357→   357→
+   358→   358→            const fileName = `arduino-cli_${platform}${ext}`;
+   359→   359→
+   360→   360→            output += `  Downloading Arduino CLI for ${platform}...\n`;
+   361→   361→            output += `  URL: ${downloadUrl}\n`;
+   362→   362→
+   363→   363→            // Download the archive
+   364→   364→            const archivePath = path.join(this.toolsDir, fileName);
+   365→   365→            await this.downloadFile(downloadUrl, archivePath);
+   366→   366→
+   367→   367→            output += '  ✓ Download complete. Extracting...\n';
+   368→   368→
+   369→   369→            // Extract the binary
+   370→   370→            const extractedPath = await this.extractArchive(archivePath, localPath, isWindows);
+   371→   371→
+   372→   372→            if (extractedPath && fs.existsSync(extractedPath)) {
+   373→   373→                // Make executable on Unix
+   374→   374→                if (process.platform !== 'win32') {
+   375→   375→                    try {
+   376→   376→                        fs.chmodSync(extractedPath, 0o755);
+   377→   377→                    } catch { /* ignore */ }
+   378→   378→                }
+   379→   379→
+   380→   380→                // Verify it works
+   381→   381→                try {
+   382→   382→                    const version = execSync(`"${extractedPath}" version`, { encoding: 'utf8', timeout: 10000 });
+   383→   383→                    output += `  ✓ Arduino CLI installed: ${version.trim()}\n`;
+   384→   384→                    output += `  Location: ${extractedPath}\n`;
+   385→   385→                } catch {
+   386→   386→                    output += `  ✓ Arduino CLI installed at: ${extractedPath}\n`;
+   387→   387→                }
+   388→   388→
+   389→   389→                this.cachedArduinoCli = extractedPath;
+   390→   390→
+   391→   391→                // Clean up archive
+   392→   392→                try { fs.unlinkSync(archivePath); } catch { /* ignore */ }
+   393→   393→
+   394→   394→                return { cliPath: extractedPath, output };
+   395→   395→            }
+   396→   396→
+   397→   397→            output += '  ✗ Failed to extract Arduino CLI.\n';
+   398→   398→            return { cliPath: undefined, output };
+   399→   399→
+   400→   400→        } catch (err: unknown) {
+   401→   401→            const message = err instanceof Error ? err.message : String(err);
+   402→   402→            output += `  ✗ Arduino CLI auto-install failed: ${message}\n`;
+   403→   403→            return { cliPath: undefined, output };
+   404→   404→        } finally {
+   405→   405→            this._arduinoCliInstalling = false;
+   406→   406→        }
+   407→   407→    }
+   408→   408→
+   409→   409→    /**
+   410→   410→     * Ensure ESP32 core is installed for the given FQBN.
+   411→   411→     */
+   412→   412→    async ensureEsp32Core(
+   413→   413→        arduinoCli: string,
+   414→   414→        fqbn: string,
+   415→   415→        currentOutput: string
+   416→   416→    ): Promise<{ output: string }> {
+   417→   417→        let output = currentOutput;
+   418→   418→
+   419→   419→        try {
+   420→   420→            // Check if the core is already installed
+   421→   421→            // IMPORTANT: Must use --config-dir to match the directory where
+   422→   422→            // we install cores. Without this, arduino-cli looks in the default
+   423→   423→            // location and won't find our ESP32 core.
+   424→   424→            const configDir = path.join(os.homedir(), '.airone', 'arduino-cli');
+   425→   425→            const coreListArgs = fs.existsSync(configDir)
+   426→   426→                ? `"${arduinoCli}" core list --config-dir "${configDir}"`
+   427→   427→                : `"${arduinoCli}" core list`;
+   428→   428→            const coreList = execSync(coreListArgs, {
+   429→   429→                encoding: 'utf8',
+   430→   430→                timeout: 15000,
+   431→   431→            });
+   432→   432→
+   433→   433→            if (coreList.includes('esp32:esp32') || coreList.includes('esp8266:esp8266')) {
+   434→   434→                output += '  ✓ ESP32 board support already installed.\n';
+   435→   435→                return { output };
+   436→   436→            }
+   437→   437→        } catch {
+   438→   438→            // core list might fail, try installing anyway
+   439→   439→        }
+   440→   440→
+   441→   441→        output += '  ⏳ Installing ESP32 board support (first time, this may take a few minutes)...\n';
+   442→   442→
+   443→   443→        try {
+   444→   444→            // Add ESP32 board URL
+   445→   445→            const configDir = path.join(os.homedir(), '.airone', 'arduino-cli');
+   446→   446→            if (!fs.existsSync(configDir)) {
+   447→   447→                fs.mkdirSync(configDir, { recursive: true });
+   448→   448→            }
+   449→   449→
+   450→   450→            // Initialize config if needed
+   451→   451→            try {
+   452→   452→                execSync(`"${arduinoCli}" config init --dest-dir "${configDir}"`, {
+   453→   453→                    encoding: 'utf8',
+   454→   454→                    timeout: 10000,
+   455→   455→                });
+   456→   456→            } catch { /* may already exist */ }
+   457→   457→
+   458→   458→            // Set data directory to our custom location so cores/packages
+   459→   459→            // are stored alongside our config (not in the default ~/.arduino15)
+   460→   460→            try {
+   461→   461→                execSync(`"${arduinoCli}" config set directories.data "${path.join(configDir, 'data')}" --dest-dir "${configDir}"`, {
+   462→   462→                    encoding: 'utf8',
+   463→   463→                    timeout: 10000,
+   464→   464→                });
+   465→   465→            } catch { /* may already be set */ }
+   466→   466→            try {
+   467→   467→                execSync(`"${arduinoCli}" config set directories.downloads "${path.join(configDir, 'staging')}" --dest-dir "${configDir}"`, {
+   468→   468→                    encoding: 'utf8',
+   469→   469→                    timeout: 10000,
+   470→   470→                });
+   471→   471→            } catch { /* may already be set */ }
+   472→   472→
+   473→   473→            // Add ESP32 board index URL
+   474→   474→            const esp32Url = 'https://espressif.github.io/arduino-esp32/package_esp32_index.json';
+   475→   475→            try {
+   476→   476→                execSync(`"${arduinoCli}" config add board_manager.additional_urls ${esp32Url} --dest-dir "${configDir}"`, {
+   477→   477→                    encoding: 'utf8',
+   478→   478→                    timeout: 10000,
+   479→   479→                });
+   480→   480→            } catch { /* may already be added */ }
+   481→   481→
+   482→   482→            // Update index
+   483→   483→            output += '  Updating board index...\n';
+   484→   484→            try {
+   485→   485→                execSync(`"${arduinoCli}" core update-index --config-dir "${configDir}"`, {
+   486→   486→                    encoding: 'utf8',
+   487→   487→                    timeout: 60000,
+   488→   488→                });
+   489→   489→            } catch { /* ignore errors from update-index */ }
+   490→   490→
+   491→   491→            // Install ESP32 core
+   492→   492→            const coreName = fqbn.split(':').slice(0, 2).join(':'); // e.g. esp32:esp32
+   493→   493→            output += `  Installing core: ${coreName}...\n`;
+   494→   494→
+   495→   495→            try {
+   496→   496→                const installOutput = execSync(
+   497→   497→                    `"${arduinoCli}" core install ${coreName} --config-dir "${configDir}"`,
+   498→   498→                    { encoding: 'utf8', timeout: 300_000 } // 5 min timeout
+   499→   499→                );
+   500→   500→                output += '  ✓ ESP32 board support installed successfully.\n';
+   501→   501→                return { output };
+   502→   502→            } catch (installErr: unknown) {
+   503→   503→                const installMsg = installErr instanceof Error ? installErr.message : String(installErr);
+   504→   504→
+   505→   505→                // If the error is about a corrupted archive or locked file, try cleaning
+   506→   506→                // staging directories and retrying once.
+   507→   507→                if (installMsg.includes('corrupted') || installMsg.includes('locked') ||
+   508→   508→                    installMsg.includes('being used by another process') || installMsg.includes('EBUSY')) {
+   509→   509→                    output += `  ⚠ Install failed (locked/corrupted file). Cleaning staging files and retrying...\n`;
+   510→   510→
+   511→   511→                    // Clean staging directories in the Arduino data directory
+   512→   512→                    const stagingDir = path.join(configDir, 'staging');
+   513→   513→                    const packagesDir = path.join(os.homedir(), '.airone', 'arduino-cli', 'packages');
+   514→   514→
+   515→   515→                    for (const dir of [stagingDir, packagesDir]) {
+   516→   516→                        try {
+   517→   517→                            if (fs.existsSync(dir)) {
+   518→   518→                                fs.rmSync(dir, { recursive: true, force: true });
+   519→   519→                                output += `  Cleaned: ${dir}\n`;
+   520→   520→                            }
+   521→   521→                        } catch (cleanErr) {
+   522→   522→                            output += `  Could not clean ${dir}: ${cleanErr instanceof Error ? cleanErr.message : String(cleanErr)}\n`;
+   523→   523→                        }
+   524→   524→                    }
+   525→   525→
+   526→   526→                    // Retry the install
+   527→   527→                    try {
+   528→   528→                        const retryOutput = execSync(
+   529→   529→                            `"${arduinoCli}" core install ${coreName} --config-dir "${configDir}"`,
+   530→   530→                            { encoding: 'utf8', timeout: 300_000 }
+   531→   531→                        );
+   532→   532→                        output += '  ✓ ESP32 board support installed successfully (after cleanup retry).\n';
+   533→   533→                        return { output };
+   534→   534→                    } catch (retryErr: unknown) {
+   535→   535→                        const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+   536→   536→                        output += `  ⚠ Retry also failed: ${retryMsg}\n`;
+   537→   537→                    }
+   538→   538→                }
+   539→   539→
+   540→   540→                output += `  ⚠ Could not auto-install ESP32 board support: ${installMsg}\n`;
+   541→   541→                output += '  You may need to install it manually: arduino-cli core install esp32:esp32\n';
+   542→   542→                return { output };
+   543→   543→            }
+   544→   544→        } catch (err: unknown) {
+   545→   545→            const message = err instanceof Error ? err.message : String(err);
+   546→   546→            output += `  ⚠ Could not auto-install ESP32 board support: ${message}\n`;
+   547→   547→            output += '  You may need to install it manually: arduino-cli core install esp32:esp32\n';
+   548→   548→            return { output };
+   549→   549→        }
+   550→   550→    }
+   551→   551→
+   552→   552→    /**
+   553→   553→     * Install required Arduino libraries (e.g. WebSockets, ArduinoJson).
+   554→   554→     */
+   555→   555→    async installRequiredLibs(
+   556→   556→        arduinoCli: string,
+   557→   557→        libraries: string[],
+   558→   558→        currentOutput: string
+   559→   559→    ): Promise<{ output: string }> {
+   560→   560→        let output = currentOutput;
+   561→   561→        const configDir = path.join(os.homedir(), '.airone', 'arduino-cli');
+   562→   562→
+   563→   563→        for (const lib of libraries) {
+   564→   564→            try {
+   565→   565→                // Check if already installed
+   566→   566→                const listOutput = execSync(`"${arduinoCli}" lib list --config-dir "${configDir}"`, {
+   567→   567→                    encoding: 'utf8',
+   568→   568→                    timeout: 10000,
+   569→   569→                });
+   570→   570→
+   571→   571→                if (listOutput.toLowerCase().includes(lib.toLowerCase())) {
+   572→   572→                    output += `  ✓ Library "${lib}" already installed.\n`;
+   573→   573→                    continue;
+   574→   574→                }
+   575→   575→            } catch { /* ignore, try installing */ }
+   576→   576→
+   577→   577→            output += `  ⏳ Installing library: ${lib}...\n`;
+   578→   578→            try {
+   579→   579→                execSync(`"${arduinoCli}" lib install "${lib}" --config-dir "${configDir}"`, {
+   580→   580→                    encoding: 'utf8',
+   581→   581→                    timeout: 120_000,
+   582→   582→                });
+   583→   583→                output += `  ✓ Library "${lib}" installed.\n`;
+   584→   584→            } catch (err: unknown) {
+   585→   585→                const message = err instanceof Error ? err.message : String(err);
+   586→   586→                output += `  ⚠ Could not install library "${lib}": ${message}\n`;
+   587→   587→            }
+   588→   588→        }
+   589→   589→
+   590→   590→        return { output };
+   591→   591→    }
+   592→   592→
+   593→   593→    /**
+   594→   594→     * Attempt to compile C++ → .bin firmware using Arduino CLI.
+   595→   595→     *
+   596→   596→     * Uses the config-dir at ~/.airone/arduino-cli for board indexes and libraries.
+   597→   597→     */
+   598→   598→    async tryArduinoBuild(
+   599→   599→        outputDir: string,
+   600→   600→        sketchName: string,
+   601→   601→        fqbn: string
+   602→   602→    ): Promise<CompileResult | undefined> {
+   603→   603→        const arduinoCli = this.findArduinoCli();
+   604→   604→        if (!arduinoCli) {
+   605→   605→            return undefined;
+   606→   606→        }
+   607→   607→        return this.tryArduinoBuildWithCli(arduinoCli, outputDir, sketchName, fqbn);
+   608→   608→    }
+   609→   609→
+   610→   610→    /**
+   611→   611→     * Run the actual Arduino CLI build with a known CLI path.
+   612→   612→     */
+   613→   613→    private async tryArduinoBuildWithCli(
+   614→   614→        arduinoCli: string,
+   615→   615→        outputDir: string,
+   616→   616→        sketchName: string,
+   617→   617→        fqbn: string
+   618→   618→    ): Promise<CompileResult> {
+   619→   619→        const configDir = path.join(os.homedir(), '.airone', 'arduino-cli');
+   620→   620→
+   621→   621→        return new Promise(resolve => {
+   622→   622→            const args = [
+   623→   623→                'compile',
+   624→   624→                '--fqbn', fqbn,
+   625→   625→                '--output-dir', outputDir,
+   626→   626→            ];
+   627→   627→
+   628→   628→            // Use our config directory if it exists
+   629→   629→            if (fs.existsSync(configDir)) {
+   630→   630→                args.push('--config-dir', configDir);
+   631→   631→            }
+   632→   632→
+   633→   633→            // Arduino CLI requires the sketch directory (containing the .ino file)
+   634→   634→            // to match the .ino filename — use the sketch subdirectory, not the build root
+   635→   635→            const sketchDir = path.join(outputDir, sketchName);
+   636→   636→            if (fs.existsSync(sketchDir)) {
+   637→   637→                args.push(sketchDir);
+   638→   638→            } else {
+   639→   639→                args.push(outputDir);
+   640→   640→            }
+   641→   641→
+   642→   642→            const proc = spawn(arduinoCli, args, {
+   643→   643→                stdio: 'pipe',
+   644→   644→            });
+   645→   645→
+   646→   646→            let stdout = '';
+   647→   647→            let stderr = '';
+   648→   648→
+   649→   649→            proc.stdout.on('data', (data: Buffer) => {
+   650→   650→                stdout += data.toString();
+   651→   651→            });
+   652→   652→
+   653→   653→            proc.stderr.on('data', (data: Buffer) => {
+   654→   654→                stderr += data.toString();
+   655→   655→            });
+   656→   656→
+   657→   657→            proc.on('close', (code: number | null) => {
+   658→   658→                const expectedBinPath = path.join(outputDir, `${sketchName}.ino.bin`);
+   659→   659→                const binExists = fs.existsSync(expectedBinPath);
+   660→   660→
+   661→   661→                if (code === 0 && binExists) {
+   662→   662→                    resolve({
+   663→   663→                        success: true,
+   664→   664→                        output: `  Firmware binary: ${expectedBinPath}`,
+   665→   665→                        generatedFiles: [expectedBinPath],
+   666→   666→                        binaryPath: expectedBinPath,
+   667→   667→                    });
+   668→   668→                } else if (code === 0 && !binExists) {
+   669→   669→                    const altBinPath = this.findBinaryInDir(outputDir, sketchName);
+   670→   670→                    if (altBinPath) {
+   671→   671→                        resolve({
+   672→   672→                            success: true,
+   673→   673→                            output: `  Firmware binary: ${altBinPath}`,
+   674→   674→                            generatedFiles: [altBinPath],
+   675→   675→                            binaryPath: altBinPath,
+   676→   676→                        });
+   677→   677→                    } else {
+   678→   678→                        resolve({
+   679→   679→                            success: false,
+   680→   680→                            output: stdout,
+   681→   681→                            error: 'Arduino CLI reported success but no .bin file was found.',
+   682→   682→                        });
+   683→   683→                    }
+   684→   684→                } else {
+   685→   685→                    resolve({
+   686→   686→                        success: false,
+   687→   687→                        output: stdout,
+   688→   688→                        error: stderr || `Arduino CLI exited with code ${code}`,
+   689→   689→                    });
+   690→   690→                }
+   691→   691→            });
+   692→   692→
+   693→   693→            proc.on('error', () => {
+   694→   694→                resolve({
+   695→   695→                    success: false,
+   696→   696→                    output: '',
+   697→   697→                    error: 'Failed to start Arduino CLI.',
+   698→   698→                });
+   699→   699→            });
+   700→   700→
+   701→   701→            // 180 second timeout — first builds can be very slow (compiling ESP32 core)
+   702→   702→            setTimeout(() => {
+   703→   703→                proc.kill();
+   704→   704→                resolve({
+   705→   705→                    success: false,
+   706→   706→                    output: stdout,
+   707→   707→                    error: 'Arduino CLI build timed out after 180 seconds.',
+   708→   708→                });
+   709→   709→            }, 180_000);
+   710→   710→        });
+   711→   711→    }
+   712→   712→
+   713→   713→    /**
+   714→   714→     * Search for a .bin file in the output directory if the expected name is not found.
+   715→   715→     */
+   716→   716→    private findBinaryInDir(outputDir: string, sketchName: string): string | undefined {
+   717→   717→        try {
+   718→   718→            const entries = fs.readdirSync(outputDir);
+   719→   719→            const binFiles = entries.filter(e => e.endsWith('.bin'));
+   720→   720→            if (binFiles.length === 0) {
+   721→   721→                return undefined;
+   722→   722→            }
+   723→   723→            const preferred = binFiles.find(b => b.includes(sketchName));
+   724→   724→            return path.join(outputDir, preferred || binFiles[0]);
+   725→   725→        } catch {
+   726→   726→            return undefined;
+   727→   727→        }
+   728→   728→    }
+   729→   729→
+   730→   730→    /**
+   731→   731→     * Attempt to compile using the Python-based airo_compiler.
+   732→   732→     */
+   733→   733→    protected async tryPythonCompile(request: CompileRequest): Promise<CompileResult | undefined> {
+   734→   734→        return new Promise(resolve => {
+   735→   735→            const args = [
+   736→   736→                '-m', 'airo_compiler',
+   737→   737→                request.filePath,
+   738→   738→                '--target', request.target,
+   739→   739→                '--output', request.outputDir,
+   740→   740→            ];
+   741→   741→            if (request.wifiSsid) {
+   742→   742→                args.push('--wifi-ssid', request.wifiSsid);
+   743→   743→            }
+   744→   744→            if (request.wifiPass) {
+   745→   745→                args.push('--wifi-pass', request.wifiPass);
+   746→   746→            }
+   747→   747→
+   748→   748→            const proc = spawn(this.pythonPath, args, {
+   749→   749→                cwd: this.compilerDir,
+   750→   750→                env: { ...process.env, PYTHONPATH: this.compilerDir },
+   751→   751→            });
+   752→   752→
+   753→   753→            let stdout = '';
+   754→   754→            let stderr = '';
+   755→   755→
+   756→   756→            proc.stdout.on('data', (data: Buffer) => {
+   757→   757→                stdout += data.toString();
+   758→   758→            });
+   759→   759→
+   760→   760→            proc.stderr.on('data', (data: Buffer) => {
+   761→   761→                stderr += data.toString();
+   762→   762→            });
+   763→   763→
+   764→   764→            proc.on('close', (code: number | null) => {
+   765→   765→                resolve({
+   766→   766→                    success: code === 0,
+   767→   767→                    output: stdout,
+   768→   768→                    error: code !== 0 ? stderr : undefined,
+   769→   769→                });
+   770→   770→            });
+   771→   771→
+   772→   772→            proc.on('error', () => {
+   773→   773→                resolve(undefined);
+   774→   774→            });
+   775→   775→
+   776→   776→            setTimeout(() => {
+   777→   777→                proc.kill();
+   778→   778→                resolve({
+   779→   779→                    success: false,
+   780→   780→                    output: stdout,
+   781→   781→                    error: 'Compilation timed out after 60 seconds',
+   782→   782→                });
+   783→   783→            }, 60000);
+   784→   784→        });
+   785→   785→    }
+   786→   786→
+   787→   787→    /**
+   788→   788→     * Get a new sketch template.
+   789→   789→     */
+   790→   790→    async getTemplate(): Promise<string> {
+   791→   791→        const pythonTemplate = await this.tryPythonTemplate();
+   792→   792→        if (pythonTemplate) {
+   793→   793→            return pythonTemplate;
+   794→   794→        }
+   795→   795→        return this.getDefaultTemplate();
+   796→   796→    }
+   797→   797→
+   798→   798→    protected async tryPythonTemplate(): Promise<string | undefined> {
+   799→   799→        return new Promise(resolve => {
+   800→   800→            const proc = spawn(this.pythonPath, ['-m', 'airo_compiler', '--template'], {
+   801→   801→                cwd: this.compilerDir,
+   802→   802→                env: { ...process.env, PYTHONPATH: this.compilerDir },
+   803→   803→            });
+   804→   804→
+   805→   805→            let stdout = '';
+   806→   806→            proc.stdout.on('data', (data: Buffer) => {
+   807→   807→                stdout += data.toString();
+   808→   808→            });
+   809→   809→
+   810→   810→            proc.on('close', () => {
+   811→   811→                resolve(stdout || undefined);
+   812→   812→            });
+   813→   813→
+   814→   814→            proc.on('error', () => {
+   815→   815→                resolve(undefined);
+   816→   816→            });
+   817→   817→        });
+   818→   818→    }
+   819→   819→
+   820→   820→    private getDefaultTemplate(): string {
+   821→   821→        return `#library#
+   822→   822→
+   823→   823→Pin defi {
+   824→   824→
+   825→   825→}
+   826→   826→
+   827→   827→#variables#
+   828→   828→
+   829→   829→loop {
+   830→   830→
+   831→   831→}
+   832→   832→`;
+   833→   833→    }
+   834→   834→
+   835→   835→    private fsPathFromUri(uri: string): string {
+   836→   836→        const parsed = new URL(uri);
+   837→   837→        let filePath = decodeURIComponent(parsed.pathname);
+   838→   838→        if (process.platform === 'win32' && filePath.match(/^\/[A-Za-z]:/)) {
+   839→   839→            filePath = filePath.substring(1);
+   840→   840→        }
+   841→   841→        return filePath;
+   842→   842→    }
+   843→   843→
+   844→   844→    // ─── Arduino CLI Download Helpers ────────────────────────────────────
+   845→   845→
+   846→   846→    /**
+   847→   847→     * Determine the Arduino CLI platform identifier for the current OS.
+   848→   848→     */
+   849→   849→    private getArduinoCliPlatform(): string {
+   850→   850→        const platform = process.platform;
+   851→   851→        const arch = process.arch;
+   852→   852→
+   853→   853→        if (platform === 'win32') {
+   854→   854→            return arch === 'x64' ? 'Windows_64bit' : 'Windows_32bit';
+   855→   855→        }
+   856→   856→        if (platform === 'darwin') {
+   857→   857→            if (arch === 'arm64') return 'macOS_ARM64';
+   858→   858→            return 'macOS_64bit';
+   859→   859→        }
+   860→   860→        // Linux
+   861→   861→        if (arch === 'arm64') return 'Linux_ARM64';
+   862→   862→        if (arch === 'arm') return 'Linux_ARMv7';
+   863→   863→        if (arch === 'x64') return 'Linux_64bit';
+   864→   864→        return 'Linux_32bit';
+   865→   865→    }
+   866→   866→
+   867→   867→    /**
+   868→   868→     * Fetch the latest Arduino CLI version tag from the GitHub releases API.
+   869→   869→     * Returns the tag name (e.g. "v1.0.4") or throws on failure.
+   870→   870→     */
+   871→   871→    private getLatestArduinoCliVersion(): Promise<string> {
+   872→   872→        return new Promise((resolve, reject) => {
+   873→   873→            const options: https.RequestOptions = {
+   874→   874→                hostname: 'api.github.com',
+   875→   875→                path: '/repos/arduino/arduino-cli/releases/latest',
+   876→   876→                method: 'GET',
+   877→   877→                headers: {
+   878→   878→                    'User-Agent': 'Airone-IDE/1.0',
+   879→   879→                    'Accept': 'application/vnd.github+json',
+   880→   880→                },
+   881→   881→            };
+   882→   882→
+   883→   883→            const req = https.request(options, (res) => {
+   884→   884→                if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+   885→   885→                    // Follow redirect
+   886→   886→                    const redirectUrl = new URL(res.headers.location);
+   887→   887→                    this.getLatestArduinoCliVersion().then(resolve).catch(reject);
+   888→   888→                    return;
+   889→   889→                }
+   890→   890→
+   891→   891→                if (res.statusCode !== 200) {
+   892→   892→                    reject(new Error(`GitHub API returned status ${res.statusCode}`));
+   893→   893→                    return;
+   894→   894→                }
+   895→   895→
+   896→   896→                let data = '';
+   897→   897→                res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+   898→   898→                res.on('end', () => {
+   899→   899→                    try {
+   900→   900→                        const release = JSON.parse(data);
+   901→   901→                        const tag = release.tag_name;
+   902→   902→                        if (tag) {
+   903→   903→                            resolve(tag);
+   904→   904→                        } else {
+   905→   905→                            reject(new Error('No tag_name in GitHub release response'));
+   906→   906→                        }
+   907→   907→                    } catch {
+   908→   908→                        reject(new Error('Failed to parse GitHub API response'));
+   909→   909→                    }
+   910→   910→                });
+   911→   911→            });
+   912→   912→
+   913→   913→            req.on('error', reject);
+   914→   914→            req.setTimeout(15000, () => {
+   915→   915→                req.destroy();
+   916→   916→                reject(new Error('GitHub API request timed out'));
+   917→   917→            });
+   918→   918→            req.end();
+   919→   919→        });
+   920→   920→    }
+   921→   921→
+   922→   922→    /**
+   923→   923→     * Download a file from a URL with redirect support.
+   924→   924→     * Handles both HTTP and HTTPS redirects (GitHub releases may redirect
+   925→   925→     * to objects.githubusercontent.com which is HTTPS, but some CDNs use HTTP).
+   926→   926→     */
+   927→   927→    private downloadFile(url: string, destPath: string): Promise<void> {
+   928→   928→        return new Promise((resolve, reject) => {
+   929→   929→            const doDownload = (currentUrl: string, redirectCount = 0) => {
+   930→   930→                if (redirectCount > 5) {
+   931→   931→                    reject(new Error('Too many redirects'));
+   932→   932→                    return;
+   933→   933→                }
+   934→   934→
+   935→   935→                const parsedUrl = new URL(currentUrl);
+   936→   936→                const isHttps = parsedUrl.protocol === 'https:';
+   937→   937→                const httpModule = isHttps ? https : http;
+   938→   938→                const options: https.RequestOptions = {
+   939→   939→                    hostname: parsedUrl.hostname,
+   940→   940→                    path: parsedUrl.pathname + parsedUrl.search,
+   941→   941→                    method: 'GET',
+   942→   942→                    headers: { 'User-Agent': 'Airone-IDE/1.0' },
+   943→   943→                };
+   944→   944→
+   945→   945→                const req = httpModule.request(options, (res) => {
+   946→   946→                    // Handle redirects
+   947→   947→                    if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+   948→   948→                        doDownload(res.headers.location, redirectCount + 1);
+   949→   949→                        return;
+   950→   950→                    }
+   951→   951→
+   952→   952→                    if (res.statusCode !== 200) {
+   953→   953→                        reject(new Error(`Download failed with status ${res.statusCode}`));
+   954→   954→                        return;
+   955→   955→                    }
+   956→   956→
+   957→   957→                    const file = fs.createWriteStream(destPath);
+   958→   958→                    res.pipe(file);
+   959→   959→
+   960→   960→                    file.on('finish', () => {
+   961→   961→                        file.close();
+   962→   962→                        resolve();
+   963→   963→                    });
+   964→   964→
+   965→   965→                    file.on('error', (err) => {
+   966→   966→                        fs.unlinkSync(destPath);
+   967→   967→                        reject(err);
+   968→   968→                    });
+   969→   969→                });
+   970→   970→
+   971→   971→                req.on('error', reject);
+   972→   972→                req.setTimeout(120_000, () => {
+   973→   973→                    req.destroy();
+   974→   974→                    reject(new Error('Download timed out'));
+   975→   975→                });
+   976→   976→                req.end();
+   977→   977→            };
+   978→   978→
+   979→   979→            doDownload(url);
+   980→   980→        });
+   981→   981→    }
+   982→   982→
+   983→   983→    /**
+   984→   984→     * Extract Arduino CLI binary from a downloaded archive.
+   985→   985→     */
+   986→   986→    private async extractArchive(archivePath: string, targetBinaryPath: string, isWindows: boolean): Promise<string | undefined> {
+   987→   987→        try {
+   988→   988→            const extractDir = path.dirname(archivePath);
+   989→   989→
+   990→   990→            if (isWindows) {
+   991→   991→                // Extract .zip on Windows — try multiple methods for robustness
+   992→   992→                let extracted = false;
+   993→   993→
+   994→   994→                // Method 1: PowerShell Expand-Archive
+   995→   995→                // Use -EncodedCommand to avoid all quoting/escaping issues with
+   996→   996→                // paths that contain spaces, parentheses, or special characters.
+   997→   997→                if (!extracted) {
+   998→   998→                    try {
+   999→   999→                        const psScript = `Expand-Archive -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${extractDir.replace(/'/g, "''")}' -Force`;
+  1000→  1000→                        const encodedCmd = Buffer.from(psScript).toString('base64');
+  1001→  1001→                        execSync(`powershell -NoProfile -EncodedCommand ${encodedCmd}`, { timeout: 60000 });
+  1002→  1002→                        extracted = true;
+  1003→  1003→                    } catch (psErr) {
+  1004→  1004→                        // Fallback: try the old quoting approach (for older PowerShell)
+  1005→  1005→                        try {
+  1006→  1006→                            const safeArchivePath = archivePath.replace(/'/g, "''");
+  1007→  1007→                            const safeExtractDir = extractDir.replace(/'/g, "''");
+  1008→  1008→                            const psCmd = `Expand-Archive -Path '${safeArchivePath}' -DestinationPath '${safeExtractDir}' -Force`;
+  1009→  1009→                            execSync(`powershell -NoProfile -Command "${psCmd}"`, { timeout: 60000 });
+  1010→  1010→                            extracted = true;
+  1011→  1011→                        } catch (psErr2) {
+  1012→  1012→                            console.warn('[AiroCompilerService] PowerShell extraction failed, trying fallback:', psErr2 instanceof Error ? psErr2.message : String(psErr2));
+  1013→  1013→                        }
+  1014→  1014→                    }
+  1015→  1015→                }
+  1016→  1016→
+  1017→  1017→                // Method 2: Use Node.js built-in zlib + unzip via tar (Windows 10+ has tar)
+  1018→  1018→                if (!extracted) {
+  1019→  1019→                    try {
+  1020→  1020→                        execSync(`tar -xf "${archivePath}" -C "${extractDir}"`, { timeout: 60000 });
+  1021→  1021→                        extracted = true;
+  1022→  1022→                    } catch (tarErr) {
+  1023→  1023→                        console.warn('[AiroCompilerService] tar extraction failed:', tarErr instanceof Error ? tarErr.message : String(tarErr));
+  1024→  1024→                    }
+  1025→  1025→                }
+  1026→  1026→
+  1027→  1027→                // Method 3: Manual ZIP extraction using Node.js (no external tools)
+  1028→  1028→                if (!extracted) {
+  1029→  1029→                    try {
+  1030→  1030→                        extracted = await this.extractZipManually(archivePath, extractDir);
+  1031→  1031→                    } catch (manualErr) {
+  1032→  1032→                        console.warn('[AiroCompilerService] Manual ZIP extraction failed:', manualErr instanceof Error ? manualErr.message : String(manualErr));
+  1033→  1033→                    }
+  1034→  1034→                }
+  1035→  1035→
+  1036→  1036→                if (!extracted) {
+  1037→  1037→                    console.error('[AiroCompilerService] All extraction methods failed.');
+  1038→  1038→                    return undefined;
+  1039→  1039→                }
+  1040→  1040→
+  1041→  1041→                // Find the extracted binary — search multiple possible locations
+  1042→  1042→                const possiblePaths = [
+  1043→  1043→                    targetBinaryPath,                         // If already in the right place
+  1044→  1044→                    path.join(extractDir, 'arduino-cli.exe'),
+  1045→  1045→                    path.join(extractDir, 'bin', 'arduino-cli.exe'),
+  1046→  1046→                    // The zip may extract to a subdirectory like arduino-cli_1.5.1_Windows_64bit/
+  1047→  1047→                ];
+  1048→  1048→
+  1049→  1049→                for (const p of possiblePaths) {
+  1050→  1050→                    if (fs.existsSync(p)) {
+  1051→  1051→                        if (p !== targetBinaryPath) {
+  1052→  1052→                            fs.copyFileSync(p, targetBinaryPath);
+  1053→  1053→                        }
+  1054→  1054→                        return targetBinaryPath;
+  1055→  1055→                    }
+  1056→  1056→                }
+  1057→  1057→
+  1058→  1058→                // Search recursively in the extraction directory
+  1059→  1059→                const found = this.findFileRecursive(extractDir, 'arduino-cli.exe', targetBinaryPath);
+  1060→  1060→                if (found) {
+  1061→  1061→                    return found;
+  1062→  1062→                }
+  1063→  1063→
+  1064→  1064→                console.error('[AiroCompilerService] Could not find arduino-cli.exe after extraction.');
+  1065→  1065→                return undefined;
+  1066→  1066→            } else {
+  1067→  1067→                // Extract .tar.gz on Unix
+  1068→  1068→                const extractDir = path.dirname(archivePath);
+  1069→  1069→                execSync(`tar -xzf "${archivePath}" -C "${extractDir}"`, { timeout: 30000 });
+  1070→  1070→
+  1071→  1071→                const possiblePaths = [
+  1072→  1072→                    path.join(extractDir, 'arduino-cli'),
+  1073→  1073→                    path.join(extractDir, 'bin', 'arduino-cli'),
+  1074→  1074→                ];
+  1075→  1075→
+  1076→  1076→                for (const p of possiblePaths) {
+  1077→  1077→                    if (fs.existsSync(p)) {
+  1078→  1078→                        if (p !== targetBinaryPath) {
+  1079→  1079→                            fs.copyFileSync(p, targetBinaryPath);
+  1080→  1080→                        }
+  1081→  1081→                        try { fs.chmodSync(targetBinaryPath, 0o755); } catch { /* ignore */ }
+  1082→  1082→                        return targetBinaryPath;
+  1083→  1083→                    }
+  1084→  1084→                }
+  1085→  1085→
+  1086→  1086→                // Search recursively
+  1087→  1087→                return this.findFileRecursive(extractDir, 'arduino-cli', targetBinaryPath);
+  1088→  1088→            }
+  1089→  1089→        } catch (err: unknown) {
+  1090→  1090→            const message = err instanceof Error ? err.message : String(err);
+  1091→  1091→            console.error('[AiroCompilerService] Archive extraction failed:', message);
+  1092→  1092→            return undefined;
+  1093→  1093→        }
+  1094→  1094→    }
+  1095→  1095→
+  1096→  1096→    /**
+  1097→  1097→     * Manually extract a ZIP file using .NET ZipFile via PowerShell.
+  1098→  1098→     * Fallback when Expand-Archive and tar are not available on Windows.
+  1099→  1099→     */
+  1100→  1100→    private async extractZipManually(archivePath: string, destDir: string): Promise<boolean> {
+  1101→  1101→        return new Promise((resolve) => {
+  1102→  1102→            try {
+  1103→  1103→                // Replace backslashes with forward slashes for PowerShell compatibility
+  1104→  1104→                const safeArchive = archivePath.replace(/\\/g, '/');
+  1105→  1105→                const safeDest = destDir.replace(/\\/g, '/');
+  1106→  1106→
+  1107→  1107→                // Use .NET's ZipFile via PowerShell (more reliable than Expand-Archive)
+  1108→  1108→                const psCmd =
+  1109→  1109→                    `Add-Type -AssemblyName System.IO.Compression.FileSystem; ` +
+  1110→  1110→                    `[System.IO.Compression.ZipFile]::ExtractToDirectory('${safeArchive}', '${safeDest}', $true)`;
+  1111→  1111→
+  1112→  1112→                execSync(`powershell -NoProfile -Command "${psCmd}"`, { timeout: 60000 });
+  1113→  1113→                resolve(true);
+  1114→  1114→            } catch (err) {
+  1115→  1115→                console.warn('[AiroCompilerService] .NET ZipFile extraction also failed:', err instanceof Error ? err.message : String(err));
+  1116→  1116→                resolve(false);
+  1117→  1117→            }
+  1118→  1118→        });
+  1119→  1119→    }
+  1120→  1120→
+  1121→  1121→    /**
+  1122→  1122→     * Search recursively for a file and copy it to target.
+  1123→  1123→     */
+  1124→  1124→    private findFileRecursive(dir: string, fileName: string, targetPath: string): string | undefined {
+  1125→  1125→        try {
+  1126→  1126→            const entries = fs.readdirSync(dir, { withFileTypes: true });
+  1127→  1127→            for (const entry of entries) {
+  1128→  1128→                const fullPath = path.join(dir, entry.name);
+  1129→  1129→                if (entry.isDirectory()) {
+  1130→  1130→                    const result = this.findFileRecursive(fullPath, fileName, targetPath);
+  1131→  1131→                    if (result) return result;
+  1132→  1132→                } else if (entry.name === fileName) {
+  1133→  1133→                    fs.copyFileSync(fullPath, targetPath);
+  1134→  1134→                    try { fs.chmodSync(targetPath, 0o755); } catch { /* ignore */ }
+  1135→  1135→                    return targetPath;
+  1136→  1136→                }
+  1137→  1137→            }
+  1138→  1138→        } catch { /* ignore */ }
+  1139→  1139→        return undefined;
+  1140→  1140→    }
+  1141→  1141→}
+  1142→  1142→

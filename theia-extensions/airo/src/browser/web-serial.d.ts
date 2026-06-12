@@ -1,10 +1,10 @@
 /********************************************************************************
  * Copyright (C) 2025 Airone and others.
  *
- * TypeScript type declarations for the Web Serial API.
- * Required for esptool-js integration which uses navigator.serial.
+ * This program and the accompanying materials are made available under the
+ * terms of the Airone Proprietary License, which is available in the project root.
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Proprietary
  ********************************************************************************/
 
 // Web Serial API types — these are not in the default TypeScript DOM lib

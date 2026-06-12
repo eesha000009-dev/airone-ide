@@ -2,9 +2,9 @@
  * Copyright (C) 2025 Airone and others.
  *
  * This program and the accompanying materials are made available under the
- * terms of the MIT License, which is available in the project root.
+ * terms of the Airone Proprietary License, which is available in the project root.
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: Proprietary
  ********************************************************************************/
 
 import { injectable, inject } from '@theia/core/shared/inversify';
@@ -651,7 +651,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
      * 3. esptool-js connects to the ESP32 bootloader
      * 4. Flash the .bin firmware directly from the frontend
      *
-     * No Python, no esptool.py, no Arduino CLI required.
+     * No Python, no esptool.py required for flashing (PlatformIO is used for compilation).
      */
     protected async upload(): Promise<void> {
         const uri = this.getActiveAiroUri();
@@ -704,7 +704,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             binaryPath = compileResult.binaryPath;
 
             if (!binaryPath) {
-                channel.append('⚠ No .bin firmware produced (Arduino CLI may not be installed).\n');
+                channel.append('⚠ No .bin firmware produced (PlatformIO may not be installed).\n');
             } else {
                 channel.append(`✓ Firmware binary: ${binaryPath}\n`);
             }
@@ -769,14 +769,13 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 // No binary — tell the user they need to compile first
                 channel.append('✗ No firmware binary (.bin) found.\n');
                 channel.append('  The sketch was compiled to C++, but no .bin firmware was produced.\n');
-                channel.append('  This means the Arduino CLI is not installed.\n');
+                channel.append('  This means PlatformIO is not installed.\n');
                 channel.append('  You can install it manually:\n');
-                channel.append('    1. Download from: https://arduino.github.io/arduino-cli/latest/\n');
-                channel.append('    2. Run: arduino-cli config init\n');
-                channel.append('    3. Run: arduino-cli core install esp32:esp32\n');
-                channel.append('    4. Then try Upload again.\n');
+                channel.append('    1. Install Python 3.8+ from python.org\n');
+                channel.append('    2. Run: pip install platformio\n');
+                channel.append('    3. Then try Upload again.\n');
                 this.messageService.warn(
-                    'No firmware binary produced. Arduino CLI may need to be installed for C++ compilation.'
+                    'No firmware binary produced. PlatformIO may need to be installed for C++ compilation.'
                 );
             }
         } catch (err: unknown) {
