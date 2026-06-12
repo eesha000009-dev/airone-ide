@@ -27,6 +27,67 @@ const DEFAULT_CHIP_FAMILY = PIO_BOARD_TO_CHIP[DEFAULT_PIO_BOARD];
 /** PlatformIO build directory relative to project */
 const PIO_BUILD_DIR = '.pio';
 
+/**
+ * Find a working Python executable on the system.
+ *
+ * On Windows, this tries: py, python, python3, and common install paths.
+ * On Unix, this tries: python3, python.
+ * Returns the command that successfully runs, or 'python' as fallback.
+ */
+function findWorkingPython(): string {
+    const candidates = process.platform === 'win32'
+        ? ['py', 'python', 'python3', 'py -3']
+        : ['python3', 'python'];
+
+    // Also check common Windows install paths
+    if (process.platform === 'win32') {
+        const localAppData = process.env.LOCALAPPDATA;
+        const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
+        const userHome = os.homedir();
+
+        // Python from Microsoft Store or python.org
+        const windowsPaths = [
+            path.join(userHome, 'AppData', 'Local', 'Microsoft', 'WindowsApps', 'python3.exe'),
+            path.join(userHome, 'AppData', 'Local', 'Microsoft', 'WindowsApps', 'python.exe'),
+            path.join(userHome, 'AppData', 'Local', 'Programs', 'Python', 'Python313', 'python.exe'),
+            path.join(userHome, 'AppData', 'Local', 'Programs', 'Python', 'Python312', 'python.exe'),
+            path.join(userHome, 'AppData', 'Local', 'Programs', 'Python', 'Python311', 'python.exe'),
+            path.join(userHome, 'AppData', 'Local', 'Programs', 'Python', 'Python310', 'python.exe'),
+            path.join(programFiles, 'Python313', 'python.exe'),
+            path.join(programFiles, 'Python312', 'python.exe'),
+            path.join(programFiles, 'Python311', 'python.exe'),
+        ];
+
+        // Also check LOCALAPPDATA if available (more reliable than hardcoding)
+        if (localAppData) {
+            windowsPaths.unshift(
+                path.join(localAppData, 'Programs', 'Python', 'Python313', 'python.exe'),
+                path.join(localAppData, 'Programs', 'Python', 'Python312', 'python.exe'),
+                path.join(localAppData, 'Programs', 'Python', 'Python311', 'python.exe'),
+                path.join(localAppData, 'Programs', 'Python', 'Python310', 'python.exe'),
+            );
+        }
+
+        for (const p of windowsPaths) {
+            if (fs.existsSync(p)) {
+                candidates.push(`"${p}"`);
+            }
+        }
+    }
+
+    for (const cmd of candidates) {
+        try {
+            execSync(`${cmd} --version`, { stdio: 'pipe', timeout: 8000, encoding: 'utf8' });
+            return cmd;
+        } catch {
+            // this candidate doesn't work
+        }
+    }
+
+    // Fallback
+    return process.platform === 'win32' ? 'python' : 'python3';
+}
+
 /** Default Python command per platform */
 function defaultPythonCommand(): string {
     return process.platform === 'win32' ? 'python' : 'python3';
@@ -129,7 +190,8 @@ export class AiroCompilerService {
             : path.join(vendorDir, 'python', 'bin', 'python3');
         if (fs.existsSync(bundledPython)) return bundledPython;
 
-        return defaultPythonCommand();
+        // Find a working Python on the system (tries py, python, python3, common paths)
+        return findWorkingPython();
     }
 
     /**
@@ -201,6 +263,18 @@ export class AiroCompilerService {
 
             if (!pioCmd) {
                 combinedOutput += '\n⏳ Step 3 — PlatformIO not found. Attempting auto-install via pip...\n';
+                combinedOutput += `  Python command: ${this.pythonPath}\n`;
+                const vendorDir = resolveVendorDir();
+                const vendorExists = fs.existsSync(path.join(vendorDir, 'platformio_cache'));
+                combinedOutput += `  Vendor dir: ${vendorDir} (${vendorExists ? 'exists' : 'not found'})\n`;
+                if (vendorExists) {
+                    const packagesDir = path.join(vendorDir, 'platformio_cache', 'packages');
+                    if (fs.existsSync(packagesDir)) {
+                        const pkgs = fs.readdirSync(packagesDir);
+                        combinedOutput += `  Bundled packages: ${pkgs.length > 0 ? pkgs.join(', ') : 'none'}\n`;
+                    }
+                }
+
                 const installResult = await this.ensurePlatformIO(combinedOutput);
                 combinedOutput = installResult.output;
 
@@ -270,25 +344,28 @@ export class AiroCompilerService {
 
     /**
      * Find PlatformIO CLI — checks multiple locations:
-     *  1. Bundled PlatformIO in vendor/
+     *  1. Python module (python -m platformio) — most reliable, works with any Python
      *  2. System PATH (pio command)
      *  3. Python Scripts directory (pip installs pio.exe here on Windows)
      *  4. PlatformIO's own isolated env (penv) in user's .platformio directory
-     *  5. pip-installed PlatformIO (python -m platformio)
      */
     findPlatformIO(): string | undefined {
         if (this.cachedPioPath !== undefined) {
             return this.cachedPioPath;
         }
 
-        // 1. Bundled PlatformIO in vendor directory
-        const vendorDir = resolveVendorDir();
-        const bundledPio = process.platform === 'win32'
-            ? path.join(vendorDir, 'platformio_cache', 'penv', 'Scripts', 'pio.exe')
-            : path.join(vendorDir, 'platformio_cache', 'penv', 'bin', 'pio');
-        if (fs.existsSync(bundledPio)) {
-            this.cachedPioPath = bundledPio;
+        // 1. Python module — most reliable, works regardless of PATH
+        //    This is the primary method: `python -m platformio` always works if pip installed it
+        try {
+            execSync(`"${this.pythonPath}" -m platformio --version`, {
+                stdio: 'pipe',
+                encoding: 'utf8',
+                timeout: 10000,
+            });
+            this.cachedPioPath = `${this.pythonPath} -m platformio`;
             return this.cachedPioPath;
+        } catch {
+            // not installed as module
         }
 
         // 2. System PATH
@@ -319,19 +396,6 @@ export class AiroCompilerService {
         if (fs.existsSync(penvPio)) {
             this.cachedPioPath = penvPio;
             return this.cachedPioPath;
-        }
-
-        // 5. Python module (python -m platformio)
-        try {
-            execSync(`"${this.pythonPath}" -m platformio --version`, {
-                stdio: 'pipe',
-                encoding: 'utf8',
-                timeout: 10000,
-            });
-            this.cachedPioPath = `${this.pythonPath} -m platformio`;
-            return this.cachedPioPath;
-        } catch {
-            // not installed as module
         }
 
         this.cachedPioPath = undefined;
@@ -378,6 +442,7 @@ export class AiroCompilerService {
 
     /**
      * Auto-install PlatformIO via pip.
+     * Shows the actual pip output (including errors) so the user can see what went wrong.
      */
     async ensurePlatformIO(currentOutput: string): Promise<{ pioPath: string | undefined; output: string }> {
         let output = currentOutput;
@@ -388,34 +453,61 @@ export class AiroCompilerService {
             return { pioPath: undefined, output };
         }
 
+        // First check if Python is even available
+        let pythonVersion = '';
+        try {
+            pythonVersion = execSync(`"${this.pythonPath}" --version`, {
+                stdio: 'pipe', encoding: 'utf8', timeout: 8000,
+            }).trim();
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            output += `  ✗ Python not found. Tried: ${this.pythonPath}\n`;
+            output += `    Error: ${msg}\n`;
+            output += '    Please install Python 3.8+ from python.org and restart Airone IDE.\n';
+            return { pioPath: undefined, output };
+        }
+
+        output += `  Python found: ${pythonVersion} (${this.pythonPath})\n`;
+
         this._pioInstalling = true;
 
         try {
             output += `  Installing PlatformIO via pip (${this.pythonPath} -m pip install platformio)...\n`;
 
+            let pipStdout = '';
+            let pipStderr = '';
             const installResult = await new Promise<boolean>(resolve => {
                 const proc = spawn(this.pythonPath, ['-m', 'pip', 'install', 'platformio'], {
                     stdio: 'pipe',
                 });
 
-                let stderr = '';
-                proc.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
-                proc.stdout.on('data', (data: Buffer) => { output += data.toString(); });
+                proc.stderr.on('data', (data: Buffer) => { pipStderr += data.toString(); });
+                proc.stdout.on('data', (data: Buffer) => { pipStdout += data.toString(); });
 
                 proc.on('close', (code: number | null) => {
                     resolve(code === 0);
                 });
 
-                proc.on('error', () => {
+                proc.on('error', (err: Error) => {
+                    pipStderr += err.message;
                     resolve(false);
                 });
 
                 // 5 minute timeout for pip install
                 setTimeout(() => {
                     proc.kill();
+                    pipStderr += 'Timed out after 5 minutes.';
                     resolve(false);
                 }, 300_000);
             });
+
+            // Always show pip output so the user can see what happened
+            if (pipStdout.trim()) {
+                output += '  pip output:\n' + pipStdout.trim().split('\n').map((l: string) => '    ' + l).join('\n') + '\n';
+            }
+            if (pipStderr.trim() && !installResult) {
+                output += '  pip errors:\n' + pipStderr.trim().split('\n').map((l: string) => '    ' + l).join('\n') + '\n';
+            }
 
             if (installResult) {
                 // Clear cache and re-detect
@@ -425,6 +517,23 @@ export class AiroCompilerService {
                 if (pioPath) {
                     output += `  ✓ PlatformIO installed successfully: ${pioPath}\n`;
                     return { pioPath, output };
+                }
+
+                // pip succeeded but we can't find the pio command
+                output += '  ⚠ pip reported success but could not find the pio command.\n';
+                output += '  Trying python -m platformio as fallback...\n';
+
+                // Update pythonPath in case findWorkingPython found a better one
+                this.pythonPath = findWorkingPython();
+                try {
+                    execSync(`"${this.pythonPath}" -m platformio --version`, {
+                        stdio: 'pipe', encoding: 'utf8', timeout: 10000,
+                    });
+                    this.cachedPioPath = `${this.pythonPath} -m platformio`;
+                    output += `  ✓ PlatformIO works via: ${this.cachedPioPath}\n`;
+                    return { pioPath: this.cachedPioPath, output };
+                } catch {
+                    output += '  ✗ python -m platformio also does not work.\n';
                 }
             }
 

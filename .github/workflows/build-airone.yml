@@ -97,41 +97,36 @@ jobs:
           echo "void setup() {} void loop() {}" > "$TMPDIR/src/main.cpp"
           pio run -d "$TMPDIR" -e esp32dev || true
 
+          # Determine PlatformIO home directory on Windows
+          # GitHub Actions bash on Windows: use $USERPROFILE or $HOME
+          PIO_HOME="${USERPROFILE:-$HOME}/.platformio"
+          echo "PlatformIO home: $PIO_HOME"
+
           # Copy the downloaded packages into vendor/
+          # These are the compiler toolchain + Arduino framework — they ARE portable
+          # (unlike penv which is a Python venv tied to a specific Python installation)
           mkdir -p vendor/platformio_cache/packages
-          if [ -d "$USERPROFILE/.platformio/packages/toolchain-xtensa-esp32" ]; then
-            cp -r "$USERPROFILE/.platformio/packages/toolchain-xtensa-esp32" vendor/platformio_cache/packages/
-            echo "✓ Copied toolchain-xtensa-esp32"
-          fi
-          if [ -d "$USERPROFILE/.platformio/packages/framework-arduinoespressif32" ]; then
-            cp -r "$USERPROFILE/.platformio/packages/framework-arduinoespressif32" vendor/platformio_cache/packages/
-            echo "✓ Copied framework-arduinoespressif32"
-          fi
-          if [ -d "$USERPROFILE/.platformio/packages/tool-esptoolpy" ]; then
-            cp -r "$USERPROFILE/.platformio/packages/tool-esptoolpy" vendor/platformio_cache/packages/
-            echo "✓ Copied tool-esptoolpy"
-          fi
-          if [ -d "$USERPROFILE/.platformio/packages/tool-mkspiffs" ]; then
-            cp -r "$USERPROFILE/.platformio/packages/tool-mkspiffs" vendor/platformio_cache/packages/
-            echo "✓ Copied tool-mkspiffs"
-          fi
-          if [ -d "$USERPROFILE/.platformio/packages/tool-mklittlefs" ]; then
-            cp -r "$USERPROFILE/.platformio/packages/tool-mklittlefs" vendor/platformio_cache/packages/
-            echo "✓ Copied tool-mklittlefs"
-          fi
 
-          # Copy PlatformIO Core itself (the Python package)
-          mkdir -p vendor/platformio_cache/penv
-          if [ -d "$USERPROFILE/.platformio/penv" ]; then
-            cp -r "$USERPROFILE/.platformio/penv" vendor/platformio_cache/
-            echo "✓ Copied PlatformIO Core virtual environment"
-          fi
+          for pkg in toolchain-xtensa-esp32 framework-arduinoespressif32 tool-esptoolpy tool-mkspiffs tool-mklittlefs; do
+            if [ -d "$PIO_HOME/packages/$pkg" ]; then
+              cp -r "$PIO_HOME/packages/$pkg" vendor/platformio_cache/packages/
+              echo "✓ Copied $pkg"
+            else
+              echo "⚠ $pkg not found at $PIO_HOME/packages/$pkg"
+            fi
+          done
 
-          # Copy platforms directory
-          if [ -d "$USERPROFILE/.platformio/platforms" ]; then
-            cp -r "$USERPROFILE/.platformio/platforms" vendor/platformio_cache/
+          # Copy platforms directory (contains platform metadata for espressif32)
+          if [ -d "$PIO_HOME/platforms" ]; then
+            cp -r "$PIO_HOME/platforms" vendor/platformio_cache/
             echo "✓ Copied PlatformIO platforms"
           fi
+
+          # NOTE: We do NOT copy penv (PlatformIO's Python virtualenv).
+          # penv is tied to the CI machine's Python path and is NOT portable.
+          # Instead, PlatformIO Core is auto-installed via pip using the user's Python.
+          # The bundled packages + platforms are used by setting PLATFORMIO_CORE_DIR
+          # so PlatformIO knows where to find the toolchain without downloading.
 
           echo "=== Vendor directory contents ==="
           du -sh vendor/platformio_cache/packages/* || echo "No packages"
@@ -337,6 +332,8 @@ jobs:
           pio run -d "$TMPDIR" -e esp32dev || true
 
           # Copy the downloaded packages into vendor/
+          # These are the compiler toolchain + Arduino framework — they ARE portable
+          # (unlike penv which is a Python venv tied to a specific Python installation)
           mkdir -p vendor/platformio_cache/packages
           PIO_HOME="$HOME/.platformio"
 
@@ -344,21 +341,22 @@ jobs:
             if [ -d "$PIO_HOME/packages/$pkg" ]; then
               cp -r "$PIO_HOME/packages/$pkg" vendor/platformio_cache/packages/
               echo "✓ Copied $pkg"
+            else
+              echo "⚠ $pkg not found at $PIO_HOME/packages/$pkg"
             fi
           done
 
-          # Copy PlatformIO Core itself (the Python virtual environment)
-          mkdir -p vendor/platformio_cache/penv
-          if [ -d "$PIO_HOME/penv" ]; then
-            cp -r "$PIO_HOME/penv" vendor/platformio_cache/
-            echo "✓ Copied PlatformIO Core virtual environment"
-          fi
-
-          # Copy platforms directory
+          # Copy platforms directory (contains platform metadata for espressif32)
           if [ -d "$PIO_HOME/platforms" ]; then
             cp -r "$PIO_HOME/platforms" vendor/platformio_cache/
             echo "✓ Copied PlatformIO platforms"
           fi
+
+          # NOTE: We do NOT copy penv (PlatformIO's Python virtualenv).
+          # penv is tied to the CI machine's Python path and is NOT portable.
+          # Instead, PlatformIO Core is auto-installed via pip using the user's Python.
+          # The bundled packages + platforms are used by setting PLATFORMIO_CORE_DIR
+          # so PlatformIO knows where to find the toolchain without downloading.
 
           echo "=== Vendor directory contents ==="
           du -sh vendor/platformio_cache/packages/* || echo "No packages"
