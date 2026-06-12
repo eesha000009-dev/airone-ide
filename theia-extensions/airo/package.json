@@ -2,7 +2,7 @@
   "name": "airone-ide-airo-ext",
   "version": "0.1.0",
   "description": "Airone IDE .airo Language Extension - Robotics programming language support",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "keywords": [
     "theia-extension",
     "airo",

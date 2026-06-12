@@ -796,7 +796,15 @@ export class AiroTranspiler {
                     L.push(`${I(0)}{`);
                     for (const s of stmt.body) {
                         if (s.kind === 'pin_ref') {
-                            L.push(this.generatePinRead(s.pin, indent + 1, ctx));
+                            // Route pin references based on pin mode:
+                            // - Input pins: read their value
+                            // - Output pins: preserve them via generateStmt (don't drop)
+                            const pinDef = ctx.pins.find(p => p.name === s.pin);
+                            if (pinDef && pinDef.mode === 'input') {
+                                L.push(this.generatePinRead(s.pin, indent + 1, ctx));
+                            } else {
+                                L.push(this.generateStmt(s, indent + 1, ctx));
+                            }
                         } else {
                             // Process all other statements (senddatato, ask, saveto, pin_write, call)
                             L.push(this.generateStmt(s, indent + 1, ctx));
@@ -809,7 +817,13 @@ export class AiroTranspiler {
                     L.push(`${I(1)}while (millis() - _read_start < ${dur}) {`);
                     for (const s of stmt.body) {
                         if (s.kind === 'pin_ref') {
-                            L.push(this.generatePinRead(s.pin, indent + 2, ctx));
+                            // Route pin references based on pin mode
+                            const pinDef = ctx.pins.find(p => p.name === s.pin);
+                            if (pinDef && pinDef.mode === 'input') {
+                                L.push(this.generatePinRead(s.pin, indent + 2, ctx));
+                            } else {
+                                L.push(this.generateStmt(s, indent + 2, ctx));
+                            }
                         } else {
                             // Process all other statements (senddatato, ask, saveto, pin_write, call)
                             L.push(this.generateStmt(s, indent + 2, ctx));
@@ -937,9 +951,15 @@ export class AiroTranspiler {
                 const valueCpp = this.translateRvalue(stmt.value, ctx.pins, ctx.variables);
 
                 if (pinDef && pinDef.mode === 'output') {
-                    if (servoPins.includes(pinDef) && (stmt.value === 'HIGH' || stmt.value === 'LOW')) {
-                        const angle = stmt.value === 'HIGH' ? '180' : '0';
-                        L.push(`${I(0)}servo_${stmt.pin}.write(${angle});`);
+                    if (servoPins.includes(pinDef)) {
+                        // For servo pins, numeric values are angles; HIGH/LOW are treated as digital
+                        if (stmt.value === 'HIGH' || stmt.value === 'LOW') {
+                            // HIGH/LOW on a servo pin → use as digital write (not angle)
+                            L.push(`${I(0)}digitalWrite(pin_${stmt.pin}, ${valueCpp});`);
+                        } else {
+                            // Numeric value → servo angle
+                            L.push(`${I(0)}servo_${stmt.pin}.write(${valueCpp});`);
+                        }
                     } else {
                         L.push(`${I(0)}digitalWrite(pin_${stmt.pin}, ${valueCpp});`);
                     }
@@ -954,15 +974,22 @@ export class AiroTranspiler {
             // ── pin_ref (bare reference) ──────────────────────────────
             case 'pin_ref': {
                 // Outside read_for/actfor, a bare pin reference is ambiguous.
-                // For input pins, do a read; for output pins, do a write (toggle).
+                // For input pins, do a read; for output pins, toggle/activate.
                 const pinDef = ctx.pins.find(p => p.name === stmt.pin);
                 if (pinDef && pinDef.mode === 'input') {
                     return this.generatePinRead(stmt.pin, indent, ctx);
                 } else if (pinDef && pinDef.mode === 'output') {
                     if (servoPins.includes(pinDef)) {
-                        return `${I(0)}servo_${stmt.pin}.write(90); // activate`;
+                        // For servos: check if there's a variable with the pin name to use as angle
+                        const servoVar = ctx.variables.find(v => v.name === stmt.pin + '_angle');
+                        if (servoVar) {
+                            return `${I(0)}servo_${stmt.pin}.write(${stmt.pin}_angle);`;
+                        }
+                        // Default: use 90° as center/neutral position
+                        return `${I(0)}servo_${stmt.pin}.write(90); // default neutral angle`;
                     }
-                    return `${I(0)}digitalWrite(pin_${stmt.pin}, HIGH);`;
+                    // For digital output: toggle (activate)
+                    return `${I(0)}digitalWrite(pin_${stmt.pin}, HIGH); // activate`;
                 }
                 return `${I(0)}// pin_ref: ${stmt.pin}`;
             }
@@ -991,8 +1018,12 @@ export class AiroTranspiler {
 
     /**
      * Generate C++ code to actuate a pin (used in actfor blocks).
-     * For output pins: writes HIGH for digital, default angle for servo.
+     *
+     * For output pins: writes HIGH for digital, neutral angle for servo.
      * For input pins: reads the pin value (same as generatePinRead).
+     *
+     * NOTE: Bare pin references in actfor use default activation values.
+     * For specific values, use pin_write syntax: `pin = value.`
      */
     private generatePinActuate(pinName: string, indent: number, ctx: GenContext, servoPins: ParsedPin[]): string {
         const I = (n: number) => '    '.repeat(n + indent);
@@ -1003,9 +1034,14 @@ export class AiroTranspiler {
 
         if (pinDef.mode === 'output') {
             if (servoPins.includes(pinDef)) {
-                return `${I(0)}servo_${pinName}.write(90); // default angle`;
+                // Check if there's an angle variable for this servo
+                const servoVar = ctx.variables.find(v => v.name === pinName + '_angle');
+                if (servoVar) {
+                    return `${I(0)}servo_${pinName}.write(${pinName}_angle);`;
+                }
+                return `${I(0)}servo_${pinName}.write(90); // default neutral angle`;
             } else {
-                return `${I(0)}digitalWrite(pin_${pinName}, HIGH);`;
+                return `${I(0)}digitalWrite(pin_${pinName}, HIGH); // activate`;
             }
         }
 

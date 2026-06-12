@@ -14,7 +14,7 @@ Airone IDE is a professional desktop IDE for ESP32 development, built on the Ecl
 
 - **Custom `.airo` Language** — A high-level, beginner-friendly language that transpiles to C++ for ESP32. Define pins, read sensors, control actuators, and connect to AI brain servers — all with simple, readable syntax.
 
-- **PlatformIO Integration** — Built-in PlatformIO support for compiling ESP32 firmware. Supports both online and offline (bundled toolchain) modes. No separate IDE or toolchain installation needed.
+- **PlatformIO Integration** — Built-in PlatformIO support for compiling ESP32 firmware. PlatformIO auto-installs on first compile — **no separate installation needed**. Only Python is required as a prerequisite.
 
 - **One-Click Flash** — Flash compiled firmware directly to your ESP32 board via USB. Uses esptool-js for Python-free flashing, with esptool.py as a fallback. Supports full 3-file flash (bootloader + partitions + firmware).
 
@@ -22,7 +22,7 @@ Airone IDE is a professional desktop IDE for ESP32 development, built on the Ecl
 
 - **AI Brain Integration** — Connect your ESP32 robot to an AI brain server via WebSocket. The `.airo` language has native support for `senddatato` and `brain_url` directives.
 
-- **Offline Capable** — Bundle PlatformIO Core and the ESP32 toolchain inside the app for fully offline compilation (Python is the only external prerequisite).
+- **Offline Capable** — Bundle PlatformIO Core and the ESP32 toolchain inside the app for fully offline compilation. When bundled, the IDE works completely offline after initial setup.
 
 ---
 
@@ -42,8 +42,7 @@ Airone IDE is a professional desktop IDE for ESP32 development, built on the Ecl
 
 ### Prerequisites
 
-- **Python 3.8+** — Required by PlatformIO for compilation
-- **USB Driver** — For your ESP32 board's USB-to-UART bridge (CP210x, CH340, or FTDI)
+- **Python 3.8+** — The only external prerequisite. PlatformIO and the ESP32 toolchain are auto-installed by the IDE.
 
 ### Installation
 
@@ -53,7 +52,7 @@ Download the latest installer from the [Releases](https://github.com/eesha000009
 
 1. **Create a new `.airo` file** — File → New File, choose `.airo` extension
 2. **Write your code** — Use the `.airo` language to define pins and behavior
-3. **Compile** — Click the compile button or press the shortcut
+3. **Compile** — Click the compile button. On first compile, the IDE automatically installs PlatformIO and the ESP32 toolchain via pip.
 4. **Connect your board** — Plug in your ESP32 via USB
 5. **Upload** — Click the upload button to flash firmware
 
@@ -61,31 +60,31 @@ Download the latest installer from the [Releases](https://github.com/eesha000009
 
 ```
 #library#
-Servo
+# call body/actuation/servo.airo
 
 Pin defi {
-    led output 2
-    button input 0
-    servo output 13
+    led = 2; output.
+    button = 0; input.
+    servo_pin = 13; output.
 }
 
 #variables#
-wifi_ssid = "MyNetwork"
-wifi_password = "MyPassword"
-brain_url = "wss://airone-brain.onrender.com/?robot=mybot"
+wifi_ssid = "MyNetwork".
+wifi_password = "MyPassword".
+brain_url = "wss://airone-brain.onrender.com/?robot=mybot".
 
 loop {
     read_for(100) {
-        button
+        button.
     }
 
     ask button > 2000 {
         actfor(500) {
-            led
+            led.
         }
     } else {
         read_for(0) {
-            servo = 90
+            servo_pin = 90.
         }
     }
 }
@@ -99,7 +98,7 @@ loop {
 .airo file
     ↓ (transpiler)
 C++ Arduino/ESP32 code
-    ↓ (PlatformIO)
+    ↓ (PlatformIO — auto-installed)
 firmware.bin + bootloader.bin + partitions.bin
     ↓ (esptool-js / esptool.py)
 ESP32 board
@@ -109,7 +108,7 @@ ESP32 board
 
 1. **Built-in syntax check** — Fast TypeScript-based syntax validation
 2. **Transpiler** — Converts `.airo` to C++ Arduino/ESP32 code
-3. **PlatformIO build** — Compiles C++ into firmware binaries using the ESP32 toolchain
+3. **PlatformIO build** — Compiles C++ into firmware binaries using the ESP32 toolchain. PlatformIO is auto-installed on first use.
 
 ### Flash Methods
 
@@ -128,7 +127,7 @@ git clone https://github.com/eesha000009-dev/airone-ide.git
 cd airone-ide
 
 # Install dependencies
-yarn
+yarn install
 
 # Build
 yarn build
@@ -137,20 +136,11 @@ yarn build
 yarn package:applications
 ```
 
-### Offline Toolchain Bundling
-
-To bundle PlatformIO Core and the ESP32 toolchain for offline use:
-
-1. Install PlatformIO: `pip install platformio`
-2. Build an ESP32 project once to download the toolchain
-3. Copy `~/.platformio` to `vendor/platformio_cache/` in the project root
-4. Build the Electron app — the vendor directory is included via `extraResources`
-
 ---
 
 ## License
 
-**Proprietary** — All rights reserved. This software is the property of Airone. Unauthorized copying, distribution, or modification is prohibited.
+**Proprietary** — All rights reserved. This software is the property of Airone. Unauthorized copying, distribution, or modification is prohibited. See the [LICENSE](LICENSE) file for details.
 
 ---
 

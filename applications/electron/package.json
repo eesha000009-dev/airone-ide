@@ -5,7 +5,7 @@
   "productName": "Airone IDE",
   "version": "0.1.0",
   "main": "scripts/theia-electron-main.js",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "author": {
     "name": "Airone",
     "email": "airone@eesha000009.dev"
