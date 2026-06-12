@@ -65,12 +65,12 @@ const LIBRARY_MAP: Record<string, LibMapping> = {
         arduinoLibs: ['WebSockets', 'ArduinoJson'],
     },
     'body/actuation/servo.airo': {
-        includes: ['<Servo.h>'],
-        arduinoLibs: [],
+        includes: ['<ESP32Servo.h>'],
+        arduinoLibs: ['ESP32Servo'],
     },
     'body/actuation/upper-right-hands.airo': {
-        includes: ['<Servo.h>'],
-        arduinoLibs: [],
+        includes: ['<ESP32Servo.h>'],
+        arduinoLibs: ['ESP32Servo'],
     },
     'body/sight/eyes.airo': {
         includes: ['<esp_camera.h>'],
@@ -164,6 +164,8 @@ export class AiroTranspiler {
             && pins.some(p => p.name === 'echo' && p.mode === 'input');
         const usesServo = libraryCalls.some(l =>
             l === 'body/actuation/servo.airo' || l === 'body/actuation/upper-right-hands.airo'
+        ) || pins.some(p =>
+            p.mode === 'output' && /servo|motor|hand|arm|leg/i.test(p.name)
         );
 
         // 7. Resolve includes and required libraries
@@ -186,6 +188,10 @@ export class AiroTranspiler {
             includes.add('<ArduinoJson.h>');
             if (!requiredLibraries.includes('WebSockets')) requiredLibraries.push('WebSockets');
             if (!requiredLibraries.includes('ArduinoJson')) requiredLibraries.push('ArduinoJson');
+        }
+        if (usesServo) {
+            includes.add('<ESP32Servo.h>');
+            if (!requiredLibraries.includes('ESP32Servo')) requiredLibraries.push('ESP32Servo');
         }
 
         // 8. Generate C++ code
@@ -915,9 +921,26 @@ export class AiroTranspiler {
                 if (targetPin) {
                     if (targetPin.mode === 'output') {
                         if (servoPins.includes(targetPin)) {
-                            L.push(`${I(0)}servo_${stmt.target}.write(map(${valueCpp}, 0, 4095, 0, 180));`);
+                            // Servo write: determine if the source value is a raw ADC reading
+                            // or already an angle. If the source is an input pin variable (var_xxx),
+                            // map from ADC range; otherwise write directly as an angle.
+                            const sourceIsInputPin = ctx.pins.some(p =>
+                                p.mode === 'input' && p.name === stmt.value.trim()
+                            );
+                            if (sourceIsInputPin) {
+                                // Map raw ADC value (0-4095 for ESP32 12-bit) to servo angle (0-180)
+                                L.push(`${I(0)}servo_${stmt.target}.write(map(${valueCpp}, 0, 4095, 0, 180));`);
+                            } else {
+                                // Value is already an angle or numeric — write directly
+                                L.push(`${I(0)}servo_${stmt.target}.write(${valueCpp});`);
+                            }
+                        } else if (stmt.value === 'HIGH' || stmt.value === 'LOW') {
+                            // Digital write for HIGH/LOW values
+                            L.push(`${I(0)}digitalWrite(pin_${stmt.target}, ${valueCpp});`);
                         } else {
-                            L.push(`${I(0)}analogWrite(pin_${stmt.target}, ${valueCpp});`);
+                            // For other numeric values on digital output pins, use digitalWrite
+                            // (analogWrite is not standard on ESP32 Arduino — use ledcWrite instead)
+                            L.push(`${I(0)}digitalWrite(pin_${stmt.target}, ${valueCpp});`);
                         }
                     } else {
                         L.push(`${I(0)}var_${stmt.target} = ${valueCpp};`);
