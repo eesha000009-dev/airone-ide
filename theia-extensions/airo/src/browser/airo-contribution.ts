@@ -645,15 +645,14 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
     }
 
     /**
-     * Upload the compiled sketch to the ESP32 board.
+     * Upload (flash) the compiled firmware to the ESP32 board.
      *
-     * Uses esptool-js + Web Serial API for a zero-dependency flash experience:
-     * 1. Compile .airo → C++ (transpiler) via backend
-     * 2. User selects a serial port via the native browser port picker
-     * 3. esptool-js connects to the ESP32 bootloader
-     * 4. Flash the .bin firmware directly from the frontend
+     * Workflow: Compile → Flash
+     * 1. Compile .airo → C++ → .bin firmware (via PlatformIO backend)
+     * 2. Select a serial port via the browser's port picker
+     * 3. Flash the .bin firmware to the ESP32 using esptool-js + Web Serial API
      *
-     * No Python, no esptool.py required for flashing (PlatformIO is used for compilation).
+     * No Python or esptool.py needed for flashing — PlatformIO is only used for compilation.
      */
     protected async upload(): Promise<void> {
         const uri = this.getActiveAiroUri();
@@ -681,7 +680,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         channel.append('Flash method: esptool-js (Web Serial API)\n');
 
         // ─── Step 1: Compile .airo → C++ → .bin (via backend) ────────
-        channel.append('\nStep 1: Compiling .airo sketch...\n');
+        channel.append('\nStep 1: Compiling .airo → C++ → .bin firmware...\n');
 
         let binaryPath: string | undefined;
         try {
@@ -719,8 +718,8 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             return;
         }
 
-        // ─── Step 2: Select port and flash via esptool-js ──────────
-        channel.append('\nStep 2: Selecting ESP32 port and flashing...\n');
+        // ─── Step 2: Flash .bin firmware to ESP32 via esptool-js ──────
+        channel.append('\nStep 2: Flashing .bin firmware to ESP32 board...\n');
         channel.append('A port selection dialog will appear. Select your ESP32 board.\n');
 
         try {
@@ -785,8 +784,70 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         }
     }
 
+    /**
+     * Compile the active .airo file through the full pipeline:
+     *   1. Syntax verification (built-in TypeScript compiler)
+     *   2. Transpile .airo → C++
+     *   3. PlatformIO build (C++ → firmware.bin)
+     *
+     * The Compile button produces the .bin firmware file.
+     * The Upload button then flashes that .bin file to the ESP32 board.
+     *
+     * If PlatformIO is not found, auto-installs it via pip.
+     */
     protected async compile(): Promise<void> {
-        await this.verify();
+        const uri = this.getActiveAiroUri();
+        if (!uri) {
+            this.messageService.error('No .airo file open. Create or open a .airo sketch first.');
+            return;
+        }
+
+        this._compiling = true;
+        const channel = this.outputChannelManager.getChannel('Airo Compiler');
+        channel.show();
+        channel.append(`\n--- Compiling ${uri.path.base} ---\n`);
+
+        const boardLabel = this._selectedBoard ? this._selectedBoard.name : 'ESP32 DevKit';
+        const chipType = this._selectedBoard ? this._selectedBoard.platform : 'esp32';
+        channel.append(`Target: ${boardLabel} (${chipType})\n`);
+
+        try {
+            // Use the full compile pipeline (same as upload step 1)
+            const compileResult = await this.uploadService.compileAiroFile(
+                uri.toString(),
+                chipType
+            );
+
+            channel.append(compileResult.output + '\n');
+
+            if (!compileResult.success) {
+                channel.append('✗ Compilation failed.\n');
+                if (compileResult.error) {
+                    channel.append(`Error: ${compileResult.error}\n`);
+                }
+                this.messageService.error('✗ Compilation failed — see output for details.');
+                this._compiling = false;
+                return;
+            }
+
+            if (compileResult.binaryPath) {
+                channel.append(`\n✓ Compilation successful! Firmware binary created:\n`);
+                channel.append(`  ${compileResult.binaryPath}\n`);
+                this.messageService.info('✓ Compilation successful! .bin firmware file created. Click Upload to flash it to your board.');
+            } else {
+                channel.append('\n⚠ Compilation partially succeeded — C++ was generated but no .bin firmware was produced.\n');
+                channel.append('  This usually means PlatformIO is not installed.\n');
+                channel.append('  Ensure Python 3 and PlatformIO are installed:\n');
+                channel.append('    pip install platformio\n');
+                this.messageService.warn('Compiled to C++ but no .bin produced. PlatformIO may need to be installed.');
+            }
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            channel.append(`✗ Compilation error: ${message}\n`);
+            this.messageService.error('Compilation error: ' + message);
+        } finally {
+            this._compiling = false;
+        }
     }
 
     /**

@@ -210,9 +210,10 @@ export class AiroCompilerService {
                     combinedOutput +=
                         '\n⚠ Step 3 — Could not auto-install PlatformIO.\n' +
                         '  Firmware binary (.bin) not produced.\n' +
-                        '  Please install Python 3 and PlatformIO:\n' +
-                        '    pip install platformio\n' +
-                        '  Or for offline use, bundle PlatformIO in the vendor/ directory.\n';
+                        '  To fix this, install Python 3 and PlatformIO:\n' +
+                        '    1. Install Python 3.8+ from python.org\n' +
+                        '    2. Run: pip install platformio\n' +
+                        '    3. Then click Compile again.\n';
 
                     return {
                         success: true,
@@ -268,10 +269,12 @@ export class AiroCompilerService {
     // ─── PlatformIO Detection & Installation ─────────────────────────────
 
     /**
-     * Find PlatformIO CLI — checks:
+     * Find PlatformIO CLI — checks multiple locations:
      *  1. Bundled PlatformIO in vendor/
      *  2. System PATH (pio command)
-     *  3. pip-installed PlatformIO (python -m platformio)
+     *  3. Python Scripts directory (pip installs pio.exe here on Windows)
+     *  4. PlatformIO's own isolated env (penv) in user's .platformio directory
+     *  5. pip-installed PlatformIO (python -m platformio)
      */
     findPlatformIO(): string | undefined {
         if (this.cachedPioPath !== undefined) {
@@ -299,7 +302,26 @@ export class AiroCompilerService {
             // not in PATH
         }
 
-        // 3. Python module
+        // 3. Python Scripts directory — pip installs pio.exe/python.exe here
+        //    On Windows: C:\Users\<user>\AppData\Local\Programs\Python\Python3x\Scripts\pio.exe
+        //    On Unix: ~/.local/bin/pio
+        const pythonScriptsPio = this.findPioInPythonScripts();
+        if (pythonScriptsPio) {
+            this.cachedPioPath = pythonScriptsPio;
+            return this.cachedPioPath;
+        }
+
+        // 4. PlatformIO's own isolated virtualenv (penv) in ~/.platformio
+        const pioCoreDir = resolvePlatformioCoreDir();
+        const penvPio = process.platform === 'win32'
+            ? path.join(pioCoreDir, 'penv', 'Scripts', 'pio.exe')
+            : path.join(pioCoreDir, 'penv', 'bin', 'pio');
+        if (fs.existsSync(penvPio)) {
+            this.cachedPioPath = penvPio;
+            return this.cachedPioPath;
+        }
+
+        // 5. Python module (python -m platformio)
         try {
             execSync(`"${this.pythonPath}" -m platformio --version`, {
                 stdio: 'pipe',
@@ -313,6 +335,44 @@ export class AiroCompilerService {
         }
 
         this.cachedPioPath = undefined;
+        return undefined;
+    }
+
+    /**
+     * Find pio executable in Python's Scripts directory.
+     * On Windows, pip installs executables to the same directory as python.exe\..\Scripts\
+     * On Unix, they go to ~/.local/bin/
+     */
+    private findPioInPythonScripts(): string | undefined {
+        try {
+            // Get the directory containing the Python executable
+            const pythonDirOutput = execSync(`"${this.pythonPath}" -c "import sys, os; print(os.path.dirname(sys.executable))"`, {
+                stdio: 'pipe',
+                encoding: 'utf8',
+                timeout: 10000,
+            }).trim();
+
+            if (!pythonDirOutput) return undefined;
+
+            if (process.platform === 'win32') {
+                // Windows: Scripts subdirectory of Python's directory
+                const scriptsDir = path.join(pythonDirOutput, 'Scripts');
+                const pioExe = path.join(scriptsDir, 'pio.exe');
+                if (fs.existsSync(pioExe)) return pioExe;
+                // Also check platformio.exe (some installations)
+                const platformioExe = path.join(scriptsDir, 'platformio.exe');
+                if (fs.existsSync(platformioExe)) return platformioExe;
+            } else {
+                // Unix: ~/.local/bin/pio
+                const localBin = path.join(os.homedir(), '.local', 'bin', 'pio');
+                if (fs.existsSync(localBin)) return localBin;
+                // Also check Python's own bin directory
+                const binPio = path.join(pythonDirOutput, 'pio');
+                if (fs.existsSync(binPio)) return binPio;
+            }
+        } catch {
+            // Could not determine Python directory
+        }
         return undefined;
     }
 
