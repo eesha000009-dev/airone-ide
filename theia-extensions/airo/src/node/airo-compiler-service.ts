@@ -111,6 +111,18 @@ function resolveVendorDir(): string {
     return path.join(os.homedir(), '.airone', 'vendor');
 }
 
+/** Resolve the directory containing bundled PlatformIO Core Python packages */
+function resolvePlatformioPackagesDir(): string {
+    const vendorDir = resolveVendorDir();
+    return path.join(vendorDir, 'platformio_packages');
+}
+
+/** Check if PlatformIO Core Python packages are bundled in vendor/ */
+function isPlatformioBundled(): boolean {
+    const packagesDir = resolvePlatformioPackagesDir();
+    return fs.existsSync(path.join(packagesDir, 'platformio', '__init__.py'));
+}
+
 /** Resolve the PlatformIO Core directory (bundled or user-installed) */
 function resolvePlatformioCoreDir(): string {
     const vendorDir = resolveVendorDir();
@@ -145,7 +157,6 @@ export class AiroCompilerService {
     private pythonPath: string;
     private compilerDir: string;
     private cachedPioPath: string | undefined;
-    private _pioInstalling: boolean = false;
 
     /** Directory where Airone stores tooling */
     private readonly toolsDir: string;
@@ -258,43 +269,39 @@ export class AiroCompilerService {
                 (transpileResult.errors.length > 0 ? `  Warnings: ${transpileResult.errors.join('; ')}\n` : '');
 
             // ─── Step 3: PlatformIO build ─────────────────────────────
-            // Find or install PlatformIO
+            // Find PlatformIO (bundled first, then system — no auto-install)
             let pioCmd = this.findPlatformIO();
 
             if (!pioCmd) {
-                combinedOutput += '\n⏳ Step 3 — PlatformIO not found. Attempting auto-install via pip...\n';
-                combinedOutput += `  Python command: ${this.pythonPath}\n`;
                 const vendorDir = resolveVendorDir();
-                const vendorExists = fs.existsSync(path.join(vendorDir, 'platformio_cache'));
-                combinedOutput += `  Vendor dir: ${vendorDir} (${vendorExists ? 'exists' : 'not found'})\n`;
-                if (vendorExists) {
-                    const packagesDir = path.join(vendorDir, 'platformio_cache', 'packages');
-                    if (fs.existsSync(packagesDir)) {
-                        const pkgs = fs.readdirSync(packagesDir);
-                        combinedOutput += `  Bundled packages: ${pkgs.length > 0 ? pkgs.join(', ') : 'none'}\n`;
-                    }
-                }
+                const packagesDir = resolvePlatformioPackagesDir();
+                const coreDir = resolvePlatformioCoreDir();
 
-                const installResult = await this.ensurePlatformIO(combinedOutput);
-                combinedOutput = installResult.output;
+                combinedOutput += '\n✗ Step 3 — PlatformIO not found.\n';
+                combinedOutput += `  Vendor dir: ${vendorDir} (${fs.existsSync(vendorDir) ? 'exists' : 'NOT FOUND'})\n`;
+                combinedOutput += `  Bundled packages: ${packagesDir} (${fs.existsSync(path.join(packagesDir, 'platformio')) ? 'exists' : 'NOT FOUND'})\n`;
+                combinedOutput += `  Toolchain cache: ${coreDir} (${fs.existsSync(path.join(coreDir, 'packages')) ? 'exists' : 'NOT FOUND'})\n`;
+                combinedOutput += `  Python: ${this.pythonPath}\n`;
 
-                if (installResult.pioPath) {
-                    pioCmd = installResult.pioPath;
+                if (!fs.existsSync(vendorDir)) {
+                    combinedOutput += '\n  The PlatformIO toolchain is not bundled with this installation.\n';
+                    combinedOutput += '  Please reinstall Airone IDE to get the bundled toolchain.\n';
+                } else if (!isPlatformioBundled()) {
+                    combinedOutput += '\n  PlatformIO Core packages are missing from the vendor directory.\n';
+                    combinedOutput += '  This may indicate a corrupted installation.\n';
+                    combinedOutput += '  Please reinstall Airone IDE.\n';
                 } else {
-                    combinedOutput +=
-                        '\n⚠ Step 3 — Could not auto-install PlatformIO.\n' +
-                        '  Firmware binary (.bin) not produced.\n' +
-                        '  To fix this, install Python 3 and PlatformIO:\n' +
-                        '    1. Install Python 3.8+ from python.org\n' +
-                        '    2. Run: pip install platformio\n' +
-                        '    3. Then click Compile again.\n';
-
-                    return {
-                        success: true,
-                        output: combinedOutput,
-                        generatedFiles,
-                    };
+                    combinedOutput += '\n  Python may not be installed or not in PATH.\n';
+                    combinedOutput += '  Please install Python 3.8+ from python.org and restart Airone IDE.\n';
                 }
+
+                combinedOutput += '\n  Firmware binary (.bin) not produced.\n';
+
+                return {
+                    success: true,
+                    output: combinedOutput,
+                    generatedFiles,
+                };
             }
 
             // Run PlatformIO build
@@ -340,22 +347,45 @@ export class AiroCompilerService {
         return this.builtInCompiler.verify(filePath);
     }
 
-    // ─── PlatformIO Detection & Installation ─────────────────────────────
+    // ─── PlatformIO Detection ───────────────────────────────────────────
 
     /**
-     * Find PlatformIO CLI — checks multiple locations:
-     *  1. Python module (python -m platformio) — most reliable, works with any Python
-     *  2. System PATH (pio command)
-     *  3. Python Scripts directory (pip installs pio.exe here on Windows)
-     *  4. PlatformIO's own isolated env (penv) in user's .platformio directory
+     * Find PlatformIO CLI — checks multiple locations (bundled first, no auto-install):
+     *  1. Bundled PlatformIO Core packages (PRIMARY — no pip install needed)
+     *  2. Python module (python -m platformio) — in case user has it installed
+     *  3. System PATH (pio command)
+     *  4. Python Scripts directory (pip installs pio.exe here on Windows)
+     *  5. PlatformIO's own isolated env (penv) in user's .platformio directory
      */
     findPlatformIO(): string | undefined {
         if (this.cachedPioPath !== undefined) {
             return this.cachedPioPath;
         }
 
-        // 1. Python module — most reliable, works regardless of PATH
-        //    This is the primary method: `python -m platformio` always works if pip installed it
+        // 1. Bundled PlatformIO Core packages (PRIMARY — no pip install needed)
+        if (isPlatformioBundled()) {
+            const packagesDir = resolvePlatformioPackagesDir();
+            try {
+                const testEnv: NodeJS.ProcessEnv = { ...process.env };
+                const existingPythonPath = testEnv.PYTHONPATH || '';
+                testEnv.PYTHONPATH = existingPythonPath
+                    ? `${packagesDir}${path.delimiter}${existingPythonPath}`
+                    : packagesDir;
+
+                execSync(`"${this.pythonPath}" -m platformio --version`, {
+                    stdio: 'pipe',
+                    encoding: 'utf8',
+                    timeout: 10000,
+                    env: testEnv,
+                });
+                this.cachedPioPath = `${this.pythonPath} -m platformio`;
+                return this.cachedPioPath;
+            } catch {
+                // Bundled packages exist but Python can't use them — Python version mismatch?
+            }
+        }
+
+        // 2. Python module — in case user has PlatformIO installed via pip
         try {
             execSync(`"${this.pythonPath}" -m platformio --version`, {
                 stdio: 'pipe',
@@ -368,7 +398,7 @@ export class AiroCompilerService {
             // not installed as module
         }
 
-        // 2. System PATH
+        // 3. System PATH
         try {
             const isWin = process.platform === 'win32';
             const checkCmd = isWin ? 'where' : 'which';
@@ -379,7 +409,7 @@ export class AiroCompilerService {
             // not in PATH
         }
 
-        // 3. Python Scripts directory — pip installs pio.exe/python.exe here
+        // 4. Python Scripts directory — pip installs pio.exe/python.exe here
         //    On Windows: C:\Users\<user>\AppData\Local\Programs\Python\Python3x\Scripts\pio.exe
         //    On Unix: ~/.local/bin/pio
         const pythonScriptsPio = this.findPioInPythonScripts();
@@ -388,7 +418,7 @@ export class AiroCompilerService {
             return this.cachedPioPath;
         }
 
-        // 4. PlatformIO's own isolated virtualenv (penv) in ~/.platformio
+        // 5. PlatformIO's own isolated virtualenv (penv) in ~/.platformio
         const pioCoreDir = resolvePlatformioCoreDir();
         const penvPio = process.platform === 'win32'
             ? path.join(pioCoreDir, 'penv', 'Scripts', 'pio.exe')
@@ -441,111 +471,35 @@ export class AiroCompilerService {
     }
 
     /**
-     * Auto-install PlatformIO via pip.
-     * Shows the actual pip output (including errors) so the user can see what went wrong.
+     * Build environment variables for running PlatformIO with bundled packages.
+     *
+     * Sets PYTHONPATH for bundled PlatformIO Core Python packages,
+     * PLATFORMIO_CORE_DIR for the bundled toolchain cache,
+     * and PLATFORMIO_SETTING_FORCE_OFFLINE to prevent any downloads.
      */
-    async ensurePlatformIO(currentOutput: string): Promise<{ pioPath: string | undefined; output: string }> {
-        let output = currentOutput;
+    private buildPlatformioEnv(): NodeJS.ProcessEnv {
+        const env: NodeJS.ProcessEnv = { ...process.env };
 
-        // Prevent concurrent installations
-        if (this._pioInstalling) {
-            output += '  PlatformIO installation already in progress...\n';
-            return { pioPath: undefined, output };
+        // If bundled PlatformIO Core packages exist, set PYTHONPATH
+        if (isPlatformioBundled()) {
+            const packagesDir = resolvePlatformioPackagesDir();
+            const existingPythonPath = env.PYTHONPATH || '';
+            env.PYTHONPATH = existingPythonPath
+                ? `${packagesDir}${path.delimiter}${existingPythonPath}`
+                : packagesDir;
         }
 
-        // First check if Python is even available
-        let pythonVersion = '';
-        try {
-            pythonVersion = execSync(`"${this.pythonPath}" --version`, {
-                stdio: 'pipe', encoding: 'utf8', timeout: 8000,
-            }).trim();
-        } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            output += `  ✗ Python not found. Tried: ${this.pythonPath}\n`;
-            output += `    Error: ${msg}\n`;
-            output += '    Please install Python 3.8+ from python.org and restart Airone IDE.\n';
-            return { pioPath: undefined, output };
+        // Set PLATFORMIO_CORE_DIR to the bundled toolchain cache
+        const coreDir = resolvePlatformioCoreDir();
+        env.PLATFORMIO_CORE_DIR = coreDir;
+
+        // Force offline mode if vendor directory has toolchain
+        const vendorDir = resolveVendorDir();
+        if (fs.existsSync(path.join(vendorDir, 'platformio_cache'))) {
+            env.PLATFORMIO_SETTING_FORCE_OFFLINE = 'true';
         }
 
-        output += `  Python found: ${pythonVersion} (${this.pythonPath})\n`;
-
-        this._pioInstalling = true;
-
-        try {
-            output += `  Installing PlatformIO via pip (${this.pythonPath} -m pip install platformio)...\n`;
-
-            let pipStdout = '';
-            let pipStderr = '';
-            const installResult = await new Promise<boolean>(resolve => {
-                const proc = spawn(this.pythonPath, ['-m', 'pip', 'install', 'platformio'], {
-                    stdio: 'pipe',
-                });
-
-                proc.stderr.on('data', (data: Buffer) => { pipStderr += data.toString(); });
-                proc.stdout.on('data', (data: Buffer) => { pipStdout += data.toString(); });
-
-                proc.on('close', (code: number | null) => {
-                    resolve(code === 0);
-                });
-
-                proc.on('error', (err: Error) => {
-                    pipStderr += err.message;
-                    resolve(false);
-                });
-
-                // 5 minute timeout for pip install
-                setTimeout(() => {
-                    proc.kill();
-                    pipStderr += 'Timed out after 5 minutes.';
-                    resolve(false);
-                }, 300_000);
-            });
-
-            // Always show pip output so the user can see what happened
-            if (pipStdout.trim()) {
-                output += '  pip output:\n' + pipStdout.trim().split('\n').map((l: string) => '    ' + l).join('\n') + '\n';
-            }
-            if (pipStderr.trim() && !installResult) {
-                output += '  pip errors:\n' + pipStderr.trim().split('\n').map((l: string) => '    ' + l).join('\n') + '\n';
-            }
-
-            if (installResult) {
-                // Clear cache and re-detect
-                this.cachedPioPath = undefined;
-                const pioPath = this.findPlatformIO();
-
-                if (pioPath) {
-                    output += `  ✓ PlatformIO installed successfully: ${pioPath}\n`;
-                    return { pioPath, output };
-                }
-
-                // pip succeeded but we can't find the pio command
-                output += '  ⚠ pip reported success but could not find the pio command.\n';
-                output += '  Trying python -m platformio as fallback...\n';
-
-                // Update pythonPath in case findWorkingPython found a better one
-                this.pythonPath = findWorkingPython();
-                try {
-                    execSync(`"${this.pythonPath}" -m platformio --version`, {
-                        stdio: 'pipe', encoding: 'utf8', timeout: 10000,
-                    });
-                    this.cachedPioPath = `${this.pythonPath} -m platformio`;
-                    output += `  ✓ PlatformIO works via: ${this.cachedPioPath}\n`;
-                    return { pioPath: this.cachedPioPath, output };
-                } catch {
-                    output += '  ✗ python -m platformio also does not work.\n';
-                }
-            }
-
-            output += '  ✗ PlatformIO auto-install failed.\n';
-            return { pioPath: undefined, output };
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            output += `  ✗ PlatformIO auto-install failed: ${message}\n`;
-            return { pioPath: undefined, output };
-        } finally {
-            this._pioInstalling = false;
-        }
+        return env;
     }
 
     // ─── PlatformIO Project Generation ───────────────────────────────────
@@ -611,18 +565,8 @@ export class AiroCompilerService {
         board: string
     ): Promise<CompileResult> {
         return new Promise(resolve => {
-            // Build environment variables for offline/bundled mode
-            const pioCoreDir = resolvePlatformioCoreDir();
-            const env: NodeJS.ProcessEnv = {
-                ...process.env,
-                PLATFORMIO_CORE_DIR: pioCoreDir,
-            };
-
-            // If using bundled vendor directory, force offline mode
-            const vendorDir = resolveVendorDir();
-            if (fs.existsSync(path.join(vendorDir, 'platformio_cache'))) {
-                env.PLATFORMIO_SETTING_FORCE_OFFLINE = 'true';
-            }
+            // Build environment variables for bundled PlatformIO packages + offline mode
+            const env = this.buildPlatformioEnv();
 
             // Parse pio command (may be "python -m platformio" or just "pio")
             const cmdParts = pioCmd.includes(' ')

@@ -315,3 +315,86 @@ Stage Summary:
 - PlatformIO detection expanded from 3 to 5 strategies — finds pio in Python Scripts dir, penv, etc.
 - Compile button now creates .bin firmware file (was only doing syntax check before)
 - Workflow: Compile = creates .bin, Upload = flashes .bin to ESP32
+
+---
+Task ID: 1-5
+Agent: Main Agent
+Task: Fix PlatformIO not found — root cause analysis and comprehensive fix
+
+Work Log:
+- Investigated why PlatformIO was not found in the installed IDE
+- Discovered CI workflow EXISTS (.github/workflows/build-airone.yml) and has toolchain bundling steps
+- Found ROOT CAUSE #1: resolvePythonPath() only tried 'python' on Windows — many machines need 'py' or 'python3'
+- Found ROOT CAUSE #2: pip install errors were swallowed — user saw generic 'failed' with no explanation
+- Found ROOT CAUSE #3: CI copied penv (PlatformIO's Python venv) which is NOT portable across machines
+- Found ROOT CAUSE #4: python -m platformio was checked LAST instead of FIRST (most reliable method)
+- Created findWorkingPython() function: tries py, python, python3, py -3, and 15+ common Windows paths
+- Reordered findPlatformIO(): python -m platformio is now checked FIRST (most reliable)
+- Rewrote ensurePlatformIO(): shows Python version, actual pip stdout/stderr, and fallback attempts
+- Fixed CI workflow: no longer copies penv, only copies packages + platforms (which ARE portable)
+- Added vendor/platformio_cache/.gitkeep for electron-builder directory discovery
+- Added diagnostic output: shows Python path, vendor dir, bundled packages when PIO not found
+- Created scripts/setup-vendor-platformio.sh for local dev toolchain setup
+- TypeScript compilation verified: 0 errors ✅
+- Pushed to GitHub (commit 24d2b44)
+
+Stage Summary:
+- Python detection now tries 20+ candidates on Windows (was just 'python')
+- PlatformIO detection starts with most reliable method (python -m platformio)
+- pip install errors are now fully visible to the user
+- CI bundles only portable toolchain (packages/platforms), not penv
+- Architecture: Python (user installs) → PlatformIO Core (auto-installed via pip once) → ESP32 toolchain (bundled in installer)
+
+---
+Task ID: 3
+Agent: CI Workflow Updater
+Task: Update CI workflow to bundle PlatformIO Core Python packages
+
+Work Log:
+- Added "Bundle PlatformIO Core Python packages" step to both Windows and Linux build jobs
+  - Uses `pip install --target vendor/platformio_packages platformio` to install PlatformIO Core and all its Python dependencies into the vendor directory
+  - Removes .dist-info directories to save space
+  - Conditioned on `steps.cache-toolchain.outputs.cache-hit != 'true'` to skip when cached
+- Updated "Cache ESP32 toolchain" step in both jobs
+  - Added `vendor/platformio_packages` to the cache path (alongside `vendor/platformio_cache`)
+  - Changed cache key from `pio-esp32-toolchain-{win,linux}-` to `pio-esp32-full-{win,linux}-` to reflect new contents
+- Updated comment in "Download ESP32 toolchain" step in both jobs
+  - Old: "PlatformIO Core is auto-installed via pip using the user's Python"
+  - New: "PlatformIO Core Python packages are bundled via pip install --target into vendor/platformio_packages/. At runtime, PYTHONPATH points to vendor/platformio_packages/ so `python -m platformio` works without any pip install on the user's machine."
+- Updated "Verify offline toolchain" step in both jobs
+  - Added check for `vendor/platformio_packages/platformio` directory
+  - Reports ✓ if PlatformIO Core packages present, ⚠ if missing
+- Updated release notes "Offline Compilation" section
+  - Changed to: "No internet connection and no pip install is needed to compile .airo code"
+  - Added: "PlatformIO runs directly from the bundled Python packages"
+
+Stage Summary:
+- CI now fully bundles PlatformIO Core Python packages alongside ESP32 toolchain
+- Users only need Python 3.8+ — NO pip install of PlatformIO required at runtime
+- Both vendor/platformio_cache (toolchain) and vendor/platformio_packages (PlatformIO Core) are cached
+- Cache keys updated to pio-esp32-full-{win,linux}- to distinguish from old cache entries
+
+---
+Task ID: 4
+Agent: Compiler Service Rewriter
+Task: Rewrite compiler service to use bundled PlatformIO (no pip auto-install)
+
+Work Log:
+- Added `resolvePlatformioPackagesDir()` function — returns `vendor/platformio_packages/` path
+- Added `isPlatformioBundled()` function — checks if `vendor/platformio_packages/platformio/__init__.py` exists
+- Rewrote `findPlatformIO()` with new priority order: 1) Bundled PlatformIO packages (with PYTHONPATH test), 2) Python module, 3) System PATH, 4) Python Scripts directory, 5) penv
+- Bundled PlatformIO detection tests with PYTHONPATH set (using `path.delimiter` for cross-platform compatibility)
+- Added `buildPlatformioEnv()` private method — builds env vars: PYTHONPATH for bundled packages, PLATFORMIO_CORE_DIR for toolchain cache, PLATFORMIO_SETTING_FORCE_OFFLINE to prevent downloads
+- Updated `runPlatformioBuild()` to use `this.buildPlatformioEnv()` instead of inline env building
+- Removed entire `ensurePlatformIO()` method (100+ lines of pip auto-install code)
+- Removed `_pioInstalling` field
+- Rewrote `compile()` Step 3 error handling — shows clear diagnostics (vendor dir, bundled packages, toolchain cache, Python path) with actionable advice based on what's missing
+- Updated section comment from "PlatformIO Detection & Installation" to "PlatformIO Detection"
+- Verified TypeScript compiles cleanly with 0 errors
+
+Stage Summary:
+- No more pip auto-install — PlatformIO is either bundled or not found
+- Bundled PlatformIO detection is PRIMARY priority, tested with PYTHONPATH set
+- `buildPlatformioEnv()` centralizes all env var logic (PYTHONPATH, PLATFORMIO_CORE_DIR, FORCE_OFFLINE)
+- Error messages are specific: missing vendor dir → reinstall IDE, missing packages → corrupted install, missing Python → install Python
+- TypeScript compiles cleanly with 0 errors

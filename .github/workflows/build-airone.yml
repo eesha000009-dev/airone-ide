@@ -75,10 +75,27 @@ jobs:
         id: cache-toolchain
         uses: actions/cache@v4
         with:
-          path: vendor/platformio_cache
-          key: pio-esp32-toolchain-win-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
+          path: |
+            vendor/platformio_cache
+            vendor/platformio_packages
+          key: pio-esp32-full-win-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
           restore-keys: |
-            pio-esp32-toolchain-win-
+            pio-esp32-full-win-
+
+      - name: Bundle PlatformIO Core Python packages
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          # Install PlatformIO Core AND all its Python dependencies into vendor/platformio_packages/
+          # At runtime, PYTHONPATH will point here so `python -m platformio` works WITHOUT pip install.
+          mkdir -p vendor/platformio_packages
+          pip install --target vendor/platformio_packages platformio
+          # Remove .dist-info to save space (not needed at runtime)
+          find vendor/platformio_packages -name "*.dist-info" -type d -exec rm -rf {} + 2>/dev/null || true
+          echo "PlatformIO Core packages bundled:"
+          ls vendor/platformio_packages/ | head -30
+          echo "Total size:"
+          du -sh vendor/platformio_packages/
 
       - name: Download ESP32 toolchain for offline use
         if: steps.cache-toolchain.outputs.cache-hit != 'true'
@@ -124,9 +141,11 @@ jobs:
 
           # NOTE: We do NOT copy penv (PlatformIO's Python virtualenv).
           # penv is tied to the CI machine's Python path and is NOT portable.
-          # Instead, PlatformIO Core is auto-installed via pip using the user's Python.
-          # The bundled packages + platforms are used by setting PLATFORMIO_CORE_DIR
-          # so PlatformIO knows where to find the toolchain without downloading.
+          # Instead, PlatformIO Core Python packages are bundled via pip install --target
+          # into vendor/platformio_packages/ (see the "Bundle PlatformIO Core" step above).
+          # At runtime, PYTHONPATH points to vendor/platformio_packages/ so
+          # `python -m platformio` works without any pip install on the user's machine.
+          # PLATFORMIO_CORE_DIR points to vendor/platformio_cache/ for the toolchain.
 
           echo "=== Vendor directory contents ==="
           du -sh vendor/platformio_cache/packages/* || echo "No packages"
@@ -146,6 +165,11 @@ jobs:
             echo "✓ framework-arduinoespressif32 present"
           else
             echo "⚠ framework-arduinoespressif32 MISSING — offline compilation may not work"
+          fi
+          if [ -d "vendor/platformio_packages/platformio" ]; then
+            echo "✓ PlatformIO Core Python packages present"
+          else
+            echo "⚠ PlatformIO Core Python packages MISSING — offline compilation may not work"
           fi
 
       # ── Build the IDE ──────────────────────────────────────────────────
@@ -310,10 +334,27 @@ jobs:
         id: cache-toolchain
         uses: actions/cache@v4
         with:
-          path: vendor/platformio_cache
-          key: pio-esp32-toolchain-linux-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
+          path: |
+            vendor/platformio_cache
+            vendor/platformio_packages
+          key: pio-esp32-full-linux-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
           restore-keys: |
-            pio-esp32-toolchain-linux-
+            pio-esp32-full-linux-
+
+      - name: Bundle PlatformIO Core Python packages
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          # Install PlatformIO Core AND all its Python dependencies into vendor/platformio_packages/
+          # At runtime, PYTHONPATH will point here so `python -m platformio` works WITHOUT pip install.
+          mkdir -p vendor/platformio_packages
+          pip install --target vendor/platformio_packages platformio
+          # Remove .dist-info to save space (not needed at runtime)
+          find vendor/platformio_packages -name "*.dist-info" -type d -exec rm -rf {} + 2>/dev/null || true
+          echo "PlatformIO Core packages bundled:"
+          ls vendor/platformio_packages/ | head -30
+          echo "Total size:"
+          du -sh vendor/platformio_packages/
 
       - name: Download ESP32 toolchain for offline use
         if: steps.cache-toolchain.outputs.cache-hit != 'true'
@@ -354,9 +395,11 @@ jobs:
 
           # NOTE: We do NOT copy penv (PlatformIO's Python virtualenv).
           # penv is tied to the CI machine's Python path and is NOT portable.
-          # Instead, PlatformIO Core is auto-installed via pip using the user's Python.
-          # The bundled packages + platforms are used by setting PLATFORMIO_CORE_DIR
-          # so PlatformIO knows where to find the toolchain without downloading.
+          # Instead, PlatformIO Core Python packages are bundled via pip install --target
+          # into vendor/platformio_packages/ (see the "Bundle PlatformIO Core" step above).
+          # At runtime, PYTHONPATH points to vendor/platformio_packages/ so
+          # `python -m platformio` works without any pip install on the user's machine.
+          # PLATFORMIO_CORE_DIR points to vendor/platformio_cache/ for the toolchain.
 
           echo "=== Vendor directory contents ==="
           du -sh vendor/platformio_cache/packages/* || echo "No packages"
@@ -375,6 +418,11 @@ jobs:
             echo "✓ framework-arduinoespressif32 present"
           else
             echo "⚠ framework-arduinoespressif32 MISSING — offline compilation may not work"
+          fi
+          if [ -d "vendor/platformio_packages/platformio" ]; then
+            echo "✓ PlatformIO Core Python packages present"
+          else
+            echo "⚠ PlatformIO Core Python packages MISSING — offline compilation may not work"
           fi
 
       # ── Build the IDE ──────────────────────────────────────────────────
@@ -748,7 +796,7 @@ jobs:
             - **Android**: `AironeIDE.apk` — Android app (signed)
 
             ### Offline Compilation
-            The Windows and Linux installers include the full PlatformIO Core + ESP32 toolchain (Xtensa compiler, Arduino framework, esptool) bundled inside. **No internet connection is needed to compile .airo code.** The only prerequisite is **Python 3.8+** installed on the user's machine.
+            The Windows and Linux installers include the **full PlatformIO Core + ESP32 toolchain** (Xtensa compiler, Arduino framework, esptool) bundled inside. **No internet connection and no pip install is needed to compile .airo code.** The only prerequisite is **Python 3.8+** installed on the user's machine. PlatformIO runs directly from the bundled Python packages.
 
             ### Android App
             The Android app bundles a pre-built Node.js runtime (from Termux) and the Theia backend.
