@@ -974,22 +974,19 @@ export class AiroTranspiler {
             // ── pin_ref (bare reference) ──────────────────────────────
             case 'pin_ref': {
                 // Outside read_for/actfor, a bare pin reference is ambiguous.
-                // For input pins, do a read; for output pins, toggle/activate.
+                // For input pins, do a read; for output pins, activate.
                 const pinDef = ctx.pins.find(p => p.name === stmt.pin);
                 if (pinDef && pinDef.mode === 'input') {
                     return this.generatePinRead(stmt.pin, indent, ctx);
                 } else if (pinDef && pinDef.mode === 'output') {
                     if (servoPins.includes(pinDef)) {
-                        // For servos: check if there's a variable with the pin name to use as angle
-                        const servoVar = ctx.variables.find(v => v.name === stmt.pin + '_angle');
-                        if (servoVar) {
-                            return `${I(0)}servo_${stmt.pin}.write(${stmt.pin}_angle);`;
-                        }
-                        // Default: use 90° as center/neutral position
-                        return `${I(0)}servo_${stmt.pin}.write(90); // default neutral angle`;
+                        // For servos: look for a user-defined variable to use as the angle.
+                        // Checks: pin_angle, pin (int variable), then defaults to 90° neutral.
+                        const resolvedAngle = this.resolveServoDefault(stmt.pin, ctx);
+                        return `${I(0)}servo_${stmt.pin}.write(${resolvedAngle});`;
                     }
-                    // For digital output: toggle (activate)
-                    return `${I(0)}digitalWrite(pin_${stmt.pin}, HIGH); // activate`;
+                    // For digital output: activate (write HIGH)
+                    return `${I(0)}digitalWrite(pin_${stmt.pin}, HIGH);`;
                 }
                 return `${I(0)}// pin_ref: ${stmt.pin}`;
             }
@@ -1019,7 +1016,7 @@ export class AiroTranspiler {
     /**
      * Generate C++ code to actuate a pin (used in actfor blocks).
      *
-     * For output pins: writes HIGH for digital, neutral angle for servo.
+     * For output pins: writes HIGH for digital, angle for servo (from variable or default).
      * For input pins: reads the pin value (same as generatePinRead).
      *
      * NOTE: Bare pin references in actfor use default activation values.
@@ -1034,14 +1031,11 @@ export class AiroTranspiler {
 
         if (pinDef.mode === 'output') {
             if (servoPins.includes(pinDef)) {
-                // Check if there's an angle variable for this servo
-                const servoVar = ctx.variables.find(v => v.name === pinName + '_angle');
-                if (servoVar) {
-                    return `${I(0)}servo_${pinName}.write(${pinName}_angle);`;
-                }
-                return `${I(0)}servo_${pinName}.write(90); // default neutral angle`;
+                // For servos: look for a user-defined variable to use as the angle.
+                const resolvedAngle = this.resolveServoDefault(pinName, ctx);
+                return `${I(0)}servo_${pinName}.write(${resolvedAngle});`;
             } else {
-                return `${I(0)}digitalWrite(pin_${pinName}, HIGH); // activate`;
+                return `${I(0)}digitalWrite(pin_${pinName}, HIGH);`;
             }
         }
 
@@ -1050,6 +1044,29 @@ export class AiroTranspiler {
     }
 
     // ─── Translation Helpers ───────────────────────────────────────────────
+
+    /**
+     * Resolve the default angle for a servo pin.
+     *
+     * Priority:
+     *  1. Variable named `<pin>_angle` (e.g., `servo_pin_angle`)
+     *  2. Variable named the same as the pin (e.g., `servo_pin`) if it's a non-string variable
+     *  3. Hardcoded default: 90 (neutral/center position)
+     */
+    private resolveServoDefault(pinName: string, ctx: GenContext): string {
+        // Check for <pin>_angle variable
+        const angleVar = ctx.variables.find(v => v.name === pinName + '_angle');
+        if (angleVar) {
+            return `${pinName}_angle`;
+        }
+        // Check for a variable with the exact pin name (non-string)
+        const pinVar = ctx.variables.find(v => v.name === pinName && !v.isString);
+        if (pinVar) {
+            return pinName;
+        }
+        // Default: 90° center/neutral position
+        return '90';
+    }
 
     /** Translate a .airo condition expression to a C++ expression. */
     private translateCondition(condition: string, pins: ParsedPin[]): string {

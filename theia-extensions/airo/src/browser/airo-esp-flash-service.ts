@@ -8,6 +8,7 @@
  ********************************************************************************/
 
 import { injectable } from '@theia/core/shared/inversify';
+import { ESP_VENDOR_IDS, DEFAULT_FLASH_BAUD_RATE } from '../common/airo-protocol';
 
 /**
  * Result of an ESP flash operation.
@@ -119,13 +120,6 @@ export class AiroEspFlashService {
     isEspPort(port: SerialPort): boolean {
         const info = port.getInfo();
         const vid = (info.vendorId || '').toLowerCase().replace(/^0x/, '');
-        const ESP_VENDOR_IDS = new Set([
-            '10c4',  // Silicon Labs CP210x
-            '1a86',  // QinHeng CH340 / CH9102
-            '0403',  // FTDI FT232
-            '303a',  // Espressif built-in USB (ESP32-S2/S3/C3 native USB)
-            '2e8a',  // Raspberry Pi Pico (RP2040 running ESP firmware)
-        ]);
         return ESP_VENDOR_IDS.has(vid);
     }
 
@@ -200,7 +194,7 @@ export class AiroEspFlashService {
             // Create the ESP loader with terminal output callbacks
             const esploader = new ESPLoader({
                 transport,
-                baudrate: 460800, // High speed for flashing
+                baudrate: DEFAULT_FLASH_BAUD_RATE, // High speed for flashing
                 terminal: {
                     clean: () => { /* no-op */ },
                     writeLine: (data: string) => {

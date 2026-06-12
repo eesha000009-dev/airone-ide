@@ -174,3 +174,55 @@ Stage Summary:
 - Board reset uses `after('hard_reset')` instead of non-existent `hardReset()`
 - GettingStarted import uses require() for optional peer dependency
 - airo extension now compiles cleanly
+---
+Task ID: 1-10
+Agent: Main Agent
+Task: PlatformIO migration, esptool-js main process flash, transpiler fixes, proprietary licensing, README update, and push to GitHub
+
+Work Log:
+- Fixed actfor(0) bug: now acts once without loop, same as read_for(0)
+- Extracted generatePinActuate() method in transpiler for cleaner code
+- Completely rewrote airo-compiler-service.ts: replaced Arduino CLI with PlatformIO
+- Added platformio.ini generator from .airo project config
+- Added PlatformIO vendor bundling support (PLATFORMIO_CORE_DIR, PLATFORMIO_SETTING_FORCE_OFFLINE)
+- Created node-serial-adapter.ts: Web Serial API adapter for Node serialport
+- Rewrote airo-upload-service.ts: esptool-js primary method, esptool.py fallback
+- Added 3-file flash support: bootloader.bin + partitions.bin + firmware.bin
+- Updated electron-builder.yml: added vendor/ to extraResources
+- Updated copyright headers: MIT → Airone Proprietary License (all 16 files)
+- Rewrote README.md: removed Theia boilerplate, added Airone IDE docs
+- Removed all Arduino CLI references from UI messages and comments
+- Fixed TypeScript errors: readonly locked property, implicit any types
+- Committed and pushed to GitHub (commit 2cb2225)
+
+Stage Summary:
+- PlatformIO is now the compilation backend (replaces Arduino CLI)
+- esptool-js flash works in Electron main process via Node serialport adapter
+- 3-file flash supported (bootloader + partitions + firmware)
+- actfor(0) bug fixed
+- All source files are now proprietary licensed
+- README reflects Airone IDE (not Theia)
+- Pushed to origin/master
+
+---
+Task ID: 1-6
+Agent: Main Agent
+Task: Fix transpiler bugs, fix licensing (NOT open source), fix README, ensure PlatformIO auto-installs, build, push
+
+Work Log:
+- Fixed read_for(0) bug: output pin bare refs were silently dropped by generatePinRead (returned comment). Now routes through generateStmt for non-input pins.
+- Fixed actfor bare pin ref: improved with servo angle variable support and better comments
+- Fixed pin_write servo HIGH/LOW: no longer maps HIGH→180°/LOW→0° for servos. HIGH/LOW on servo pins now uses digitalWrite instead.
+- Changed all package.json license fields from "MIT" to "UNLICENSED" (7 files)
+- Replaced LICENSE, applications/electron/LICENSE, applications/electron/resources/LICENSE from MIT to proprietary Airone license
+- Rewrote README.md: removed "Offline Toolchain Bundling" manual steps, clarified PlatformIO auto-installs on first compile (only Python prerequisite), updated license section
+- Verified PlatformIO auto-install logic in compiler service is solid (findPlatformIO checks bundled/PATH/module, ensurePlatformIO auto-installs via pip)
+- Built all 4 extensions successfully with lerna
+- Committed and pushed to origin/master (commit a91fc9e)
+
+Stage Summary:
+- Transpiler bugs fixed: read_for output pins preserved, servo HIGH/LOW corrected, actfor improved
+- License corrected everywhere: MIT → UNLICENSED/proprietary (NOT open source)
+- README updated: PlatformIO auto-installs, no manual steps needed
+- All extensions build successfully
+- Changes pushed to GitHub

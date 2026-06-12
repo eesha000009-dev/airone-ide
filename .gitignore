@@ -14,6 +14,12 @@ license-check-summary.txt*
 .prompts
 **/test-screenshots
 
+# PlatformIO toolchain cache — downloaded by CI during build, not committed.
+# The vendor/ directory is populated by GitHub Actions with the ESP32
+# compiler toolchain and PlatformIO Core for offline compilation.
+# electron-builder packages it from here into the installer.
+vendor/platformio_cache/
+
 # Android build outputs
 applications/browser/android/app/build/
 applications/browser/android/.gradle/
@@ -27,3 +33,4 @@ applications/browser/android/app/src/main/assets/nodejs/lib/
 # Keystore (should be stored as GitHub secret, not in repo)
 # Uncomment the line below for production:
 # applications/browser/android-signing/upload/
+tool-results/

@@ -14,15 +14,13 @@ Airone IDE is a professional desktop IDE for ESP32 development, built on the Ecl
 
 - **Custom `.airo` Language** — A high-level, beginner-friendly language that transpiles to C++ for ESP32. Define pins, read sensors, control actuators, and connect to AI brain servers — all with simple, readable syntax.
 
-- **PlatformIO Integration** — Built-in PlatformIO support for compiling ESP32 firmware. PlatformIO auto-installs on first compile — **no separate installation needed**. Only Python is required as a prerequisite.
+- **Fully Offline Compilation** — PlatformIO Core and the ESP32 toolchain (Xtensa compiler, Arduino framework, esptool) are **bundled inside the installer**. No internet connection is needed after installation. **The only prerequisite is Python 3.8+** — users do NOT need to install PlatformIO separately.
 
-- **One-Click Flash** — Flash compiled firmware directly to your ESP32 board via USB. Uses esptool-js for Python-free flashing, with esptool.py as a fallback. Supports full 3-file flash (bootloader + partitions + firmware).
+- **One-Click Flash** — Flash compiled firmware directly to your ESP32 board via USB. Uses esptool-js (pure JavaScript, no Python needed for flashing) with esptool.py as a fallback. Supports full 3-file flash (bootloader + partitions + firmware).
 
 - **Serial Monitor** — Built-in serial monitor with real-time data display, ESP32 auto-detection, and configurable baud rates.
 
 - **AI Brain Integration** — Connect your ESP32 robot to an AI brain server via WebSocket. The `.airo` language has native support for `senddatato` and `brain_url` directives.
-
-- **Offline Capable** — Bundle PlatformIO Core and the ESP32 toolchain inside the app for fully offline compilation. When bundled, the IDE works completely offline after initial setup.
 
 ---
 
@@ -42,7 +40,7 @@ Airone IDE is a professional desktop IDE for ESP32 development, built on the Ecl
 
 ### Prerequisites
 
-- **Python 3.8+** — The only external prerequisite. PlatformIO and the ESP32 toolchain are auto-installed by the IDE.
+- **Python 3.8+** — The only external prerequisite. Everything else (PlatformIO, ESP32 toolchain, esptool) is bundled inside the app.
 
 ### Installation
 
@@ -52,7 +50,7 @@ Download the latest installer from the [Releases](https://github.com/eesha000009
 
 1. **Create a new `.airo` file** — File → New File, choose `.airo` extension
 2. **Write your code** — Use the `.airo` language to define pins and behavior
-3. **Compile** — Click the compile button. On first compile, the IDE automatically installs PlatformIO and the ESP32 toolchain via pip.
+3. **Compile** — Click the compile button. The IDE uses the bundled PlatformIO and ESP32 toolchain — no internet required.
 4. **Connect your board** — Plug in your ESP32 via USB
 5. **Upload** — Click the upload button to flash firmware
 
@@ -98,7 +96,7 @@ loop {
 .airo file
     ↓ (transpiler)
 C++ Arduino/ESP32 code
-    ↓ (PlatformIO — auto-installed)
+    ↓ (PlatformIO — bundled, offline)
 firmware.bin + bootloader.bin + partitions.bin
     ↓ (esptool-js / esptool.py)
 ESP32 board
@@ -108,7 +106,20 @@ ESP32 board
 
 1. **Built-in syntax check** — Fast TypeScript-based syntax validation
 2. **Transpiler** — Converts `.airo` to C++ Arduino/ESP32 code
-3. **PlatformIO build** — Compiles C++ into firmware binaries using the ESP32 toolchain. PlatformIO is auto-installed on first use.
+3. **PlatformIO build** — Compiles C++ into firmware binaries using the **bundled** ESP32 toolchain. No installation required — PlatformIO Core and the Xtensa compiler are embedded inside the app.
+
+### Offline Bundling
+
+The installer includes:
+
+| Component | Purpose | Approx. Size |
+|-----------|---------|-------------|
+| PlatformIO Core | Python-based build system | ~50 MB |
+| toolchain-xtensa-esp32 | Xtensa C/C++ compiler | ~300 MB |
+| framework-arduinoespressif32 | Arduino ESP32 core & libraries | ~200 MB |
+| tool-esptoolpy | ESP32 flash tool (fallback) | ~5 MB |
+
+When the user clicks **Compile**, the IDE sets `PLATFORMIO_CORE_DIR` and `PLATFORMIO_SETTING_FORCE_OFFLINE=true` to ensure PlatformIO reads exclusively from the bundled toolchain — no network requests are made.
 
 ### Flash Methods
 
@@ -135,6 +146,16 @@ yarn build
 # Package the Electron app
 yarn package:applications
 ```
+
+### CI/CD
+
+GitHub Actions automatically builds installers for Windows, Linux, and Android. The CI pipeline:
+
+1. Installs PlatformIO Core via pip
+2. Downloads the ESP32 toolchain (Xtensa compiler + Arduino framework)
+3. Copies the toolchain into `vendor/platformio_cache/`
+4. Builds the Electron app with `electron-builder` (which includes `vendor/` as `extraResources`)
+5. Produces platform-specific installers with the bundled toolchain
 
 ---
 

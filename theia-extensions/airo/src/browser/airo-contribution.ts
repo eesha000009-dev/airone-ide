@@ -35,7 +35,9 @@ import {
     AiroSerialClient,
     AiroUploadClient,
     BoardInfo,
-    SerialPortInfo
+    SerialPortInfo,
+    CHIP_FLASH_OFFSETS,
+    RELEASES_URL
 } from '../common/airo-protocol';
 import { AiroEspFlashService } from './airo-esp-flash-service';
 
@@ -722,13 +724,9 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
         channel.append('A port selection dialog will appear. Select your ESP32 board.\n');
 
         try {
-            // Determine flash offset based on board type
-            let flashAddress = 0x10000; // Default for ESP32
-            if (chipType === 'esp32s3' || chipType === 'esp32c3') {
-                flashAddress = 0x0;
-            } else if (chipType === 'esp8266') {
-                flashAddress = 0x10000;
-            }
+            // Determine flash offset based on chip type (from shared constants)
+            const offsets = CHIP_FLASH_OFFSETS[chipType] || CHIP_FLASH_OFFSETS['esp32'];
+            const flashAddress = parseInt(offsets.firmware, 16);
 
             if (binaryPath) {
                 // Read the binary file from the backend via RPC
@@ -1138,14 +1136,14 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                                 this.messageService.info('Airone IDE — Checking for updates...');
                             }
                         } else if (checkAnswer?.label === 'Download from GitHub') {
-                            window.open('https://github.com/eesha000009-dev/airone-ide/releases', '_blank');
+                            window.open(RELEASES_URL, '_blank');
                         }
                     }
                 } catch (err: unknown) {
                     const message = err instanceof Error ? err.message : String(err);
                     this.messageService.info(
                         'Could not check for updates. ' +
-                        'Visit https://github.com/eesha000009-dev/airone-ide/releases to download the latest version. ' +
+                        `Visit ${RELEASES_URL} to download the latest version. ` +
                         (message ? `(${message})` : '')
                     );
                 }

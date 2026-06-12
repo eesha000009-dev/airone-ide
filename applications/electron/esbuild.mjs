@@ -34,6 +34,31 @@ const asarRipgrepPlugin = {
 // Add asar ripgrep plugin before the native dependencies plugin so it takes precedence
 nodeOptions.plugins.unshift(asarRipgrepPlugin);
 
+// Native Node.js modules that cannot be bundled by esbuild.
+// serialport is a native addon (C++ binding) used by the Airone backend for
+// serial port communication with ESP32 boards. It is dynamically require()'d
+// with try/catch fallback, so marking it external is safe.
+const NATIVE_EXTERNALS = [
+    'serialport',
+    '@serialport/parser-readline',
+    '@serialport/stream',
+    '@serialport/bindings-cpp',
+];
+
+// Add native modules as external to the node and electron bundles
+for (const opts of [nodeOptions, electronOptions]) {
+    if (!opts.external) {
+        opts.external = [];
+    }
+    if (Array.isArray(opts.external)) {
+        for (const ext of NATIVE_EXTERNALS) {
+            if (!opts.external.includes(ext)) {
+                opts.external.push(ext);
+            }
+        }
+    }
+}
+
 const browserContext = await esbuild.context(browserOptions);
 const nodeContext = await esbuild.context(nodeOptions);
 const electronContext = await esbuild.context(electronOptions);

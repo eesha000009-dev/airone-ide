@@ -27,11 +27,22 @@ on:
 permissions:
   contents: write
 
+# ─── Shared Environment Variables ────────────────────────────────────────────
+# PlatformIO Core and ESP32 toolchain versions — update these to change the
+# bundled offline compilation toolchain.  Users only need Python; everything
+# below is downloaded by CI and baked into the installer.
+env:
+  PLATFORMIO_VERSION: ">=6.1"
+  ESP32_PLATFORM_VERSION: "espressif32"
+
 jobs:
+  # ══════════════════════════════════════════════════════════════════════════
+  #  Windows Build
+  # ══════════════════════════════════════════════════════════════════════════
   build-windows:
     name: Windows Build
     runs-on: windows-2022
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
@@ -50,6 +61,99 @@ jobs:
         with:
           python-version: "3.13"
 
+      # ── PlatformIO + ESP32 Offline Toolchain ───────────────────────────
+      # Install PlatformIO Core, then download the ESP32 toolchain packages
+      # (compiler + Arduino framework) so they can be bundled inside the
+      # Electron app for fully offline compilation.  Users will NOT need to
+      # install PlatformIO themselves — only Python is required.
+      - name: Install PlatformIO Core
+        run: |
+          python -m pip install --upgrade pip
+          pip install -U platformio
+
+      - name: Cache ESP32 toolchain
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: vendor/platformio_cache
+          key: pio-esp32-toolchain-win-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
+          restore-keys: |
+            pio-esp32-toolchain-win-
+
+      - name: Download ESP32 toolchain for offline use
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          echo "Downloading ESP32 toolchain packages via PlatformIO..."
+          # Create a temporary project to force PlatformIO to download toolchain
+          TMPDIR=$(mktemp -d)
+          cat > "$TMPDIR/platformio.ini" << 'EOF'
+          [env:esp32dev]
+          platform = espressif32
+          board = esp32dev
+          framework = arduino
+          EOF
+          mkdir -p "$TMPDIR/src"
+          echo "void setup() {} void loop() {}" > "$TMPDIR/src/main.cpp"
+          pio run -d "$TMPDIR" -e esp32dev || true
+
+          # Copy the downloaded packages into vendor/
+          mkdir -p vendor/platformio_cache/packages
+          if [ -d "$USERPROFILE/.platformio/packages/toolchain-xtensa-esp32" ]; then
+            cp -r "$USERPROFILE/.platformio/packages/toolchain-xtensa-esp32" vendor/platformio_cache/packages/
+            echo "✓ Copied toolchain-xtensa-esp32"
+          fi
+          if [ -d "$USERPROFILE/.platformio/packages/framework-arduinoespressif32" ]; then
+            cp -r "$USERPROFILE/.platformio/packages/framework-arduinoespressif32" vendor/platformio_cache/packages/
+            echo "✓ Copied framework-arduinoespressif32"
+          fi
+          if [ -d "$USERPROFILE/.platformio/packages/tool-esptoolpy" ]; then
+            cp -r "$USERPROFILE/.platformio/packages/tool-esptoolpy" vendor/platformio_cache/packages/
+            echo "✓ Copied tool-esptoolpy"
+          fi
+          if [ -d "$USERPROFILE/.platformio/packages/tool-mkspiffs" ]; then
+            cp -r "$USERPROFILE/.platformio/packages/tool-mkspiffs" vendor/platformio_cache/packages/
+            echo "✓ Copied tool-mkspiffs"
+          fi
+          if [ -d "$USERPROFILE/.platformio/packages/tool-mklittlefs" ]; then
+            cp -r "$USERPROFILE/.platformio/packages/tool-mklittlefs" vendor/platformio_cache/packages/
+            echo "✓ Copied tool-mklittlefs"
+          fi
+
+          # Copy PlatformIO Core itself (the Python package)
+          mkdir -p vendor/platformio_cache/penv
+          if [ -d "$USERPROFILE/.platformio/penv" ]; then
+            cp -r "$USERPROFILE/.platformio/penv" vendor/platformio_cache/
+            echo "✓ Copied PlatformIO Core virtual environment"
+          fi
+
+          # Copy platforms directory
+          if [ -d "$USERPROFILE/.platformio/platforms" ]; then
+            cp -r "$USERPROFILE/.platformio/platforms" vendor/platformio_cache/
+            echo "✓ Copied PlatformIO platforms"
+          fi
+
+          echo "=== Vendor directory contents ==="
+          du -sh vendor/platformio_cache/packages/* || echo "No packages"
+          echo "Total vendor size:"
+          du -sh vendor/platformio_cache || echo "No vendor"
+
+      - name: Verify offline toolchain
+        shell: bash
+        run: |
+          echo "Verifying bundled toolchain..."
+          if [ -d "vendor/platformio_cache/packages/toolchain-xtensa-esp32" ]; then
+            echo "✓ toolchain-xtensa-esp32 present"
+          else
+            echo "⚠ toolchain-xtensa-esp32 MISSING — offline compilation may not work"
+          fi
+          if [ -d "vendor/platformio_cache/packages/framework-arduinoespressif32" ]; then
+            echo "✓ framework-arduinoespressif32 present"
+          else
+            echo "⚠ framework-arduinoespressif32 MISSING — offline compilation may not work"
+          fi
+
+      # ── Build the IDE ──────────────────────────────────────────────────
       - name: Install airo_compiler (optional)
         shell: bash
         run: pip install airo-compiler 2>/dev/null || echo "airo_compiler not available on PyPI yet, using built-in TypeScript verifier"
@@ -71,25 +175,15 @@ jobs:
           else
             echo "Electron binary not found, downloading directly..."
             mkdir -p node_modules/electron/dist
-          cat > /tmp/download_electron.sh << 'SCRIPT'
-          #!/bin/bash
-          set -e
-          VERSION="v39.8.7"
-          DIST_DIR="node_modules/electron/dist"
-          if [ "$RUNNER_OS" = "Windows" ]; then
+            VERSION="v39.8.7"
             FILE="electron-${VERSION}-win32-x64.zip"
-          else
-            FILE="electron-${VERSION}-linux-x64.zip"
-          fi
-          URL="https://github.com/electron/electron/releases/download/${VERSION}/${FILE}"
-          echo "Downloading ${URL}..."
-          curl -L --retry 3 -o /tmp/electron.zip "${URL}"
-          echo "Extracting to ${DIST_DIR}..."
-          unzip -o /tmp/electron.zip -d "${DIST_DIR}"
-          echo "${VERSION#v}" > "${DIST_DIR}/version"
-          echo "Downloaded Electron ${VERSION}"
-          SCRIPT
-          bash /tmp/download_electron.sh
+            URL="https://github.com/electron/electron/releases/download/${VERSION}/${FILE}"
+            echo "Downloading ${URL}..."
+            curl -L --retry 3 -o /tmp/electron.zip "${URL}"
+            echo "Extracting..."
+            unzip -o /tmp/electron.zip -d node_modules/electron/dist
+            echo "39.8.7" > node_modules/electron/dist/version
+            echo "Downloaded Electron ${VERSION}"
           fi
           echo "Final Electron version: $(cat node_modules/electron/dist/version 2>/dev/null || echo 'FAILED')"
 
@@ -181,10 +275,13 @@ jobs:
             applications/electron/dist/*.exe
           retention-days: 5
 
+  # ══════════════════════════════════════════════════════════════════════════
+  #  Linux Build
+  # ══════════════════════════════════════════════════════════════════════════
   build-linux:
     name: Linux Build
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
@@ -208,6 +305,81 @@ jobs:
         with:
           python-version: "3.13"
 
+      # ── PlatformIO + ESP32 Offline Toolchain ───────────────────────────
+      - name: Install PlatformIO Core
+        run: |
+          python -m pip install --upgrade pip
+          pip install -U platformio
+
+      - name: Cache ESP32 toolchain
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: vendor/platformio_cache
+          key: pio-esp32-toolchain-linux-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
+          restore-keys: |
+            pio-esp32-toolchain-linux-
+
+      - name: Download ESP32 toolchain for offline use
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: |
+          echo "Downloading ESP32 toolchain packages via PlatformIO..."
+          # Create a temporary project to force PlatformIO to download toolchain
+          TMPDIR=$(mktemp -d)
+          cat > "$TMPDIR/platformio.ini" << 'EOF'
+          [env:esp32dev]
+          platform = espressif32
+          board = esp32dev
+          framework = arduino
+          EOF
+          mkdir -p "$TMPDIR/src"
+          echo "void setup() {} void loop() {}" > "$TMPDIR/src/main.cpp"
+          pio run -d "$TMPDIR" -e esp32dev || true
+
+          # Copy the downloaded packages into vendor/
+          mkdir -p vendor/platformio_cache/packages
+          PIO_HOME="$HOME/.platformio"
+
+          for pkg in toolchain-xtensa-esp32 framework-arduinoespressif32 tool-esptoolpy tool-mkspiffs tool-mklittlefs; do
+            if [ -d "$PIO_HOME/packages/$pkg" ]; then
+              cp -r "$PIO_HOME/packages/$pkg" vendor/platformio_cache/packages/
+              echo "✓ Copied $pkg"
+            fi
+          done
+
+          # Copy PlatformIO Core itself (the Python virtual environment)
+          mkdir -p vendor/platformio_cache/penv
+          if [ -d "$PIO_HOME/penv" ]; then
+            cp -r "$PIO_HOME/penv" vendor/platformio_cache/
+            echo "✓ Copied PlatformIO Core virtual environment"
+          fi
+
+          # Copy platforms directory
+          if [ -d "$PIO_HOME/platforms" ]; then
+            cp -r "$PIO_HOME/platforms" vendor/platformio_cache/
+            echo "✓ Copied PlatformIO platforms"
+          fi
+
+          echo "=== Vendor directory contents ==="
+          du -sh vendor/platformio_cache/packages/* || echo "No packages"
+          echo "Total vendor size:"
+          du -sh vendor/platformio_cache || echo "No vendor"
+
+      - name: Verify offline toolchain
+        run: |
+          echo "Verifying bundled toolchain..."
+          if [ -d "vendor/platformio_cache/packages/toolchain-xtensa-esp32" ]; then
+            echo "✓ toolchain-xtensa-esp32 present"
+          else
+            echo "⚠ toolchain-xtensa-esp32 MISSING — offline compilation may not work"
+          fi
+          if [ -d "vendor/platformio_cache/packages/framework-arduinoespressif32" ]; then
+            echo "✓ framework-arduinoespressif32 present"
+          else
+            echo "⚠ framework-arduinoespressif32 MISSING — offline compilation may not work"
+          fi
+
+      # ── Build the IDE ──────────────────────────────────────────────────
       - name: Install airo_compiler (optional)
         run: pip install airo-compiler 2>/dev/null || echo "airo_compiler not available on PyPI yet, using built-in TypeScript verifier"
         continue-on-error: true
@@ -319,6 +491,9 @@ jobs:
             applications/electron/dist/latest-linux.yml
           retention-days: 30
 
+  # ══════════════════════════════════════════════════════════════════════════
+  #  Android Build (no PlatformIO — mobile app is browser-only)
+  # ══════════════════════════════════════════════════════════════════════════
   build-android:
     name: Android Build
     runs-on: ubuntu-22.04
@@ -386,21 +561,6 @@ jobs:
         working-directory: applications/browser
         run: npx cap sync android
 
-      # ======================================================================
-      # Download Node.js for Android ARM64 from Termux
-      #
-      # This downloads a pre-built Node.js binary from the Termux package
-      # repository. The binary is dynamically linked against shared libraries
-      # that are also downloaded and bundled.
-      #
-      # The NodeJsBackendService handles:
-      # - Setting LD_LIBRARY_PATH to find the bundled .so files
-      # - Overriding hardcoded Termux paths with environment variables
-      # - Extracting everything from assets to internal storage at runtime
-      #
-      # Total download size: ~87 MB (binary + shared libraries)
-      # This is cached in GitHub Actions cache for subsequent builds.
-      # ======================================================================
       - name: Cache Node.js for Android
         id: cache-nodejs
         uses: actions/cache@v4
@@ -413,8 +573,6 @@ jobs:
         run: |
           chmod +x scripts/download-termux-nodejs.sh
           bash scripts/download-termux-nodejs.sh
-
-          # Copy to cache directory
           mkdir -p /tmp/nodejs-android-assets
           cp -r applications/browser/android/app/src/main/assets/nodejs /tmp/nodejs-android-assets/
 
@@ -426,7 +584,6 @@ jobs:
           cp -r /tmp/nodejs-android-assets/nodejs/* applications/browser/android/app/src/main/assets/nodejs/
           echo "Node.js restored from cache"
           ls -la applications/browser/android/app/src/main/assets/nodejs/bin/
-          ls -la applications/browser/android/app/src/main/assets/nodejs/lib/ 2>/dev/null || echo "No shared libs (standalone binary)"
 
       - name: Verify Node.js assets
         run: |
@@ -434,35 +591,20 @@ jobs:
           NODE_BIN="applications/browser/android/app/src/main/assets/nodejs/bin/node"
           if [ -f "$NODE_BIN" ]; then
             echo "✓ Node.js binary found: $(du -h "$NODE_BIN" | cut -f1)"
-            file "$NODE_BIN" || true
           else
             echo "✗ Node.js binary NOT found - app will work in remote backend mode"
           fi
-          echo ""
-          NODE_LIB_DIR="applications/browser/android/app/src/main/assets/nodejs/lib"
-          if [ -d "$NODE_LIB_DIR" ]; then
-            echo "✓ Shared libraries found:"
-            ls -la "$NODE_LIB_DIR/" | head -20
-          else
-            echo "No shared libraries (standalone binary or no Node.js)"
-          fi
 
-      # ======================================================================
-      # Copy the Theia backend files to Android assets
-      # ======================================================================
       - name: Copy backend files to assets
         run: |
           ASSETS_BACKEND="applications/browser/android/app/src/main/assets/backend"
           mkdir -p "${ASSETS_BACKEND}"
           if [ -d "applications/browser/lib/backend" ]; then
-            echo "Copying Theia backend files..."
             rsync -a --exclude='*.map' --exclude='.git' --exclude='*.md' \
               applications/browser/lib/backend/ "${ASSETS_BACKEND}/"
             echo "Backend files copied:"
             find "${ASSETS_BACKEND}" -type f | head -20
-            echo "Total size: $(du -sh "${ASSETS_BACKEND}" | cut -f1)"
           else
-            echo "WARNING: Backend directory not found (lib/backend/)"
             echo "# Backend files placeholder" > "${ASSETS_BACKEND}/.gitkeep"
           fi
 
@@ -474,7 +616,6 @@ jobs:
           if [ -n "${ANDROID_KEYSTORE_BASE64}" ]; then
             echo "Decoding keystore..."
             echo "${ANDROID_KEYSTORE_BASE64}" | base64 -d > android-signing/airone-ide-release.keystore
-            echo "Keystore decoded successfully"
           else
             echo "No ANDROID_KEYSTORE_BASE64 secret - building debug APK"
           fi
@@ -486,12 +627,11 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          # Try release build first, fall back to debug if signing fails
           echo "Attempting release APK build..."
           if ./gradlew assembleRelease 2>&1; then
             echo "Release APK built successfully"
           else
-            echo "Release build failed (likely signing issue), building debug APK..."
+            echo "Release build failed, building debug APK..."
             ./gradlew assembleDebug
           fi
 
@@ -500,7 +640,6 @@ jobs:
         run: |
           echo "Looking for APK files..."
           find android -name "*.apk" -type f 2>/dev/null
-
           APK_FILE=$(find android -name "*.apk" -type f | head -1)
           if [ -n "${APK_FILE}" ]; then
             mkdir -p dist
@@ -528,6 +667,9 @@ jobs:
           path: applications/browser/dist/AironeIDE.apk
           retention-days: 5
 
+  # ══════════════════════════════════════════════════════════════════════════
+  #  Create GitHub Release
+  # ══════════════════════════════════════════════════════════════════════════
   create-release:
     name: Create GitHub Release
     needs: [build-windows, build-linux, build-android]
@@ -606,6 +748,9 @@ jobs:
             - **Linux**: `AironeIDE.AppImage` — Portable AppImage
             - **Linux**: `AironeIDE.deb` — Debian/Ubuntu package
             - **Android**: `AironeIDE.apk` — Android app (signed)
+
+            ### Offline Compilation
+            The Windows and Linux installers include the full PlatformIO Core + ESP32 toolchain (Xtensa compiler, Arduino framework, esptool) bundled inside. **No internet connection is needed to compile .airo code.** The only prerequisite is **Python 3.8+** installed on the user's machine.
 
             ### Android App
             The Android app bundles a pre-built Node.js runtime (from Termux) and the Theia backend.

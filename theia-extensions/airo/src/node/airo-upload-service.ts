@@ -12,7 +12,7 @@ import { spawn, execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { SerialPortInfo, FlashRequest, FlashResult, CompileResultBinary } from '../common/airo-protocol';
+import { SerialPortInfo, FlashRequest, FlashResult, CompileResultBinary, ESP_VENDOR_IDS, CHIP_FLASH_OFFSETS, TARGET_TO_PIO_BOARD, DEFAULT_FLASH_BAUD_RATE, SUPPORTED_CHIP_TYPES } from '../common/airo-protocol';
 import { AiroCompilerService } from './airo-compiler-service';
 
 // Re-export for convenience so consumers can import from either location
@@ -21,27 +21,6 @@ export { FlashRequest, FlashResult } from '../common/airo-protocol';
 export type ProgressCallback = (percent: number, message: string) => void;
 
 // ─── Configurable Constants ──────────────────────────────────────────────────
-
-/** Known ESP32 USB-to-UART vendor IDs (lowercase hex, no prefix) */
-const ESP_VENDOR_IDS = new Set([
-    '10c4',  // Silicon Labs CP210x
-    '1a86',  // QinHeng CH340 / CH9102
-    '0403',  // FTDI FT232
-    '303a',  // Espressif built-in USB (ESP32-S2/S3/C3 native USB)
-    '2e8a',  // Raspberry Pi Pico (RP2040 running ESP firmware)
-]);
-
-/** Flash offsets for each chip family */
-const CHIP_FLASH_OFFSETS: Record<string, { bootloader: string; partitions: string; firmware: string }> = {
-    esp32:    { bootloader: '0x1000', partitions: '0x8000', firmware: '0x10000' },
-    esp32s2:  { bootloader: '0x1000', partitions: '0x8000', firmware: '0x10000' },
-    esp32s3:  { bootloader: '0x0',    partitions: '0x8000', firmware: '0x10000' },
-    esp32c3:  { bootloader: '0x0',    partitions: '0x8000', firmware: '0x10000' },
-    esp8266:  { bootloader: '0x0',    partitions: '0x0',    firmware: '0x10000' },
-};
-
-/** Default baud rate for flashing */
-const DEFAULT_BAUD_RATE = 460800;
 
 /** Maximum time (ms) to wait for a flash operation to complete */
 const FLASH_TIMEOUT_MS = 120_000;
@@ -318,7 +297,7 @@ export class AiroUploadService {
             return { success: false, output: '', error: `Unsupported chip type: "${request.chipType}". Supported: esp32, esp32s2, esp32s3, esp32c3, esp8266` };
         }
 
-        const baudRate = request.baudRate || DEFAULT_BAUD_RATE;
+        const baudRate = request.baudRate || DEFAULT_FLASH_BAUD_RATE;
         const offsets = CHIP_FLASH_OFFSETS[chipType] || CHIP_FLASH_OFFSETS['esp32'];
 
         // Build the list of files to flash
@@ -516,7 +495,7 @@ export class AiroUploadService {
         }
 
         const offsets = CHIP_FLASH_OFFSETS[chipType] || CHIP_FLASH_OFFSETS['esp32'];
-        const baudRate = request.baudRate || DEFAULT_BAUD_RATE;
+        const baudRate = request.baudRate || DEFAULT_FLASH_BAUD_RATE;
 
         // Build command with 3-file flash support
         const useModule = esptoolCmd.includes('-m esptool');
@@ -632,7 +611,7 @@ export class AiroUploadService {
         const flashRequest: FlashRequest = {
             binaryPath,
             chipType,
-            baudRate: DEFAULT_BAUD_RATE,
+            baudRate: DEFAULT_FLASH_BAUD_RATE,
         };
 
         if (portPath) {
@@ -846,14 +825,7 @@ export class AiroUploadService {
      * Map chip type to PlatformIO board identifier.
      */
     private chipTypeToPioBoard(chipType: string): string {
-        const mapping: Record<string, string> = {
-            esp32: 'esp32dev',
-            esp32s2: 'esp32-s2-saola-1',
-            esp32s3: 'esp32-s3-devkitc-1',
-            esp32c3: 'esp32-c3-devkitm-1',
-            esp8266: 'esp01_1m',
-        };
-        return mapping[chipType.toLowerCase()] || 'esp32dev';
+        return TARGET_TO_PIO_BOARD[chipType.toLowerCase()] || TARGET_TO_PIO_BOARD['esp32'];
     }
 
     /**
@@ -1016,9 +988,8 @@ export class AiroUploadService {
      */
     private normalizeChipType(raw: string): string | undefined {
         const normalized = raw.toLowerCase().replace(/[\s\-_]/g, '');
-        const knownTypes = ['esp32', 'esp32s2', 'esp32s3', 'esp32c3', 'esp8266'];
 
-        if (knownTypes.includes(normalized)) return normalized;
+        if (SUPPORTED_CHIP_TYPES.includes(normalized)) return normalized;
         if (['s2', 's3', 'c3'].includes(normalized)) return `esp32${normalized}`;
 
         return undefined;
