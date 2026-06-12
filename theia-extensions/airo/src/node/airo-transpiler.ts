@@ -646,7 +646,7 @@ export class AiroTranspiler {
             L.push(`${I(3)}Serial.println("[WS] Connected!");`);
             L.push(`${I(3)}break;`);
             L.push(`${I(2)}case WStype_TEXT: {`);
-            L.push(`${I(3)}DynamicJsonDocument _cmd(1024);`);
+            L.push(`${I(3)}JsonDocument _cmd;`);
             L.push(`${I(3)}deserializeJson(_cmd, payload, length);`);
             // Generate command handlers for output pins
             const outputPins = ctx.pins.filter(p => p.mode === 'output');
@@ -797,6 +797,9 @@ export class AiroTranspiler {
                     for (const s of stmt.body) {
                         if (s.kind === 'pin_ref') {
                             L.push(this.generatePinRead(s.pin, indent + 1, ctx));
+                        } else {
+                            // Process all other statements (senddatato, ask, saveto, pin_write, call)
+                            L.push(this.generateStmt(s, indent + 1, ctx));
                         }
                     }
                     L.push(`${I(0)}}`);
@@ -807,6 +810,9 @@ export class AiroTranspiler {
                     for (const s of stmt.body) {
                         if (s.kind === 'pin_ref') {
                             L.push(this.generatePinRead(s.pin, indent + 2, ctx));
+                        } else {
+                            // Process all other statements (senddatato, ask, saveto, pin_write, call)
+                            L.push(this.generateStmt(s, indent + 2, ctx));
                         }
                     }
                     L.push(`${I(2)}yield();`);
@@ -834,6 +840,9 @@ export class AiroTranspiler {
                                 L.push(`${I(2)}digitalWrite(pin_${s.pin}, HIGH);`);
                             }
                         }
+                    } else {
+                        // Process all other statement types (pin_write, ask, senddatato, etc.)
+                        L.push(this.generateStmt(s, indent + 2, ctx));
                     }
                 }
                 L.push(`${I(2)}yield();`);
@@ -865,7 +874,7 @@ export class AiroTranspiler {
                 const L: string[] = [];
                 L.push(`${I(0)}// senddatato(${stmt.urlVar})`);
                 L.push(`${I(0)}{`);
-                L.push(`${I(1)}DynamicJsonDocument _doc(1024);`);
+                L.push(`${I(1)}JsonDocument _doc;`);
                 for (const ip of inputPins) {
                     L.push(`${I(1)}_doc["${ip.name}"] = var_${ip.name};`);
                 }
