@@ -34,9 +34,28 @@ const PIO_BUILD_DIR = '.pio';
  * On Unix, this tries: python3, python.
  * Returns the command that successfully runs, or 'python' as fallback.
  */
+/** Minimum Python version required by PlatformIO */
+const MIN_PYTHON_MAJOR = 3;
+const MIN_PYTHON_MINOR = 8;
+
+/** Diagnostic info collected during PlatformIO detection */
+let pioDetectionDiagnostics: string[] = [];
+
+/**
+ * Find a working Python 3.8+ executable on the system.
+ *
+ * On Windows, this tries: py -3, python, python3, py, and common install paths.
+ * On Unix, this tries: python3, python.
+ * Returns the command that successfully runs Python 3.8+, or 'python3' as fallback.
+ *
+ * IMPORTANT: PlatformIO requires Python 3.8+. The `py` launcher on Windows
+ * may default to Python 2.7 if it's installed, so we check the version.
+ */
 function findWorkingPython(): string {
+    // On Windows, try `py -3` FIRST — it's the most reliable way to get Python 3
+    // via the launcher. Plain `py` might default to Python 2.7.
     const candidates = process.platform === 'win32'
-        ? ['py', 'python', 'python3', 'py -3']
+        ? ['py -3', 'python', 'python3', 'py']
         : ['python3', 'python'];
 
     // Also check common Windows install paths
@@ -77,7 +96,18 @@ function findWorkingPython(): string {
 
     for (const cmd of candidates) {
         try {
-            execSync(`${cmd} --version`, { stdio: 'pipe', timeout: 8000, encoding: 'utf8' });
+            const versionOutput = execSync(`${cmd} --version`, { stdio: 'pipe', timeout: 8000, encoding: 'utf8' }).trim();
+            // Verify it's Python 3.8+
+            const match = versionOutput.match(/Python (\d+)\.(\d+)/);
+            if (match) {
+                const major = parseInt(match[1], 10);
+                const minor = parseInt(match[2], 10);
+                if (major > MIN_PYTHON_MAJOR || (major === MIN_PYTHON_MAJOR && minor >= MIN_PYTHON_MINOR)) {
+                    return cmd;
+                }
+                // Python found but too old — skip
+            }
+            // If we can't parse the version, try it anyway
             return cmd;
         } catch {
             // this candidate doesn't work
@@ -86,6 +116,15 @@ function findWorkingPython(): string {
 
     // Fallback
     return process.platform === 'win32' ? 'python' : 'python3';
+}
+
+/** Get the Python version string for the current pythonPath */
+function getPythonVersion(pythonPath: string): string {
+    try {
+        return execSync(`"${pythonPath}" --version`, { stdio: 'pipe', timeout: 8000, encoding: 'utf8' }).trim();
+    } catch {
+        return 'unknown';
+    }
 }
 
 /** Default Python command per platform */
@@ -273,15 +312,19 @@ export class AiroCompilerService {
             let pioCmd = this.findPlatformIO();
 
             if (!pioCmd) {
+                combinedOutput += '\n✗ Step 3 — PlatformIO not found.\n';
+                combinedOutput += `  Python: ${this.pythonPath} (${getPythonVersion(this.pythonPath)})\n`;
+
+                // Show detailed detection diagnostics
+                const diagnostics = this.getDetectionDiagnostics();
+                combinedOutput += '\n  Detection diagnostics:\n';
+                for (const line of diagnostics) {
+                    combinedOutput += `    ${line}\n`;
+                }
+
+                // Provide actionable advice based on what failed
                 const vendorDir = resolveVendorDir();
                 const packagesDir = resolvePlatformioPackagesDir();
-                const coreDir = resolvePlatformioCoreDir();
-
-                combinedOutput += '\n✗ Step 3 — PlatformIO not found.\n';
-                combinedOutput += `  Vendor dir: ${vendorDir} (${fs.existsSync(vendorDir) ? 'exists' : 'NOT FOUND'})\n`;
-                combinedOutput += `  Bundled packages: ${packagesDir} (${fs.existsSync(path.join(packagesDir, 'platformio')) ? 'exists' : 'NOT FOUND'})\n`;
-                combinedOutput += `  Toolchain cache: ${coreDir} (${fs.existsSync(path.join(coreDir, 'packages')) ? 'exists' : 'NOT FOUND'})\n`;
-                combinedOutput += `  Python: ${this.pythonPath}\n`;
 
                 if (!fs.existsSync(vendorDir)) {
                     combinedOutput += '\n  The PlatformIO toolchain is not bundled with this installation.\n';
@@ -290,8 +333,19 @@ export class AiroCompilerService {
                     combinedOutput += '\n  PlatformIO Core packages are missing from the vendor directory.\n';
                     combinedOutput += '  This may indicate a corrupted installation.\n';
                     combinedOutput += '  Please reinstall Airone IDE.\n';
+                    // Show what IS in the packages dir
+                    if (fs.existsSync(packagesDir)) {
+                        try {
+                            const contents = fs.readdirSync(packagesDir);
+                            combinedOutput += `  Packages dir contents: [${contents.slice(0, 10).join(', ')}]\n`;
+                        } catch { /* ignore */ }
+                    }
                 } else {
-                    combinedOutput += '\n  Python may not be installed or not in PATH.\n';
+                    // Bundled packages exist but Python can't use them
+                    combinedOutput += '\n  PlatformIO packages are bundled but Python cannot import them.\n';
+                    combinedOutput += '  This is likely caused by a Python version mismatch.\n';
+                    combinedOutput += '  PlatformIO requires Python 3.8 or later.\n';
+                    combinedOutput += `  Your Python: ${getPythonVersion(this.pythonPath)}\n`;
                     combinedOutput += '  Please install Python 3.8+ from python.org and restart Airone IDE.\n';
                 }
 
@@ -362,6 +416,12 @@ export class AiroCompilerService {
             return this.cachedPioPath;
         }
 
+        // Reset diagnostics for this detection attempt
+        pioDetectionDiagnostics = [];
+        pioDetectionDiagnostics.push(`Python: ${this.pythonPath} (${getPythonVersion(this.pythonPath)})`);
+        pioDetectionDiagnostics.push(`Bundled packages: ${resolvePlatformioPackagesDir()} (exists: ${isPlatformioBundled()})`);
+        pioDetectionDiagnostics.push(`Vendor dir: ${resolveVendorDir()} (exists: ${fs.existsSync(resolveVendorDir())})`);
+
         // 1. Bundled PlatformIO Core packages (PRIMARY — no pip install needed)
         if (isPlatformioBundled()) {
             const packagesDir = resolvePlatformioPackagesDir();
@@ -372,30 +432,67 @@ export class AiroCompilerService {
                     ? `${packagesDir}${path.delimiter}${existingPythonPath}`
                     : packagesDir;
 
-                execSync(`"${this.pythonPath}" -m platformio --version`, {
+                pioDetectionDiagnostics.push(`Test 1 (bundled): PYTHONPATH="${testEnv.PYTHONPATH}"`);
+
+                const result = execSync(`"${this.pythonPath}" -m platformio --version`, {
                     stdio: 'pipe',
                     encoding: 'utf8',
                     timeout: 10000,
                     env: testEnv,
-                });
+                }).trim();
+                pioDetectionDiagnostics.push(`Test 1 (bundled): SUCCESS — ${result}`);
                 this.cachedPioPath = `${this.pythonPath} -m platformio`;
                 return this.cachedPioPath;
-            } catch {
-                // Bundled packages exist but Python can't use them — Python version mismatch?
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                // Extract the useful part of the error
+                let errorDetail = msg;
+                if (err instanceof Error && 'stderr' in err) {
+                    const stderr = (err as Error & { stderr?: string | Buffer }).stderr;
+                    if (stderr) {
+                        errorDetail = typeof stderr === 'string' ? stderr : stderr.toString('utf8');
+                    }
+                }
+                pioDetectionDiagnostics.push(`Test 1 (bundled): FAILED — ${errorDetail.substring(0, 300)}`);
+
+                // Also try to import platformio directly to get a better error message
+                try {
+                    const importTest = execSync(`"${this.pythonPath}" -c "import sys; sys.path.insert(0, '${packagesDir.replace(/'/g, "\\'")}'); import platformio; print(platformio.__version__)"`, {
+                        stdio: 'pipe',
+                        encoding: 'utf8',
+                        timeout: 10000,
+                        env: { ...process.env, PYTHONPATH: packagesDir },
+                    }).trim();
+                    pioDetectionDiagnostics.push(`Test 1 (direct import): import works — ${importTest}`);
+                } catch (importErr: unknown) {
+                    const importMsg = importErr instanceof Error ? importErr.message : String(importErr);
+                    pioDetectionDiagnostics.push(`Test 1 (direct import): FAILED — ${importMsg.substring(0, 300)}`);
+                }
+            }
+        } else {
+            pioDetectionDiagnostics.push('Test 1 (bundled): SKIPPED — platformio/__init__.py not found');
+            // Check what IS in the packages dir
+            const packagesDir = resolvePlatformioPackagesDir();
+            if (fs.existsSync(packagesDir)) {
+                try {
+                    const contents = fs.readdirSync(packagesDir);
+                    pioDetectionDiagnostics.push(`  packages dir contents: [${contents.slice(0, 10).join(', ')}]`);
+                } catch { /* ignore */ }
             }
         }
 
         // 2. Python module — in case user has PlatformIO installed via pip
         try {
-            execSync(`"${this.pythonPath}" -m platformio --version`, {
+            const result = execSync(`"${this.pythonPath}" -m platformio --version`, {
                 stdio: 'pipe',
                 encoding: 'utf8',
                 timeout: 10000,
-            });
+            }).trim();
+            pioDetectionDiagnostics.push(`Test 2 (pip module): SUCCESS — ${result}`);
             this.cachedPioPath = `${this.pythonPath} -m platformio`;
             return this.cachedPioPath;
         } catch {
-            // not installed as module
+            pioDetectionDiagnostics.push('Test 2 (pip module): FAILED — platformio not installed as Python module');
         }
 
         // 3. System PATH
@@ -403,10 +500,11 @@ export class AiroCompilerService {
             const isWin = process.platform === 'win32';
             const checkCmd = isWin ? 'where' : 'which';
             execSync(`${checkCmd} pio`, { stdio: 'ignore', timeout: 5000 });
+            pioDetectionDiagnostics.push('Test 3 (system PATH): SUCCESS — pio found');
             this.cachedPioPath = 'pio';
             return this.cachedPioPath;
         } catch {
-            // not in PATH
+            pioDetectionDiagnostics.push('Test 3 (system PATH): FAILED — pio not in PATH');
         }
 
         // 4. Python Scripts directory — pip installs pio.exe/python.exe here
@@ -414,8 +512,11 @@ export class AiroCompilerService {
         //    On Unix: ~/.local/bin/pio
         const pythonScriptsPio = this.findPioInPythonScripts();
         if (pythonScriptsPio) {
+            pioDetectionDiagnostics.push(`Test 4 (Python Scripts): SUCCESS — ${pythonScriptsPio}`);
             this.cachedPioPath = pythonScriptsPio;
             return this.cachedPioPath;
+        } else {
+            pioDetectionDiagnostics.push('Test 4 (Python Scripts): FAILED — pio not in Python Scripts directory');
         }
 
         // 5. PlatformIO's own isolated virtualenv (penv) in ~/.platformio
@@ -424,12 +525,20 @@ export class AiroCompilerService {
             ? path.join(pioCoreDir, 'penv', 'Scripts', 'pio.exe')
             : path.join(pioCoreDir, 'penv', 'bin', 'pio');
         if (fs.existsSync(penvPio)) {
+            pioDetectionDiagnostics.push(`Test 5 (penv): SUCCESS — ${penvPio}`);
             this.cachedPioPath = penvPio;
             return this.cachedPioPath;
+        } else {
+            pioDetectionDiagnostics.push('Test 5 (penv): FAILED — penv not found');
         }
 
         this.cachedPioPath = undefined;
         return undefined;
+    }
+
+    /** Get the PlatformIO detection diagnostics from the last findPlatformIO() call */
+    getDetectionDiagnostics(): string[] {
+        return pioDetectionDiagnostics;
     }
 
     /**

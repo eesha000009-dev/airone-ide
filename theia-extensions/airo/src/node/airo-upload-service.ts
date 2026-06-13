@@ -485,7 +485,7 @@ export class AiroUploadService {
         // Locate esptool
         const esptoolCmd = await this.findEsptool();
         if (!esptoolCmd) {
-            return { success: false, output: '', error: 'esptool is not available. Install PlatformIO (pip install platformio) or esptool (pip install esptool).' };
+            return { success: false, output: '', error: 'esptool is not available. PlatformIO and esptool come bundled with Airone IDE. Ensure Python 3.8+ is installed and restart Airone IDE.' };
         }
 
         // Resolve chip type & flash offset
@@ -602,7 +602,7 @@ export class AiroUploadService {
                     success: false,
                     output: compileResult.output,
                     error: 'Firmware binary (.bin) not found. PlatformIO build may have failed. ' +
-                        'Ensure Python and PlatformIO are installed: pip install platformio',
+                        'PlatformIO comes bundled with Airone IDE. Ensure Python 3.8+ is installed and restart Airone IDE.',
                 };
             }
         }

@@ -705,7 +705,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
             binaryPath = compileResult.binaryPath;
 
             if (!binaryPath) {
-                channel.append('⚠ No .bin firmware produced (PlatformIO may not be installed).\n');
+                channel.append('⚠ No .bin firmware produced (PlatformIO not available).\n');
             } else {
                 channel.append(`✓ Firmware binary: ${binaryPath}\n`);
             }
@@ -766,13 +766,12 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 // No binary — tell the user they need to compile first
                 channel.append('✗ No firmware binary (.bin) found.\n');
                 channel.append('  The sketch was compiled to C++, but no .bin firmware was produced.\n');
-                channel.append('  This means PlatformIO is not installed.\n');
-                channel.append('  You can install it manually:\n');
-                channel.append('    1. Install Python 3.8+ from python.org\n');
-                channel.append('    2. Run: pip install platformio\n');
-                channel.append('    3. Then try Upload again.\n');
+                channel.append('  This means PlatformIO is not available.\n');
+                channel.append('  PlatformIO and the ESP32 toolchain come bundled with Airone IDE.\n');
+                channel.append('  The only prerequisite is Python 3.8+ installed on your system.\n');
+                channel.append('  If this issue persists, please reinstall Airone IDE.\n');
                 this.messageService.warn(
-                    'No firmware binary produced. PlatformIO may need to be installed for C++ compilation.'
+                    'No firmware binary produced. Ensure Python 3.8+ is installed and restart Airone IDE.'
                 );
             }
         } catch (err: unknown) {
@@ -793,7 +792,7 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
      * The Compile button produces the .bin firmware file.
      * The Upload button then flashes that .bin file to the ESP32 board.
      *
-     * If PlatformIO is not found, auto-installs it via pip.
+     * If PlatformIO is not found, shows detailed diagnostics.
      */
     protected async compile(): Promise<void> {
         const uri = this.getActiveAiroUri();
@@ -836,10 +835,11 @@ export class AiroContribution implements CommandContribution, MenuContribution, 
                 this.messageService.info('✓ Compilation successful! .bin firmware file created. Click Upload to flash it to your board.');
             } else {
                 channel.append('\n⚠ Compilation partially succeeded — C++ was generated but no .bin firmware was produced.\n');
-                channel.append('  This usually means PlatformIO is not installed.\n');
-                channel.append('  Ensure Python 3 and PlatformIO are installed:\n');
-                channel.append('    pip install platformio\n');
-                this.messageService.warn('Compiled to C++ but no .bin produced. PlatformIO may need to be installed.');
+                channel.append('  This means PlatformIO is not available.\n');
+                channel.append('  PlatformIO and the ESP32 toolchain come bundled with Airone IDE.\n');
+                channel.append('  The only prerequisite is Python 3.8+ installed on your system.\n');
+                channel.append('  If this issue persists, please reinstall Airone IDE.\n');
+                this.messageService.warn('Compiled to C++ but no .bin produced. Ensure Python 3.8+ is installed and restart Airone IDE.');
             }
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
