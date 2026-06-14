@@ -425,10 +425,18 @@ export class AiroCompilerService {
                 };
             }
 
-            // PlatformIO build failed
+            // PlatformIO build failed — show full output for diagnostics
             combinedOutput +=
                 '\n✗ Step 3 — PlatformIO build failed:\n' +
-                `  ${pioResult.error || pioResult.output}\n`;
+                `  ${pioResult.error}\n`;
+            // Also show full PlatformIO output if available (contains verbose details)
+            if (pioResult.output && pioResult.output !== pioResult.error) {
+                combinedOutput += '\n  PlatformIO output:\n';
+                // Indent each line for readability
+                for (const line of pioResult.output.split('\n')) {
+                    combinedOutput += `    ${line}\n`;
+                }
+            }
 
             return {
                 success: true, // C++ was generated even if PlatformIO build failed
@@ -638,12 +646,20 @@ export class AiroCompilerService {
     /**
      * Build environment variables for running PlatformIO with bundled packages.
      *
-     * Sets:
-     * - PYTHONPATH for bundled PlatformIO Core Python packages
-     * - PLATFORMIO_CORE_DIR for the bundled toolchain cache
-     * - PLATFORMIO_SETTING_FORCE_OFFLINE when all components are bundled
-     *   (toolchain + libraries — only force offline when we know everything is available)
-     * - PLATFORMIO_SETTING_ENABLE_TELEMETRY = 'no' to prevent telemetry HTTP requests
+     * IMPORTANT: We do NOT set FORCE_OFFLINE=true. That flag blocks ALL HTTP
+     * requests including library name resolution from the registry, which
+     * causes HTTPClientError even when libraries exist in lib_extra_dirs.
+     *
+     * Instead, we:
+     * - Set PLATFORMIO_CORE_DIR so PlatformIO finds bundled toolchain locally
+     * - Set PYTHONPATH so PlatformIO Core Python packages are found
+     * - Disable update checks and telemetry to minimize HTTP requests
+     * - Use lib_extra_dirs in platformio.ini so PlatformIO uses local libraries
+     *
+     * If the user has internet, PlatformIO can resolve library names from the
+     * registry but will use local copies from lib_extra_dirs (no download).
+     * If the user has no internet, PlatformIO should still work because all
+     * resources are available locally in PLATFORMIO_CORE_DIR.
      */
     private buildPlatformioEnv(): NodeJS.ProcessEnv {
         const env: NodeJS.ProcessEnv = { ...process.env };
@@ -661,18 +677,18 @@ export class AiroCompilerService {
         const coreDir = resolvePlatformioCoreDir();
         env.PLATFORMIO_CORE_DIR = coreDir;
 
-        // Disable telemetry — prevents HTTP requests that cause HTTPClientError
+        // Disable update checks — prevents unnecessary HTTP requests
+        env.PLATFORMIO_SETTING_CHECK_PLATFORMIO_INTERVAL = '0';
+        env.PLATFORMIO_SETTING_CHECK_LIBRARIES_INTERVAL = '0';
+        env.PLATFORMIO_SETTING_CHECK_PRUNE_SYSTEM_INTERVAL = '0';
+
+        // Disable telemetry
         env.PLATFORMIO_SETTING_ENABLE_TELEMETRY = 'no';
 
-        // Force offline mode ONLY when we have ALL bundled components:
-        // toolchain (packages + platforms) AND libraries.
-        // If libraries are missing, PlatformIO needs network access to download them.
-        const vendorDir = resolveVendorDir();
-        const hasToolchain = fs.existsSync(path.join(vendorDir, 'platformio_cache', 'packages'));
-        const hasLibs = hasBundledLibs();
-        if (hasToolchain && hasLibs) {
-            env.PLATFORMIO_SETTING_FORCE_OFFLINE = 'true';
-        }
+        // DO NOT set FORCE_OFFLINE — it blocks library name resolution from
+        // the registry, which causes HTTPClientError. PlatformIO will use
+        // local resources from PLATFORMIO_CORE_DIR and lib_extra_dirs when
+        // available, and only make HTTP requests for name resolution.
 
         return env;
     }
@@ -763,11 +779,11 @@ export class AiroCompilerService {
             if (this.pioUsePythonModule) {
                 // PlatformIO is available as a Python module: python -m platformio run ...
                 command = this.pythonPath;
-                args = ['-m', 'platformio', 'run', '-d', projectDir, '-e', board];
+                args = ['-m', 'platformio', 'run', '-v', '-d', projectDir, '-e', board];
             } else {
                 // PlatformIO is available as a direct command: pio run ...
                 command = pioCmd;
-                args = ['run', '-d', projectDir, '-e', board];
+                args = ['run', '-v', '-d', projectDir, '-e', board];
             }
 
             const proc = spawn(command, args, {
