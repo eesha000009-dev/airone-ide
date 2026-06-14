@@ -78,7 +78,7 @@ jobs:
           path: |
             vendor/platformio_cache
             vendor/platformio_packages
-          key: pio-esp32-full-win-v2-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
+          key: pio-esp32-full-win-v3-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
           restore-keys: |
             pio-esp32-full-win-
 
@@ -391,7 +391,7 @@ jobs:
           path: |
             vendor/platformio_cache
             vendor/platformio_packages
-          key: pio-esp32-full-linux-v2-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
+          key: pio-esp32-full-linux-v3-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
           restore-keys: |
             pio-esp32-full-linux-
 

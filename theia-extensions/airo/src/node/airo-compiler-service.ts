@@ -217,7 +217,21 @@ function resolveBundledLibsDir(): string {
 /** Check if bundled Arduino libraries are available */
 function hasBundledLibs(): boolean {
     const libsDir = resolveBundledLibsDir();
-    return fs.existsSync(libsDir) && fs.readdirSync(libsDir).length > 0;
+    return fs.existsSync(libsDir) && fs.readdirSync(libsDir).some(f => f !== '.gitkeep');
+}
+
+/** Check if the ESP32 toolchain (compiler, framework) is bundled */
+function hasBundledToolchain(): boolean {
+    const coreDir = path.join(resolveVendorDir(), 'platformio_cache');
+    const packagesDir = path.join(coreDir, 'packages');
+    const platformsDir = path.join(coreDir, 'platforms');
+    // Check for at least one toolchain package (e.g. toolchain-xtensa-esp32*)
+    // and at least the espressif32 platform
+    const hasToolchain = fs.existsSync(packagesDir) &&
+        fs.readdirSync(packagesDir).some(d => d.startsWith('toolchain-'));
+    const hasPlatform = fs.existsSync(platformsDir) &&
+        fs.readdirSync(platformsDir).some(d => d.startsWith('espressif'));
+    return hasToolchain && hasPlatform;
 }
 
 // Chip→board and board→chip mappings imported from airo-protocol.ts
@@ -305,7 +319,7 @@ export class AiroCompilerService {
         if (!builtInResult.success) {
             return {
                 success: false,
-                output: builtInResult.output,
+                output: `✗ Step 1 — Syntax check failed.\n${builtInResult.output}`,
                 error: builtInResult.error || builtInResult.errors?.map(e => e.message).join('\n'),
             };
         }
@@ -352,7 +366,7 @@ export class AiroCompilerService {
             fs.writeFileSync(pioIniPath, pioIniContent, { encoding: 'utf8' });
 
             const generatedFiles = [cppPath, pioIniPath];
-            let combinedOutput = builtInResult.output + '\n' +
+            let combinedOutput = `✓ Step 1 — ${builtInResult.output}\n` +
                 `✓ Step 2 — Transpiled to C++: ${cppPath}\n` +
                 `  PlatformIO board: ${pioBoard}\n` +
                 `  Required libraries: ${transpileResult.requiredLibraries.join(', ') || 'none'}\n` +
@@ -408,6 +422,12 @@ export class AiroCompilerService {
                     generatedFiles,
                 };
             }
+
+            // Show offline mode status for diagnostics
+            const toolchainReady = hasBundledToolchain();
+            const libsReady = hasBundledLibs();
+            combinedOutput += `  Offline mode: ${toolchainReady && libsReady ? 'ENABLED (FORCE_OFFLINE)' : 'disabled (internet required for libraries)'}\n`;
+            combinedOutput += `  Toolchain bundled: ${toolchainReady} | Libraries bundled: ${libsReady}\n`;
 
             // Run PlatformIO build
             const pioResult = await this.runPlatformioBuild(pioCmd, outputDir, pioBoard);
@@ -646,20 +666,17 @@ export class AiroCompilerService {
     /**
      * Build environment variables for running PlatformIO with bundled packages.
      *
-     * IMPORTANT: We do NOT set FORCE_OFFLINE=true. That flag blocks ALL HTTP
-     * requests including library name resolution from the registry, which
-     * causes HTTPClientError even when libraries exist in lib_extra_dirs.
+     * Strategy:
+     * - When BOTH toolchain AND libraries are bundled → FORCE_OFFLINE=true.
+     *   PlatformIO finds everything locally via PLATFORMIO_CORE_DIR and
+     *   lib_extra_dirs (no network needed). lib_deps is NOT included in
+     *   platformio.ini, so PlatformIO won't try registry lookups at all.
      *
-     * Instead, we:
-     * - Set PLATFORMIO_CORE_DIR so PlatformIO finds bundled toolchain locally
-     * - Set PYTHONPATH so PlatformIO Core Python packages are found
-     * - Disable update checks and telemetry to minimize HTTP requests
-     * - Use lib_extra_dirs in platformio.ini so PlatformIO uses local libraries
+     * - When only toolchain is bundled (no bundled libs) → no FORCE_OFFLINE.
+     *   PlatformIO may need to download libraries from the registry, so
+     *   we allow HTTP requests. lib_deps is included in platformio.ini.
      *
-     * If the user has internet, PlatformIO can resolve library names from the
-     * registry but will use local copies from lib_extra_dirs (no download).
-     * If the user has no internet, PlatformIO should still work because all
-     * resources are available locally in PLATFORMIO_CORE_DIR.
+     * - When nothing is bundled → same as toolchain-only (allow HTTP).
      */
     private buildPlatformioEnv(): NodeJS.ProcessEnv {
         const env: NodeJS.ProcessEnv = { ...process.env };
@@ -677,18 +694,24 @@ export class AiroCompilerService {
         const coreDir = resolvePlatformioCoreDir();
         env.PLATFORMIO_CORE_DIR = coreDir;
 
-        // Disable update checks — prevents unnecessary HTTP requests
+        // Disable ALL update checks — prevents unnecessary HTTP requests
         env.PLATFORMIO_SETTING_CHECK_PLATFORMIO_INTERVAL = '0';
+        env.PLATFORMIO_SETTING_CHECK_PLATFORMIO_UPDATE = 'no';
         env.PLATFORMIO_SETTING_CHECK_LIBRARIES_INTERVAL = '0';
         env.PLATFORMIO_SETTING_CHECK_PRUNE_SYSTEM_INTERVAL = '0';
 
         // Disable telemetry
         env.PLATFORMIO_SETTING_ENABLE_TELEMETRY = 'no';
 
-        // DO NOT set FORCE_OFFLINE — it blocks library name resolution from
-        // the registry, which causes HTTPClientError. PlatformIO will use
-        // local resources from PLATFORMIO_CORE_DIR and lib_extra_dirs when
-        // available, and only make HTTP requests for name resolution.
+        // When BOTH toolchain AND libraries are bundled, force fully offline mode.
+        // This is safe because: lib_deps is NOT included in platformio.ini when
+        // libraries are bundled, so PlatformIO won't attempt any registry lookups.
+        // It finds everything it needs locally via PLATFORMIO_CORE_DIR + lib_extra_dirs.
+        const toolchainBundled = hasBundledToolchain();
+        const libsBundled = hasBundledLibs();
+        if (toolchainBundled && libsBundled) {
+            env.PLATFORMIO_SETTING_FORCE_OFFLINE = 'yes';
+        }
 
         return env;
     }
@@ -730,19 +753,24 @@ export class AiroCompilerService {
         // Upload speed for faster flashing
         lines.push(`upload_speed = ${DEFAULT_FLASH_BAUD_RATE}`);
 
-        // If bundled libraries exist, add lib_extra_dirs so PlatformIO finds them locally
-        // and doesn't try to download them from the network.
-        // Also keep lib_deps as fallback (if a library is missing from the bundle,
-        // PlatformIO will try to download it — but only if FORCE_OFFLINE is not set).
+        // If bundled libraries exist, add lib_extra_dirs so PlatformIO finds them
+        // locally without any network requests. When libraries are bundled, we
+        // deliberately skip lib_deps to prevent PlatformIO from making registry
+        // lookups (which cause HTTPClientError in offline environments).
+        // PlatformIO will discover all bundled libraries via lib_extra_dirs + LDF.
         if (hasBundledLibs()) {
             const libsDir = resolveBundledLibsDir();
             lines.push('');
             lines.push(`lib_extra_dirs = ${libsDir}`);
-        }
-
-        // Libraries (always include — if bundled, PlatformIO finds them via lib_extra_dirs;
-        // if not bundled, PlatformIO downloads them from the registry)
-        if (libraries.length > 0) {
+            // Use deep LDF mode so PlatformIO scans #include directives
+            // and finds all transitive dependencies from lib_extra_dirs
+            lines.push('lib_ldf_mode = deep+');
+            // Do NOT include lib_deps — libraries are already available locally
+            // via lib_extra_dirs. Including lib_deps would trigger registry
+            // lookups, causing HTTPClientError when offline.
+        } else if (libraries.length > 0) {
+            // Libraries NOT bundled — include lib_deps so PlatformIO downloads
+            // them from the registry (requires internet)
             lines.push('');
             lines.push('lib_deps =');
             for (const lib of libraries) {
