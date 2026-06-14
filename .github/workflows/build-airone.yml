@@ -78,7 +78,7 @@ jobs:
           path: |
             vendor/platformio_cache
             vendor/platformio_packages
-          key: pio-esp32-full-win-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
+          key: pio-esp32-full-win-v2-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
           restore-keys: |
             pio-esp32-full-win-
 
@@ -152,6 +152,53 @@ jobs:
           echo "Total vendor size:"
           du -sh vendor/platformio_cache || echo "No vendor"
 
+      - name: Download and bundle Arduino libraries
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          # Download ALL Arduino libraries used by .airo sketches.
+          # These are placed in vendor/platformio_cache/lib/ so PlatformIO
+          # can find them via lib_extra_dirs without downloading at runtime.
+          #
+          # PlatformIO's lib_extra_dirs expects each library in its own subdirectory
+          # with a library.properties or library.json manifest at the root.
+          # `pio pkg install -g -l <lib>` downloads to ~/.platformio/lib/
+          # in the correct format for lib_extra_dirs.
+          echo "Downloading Arduino libraries for offline use..."
+          mkdir -p vendor/platformio_cache/lib
+
+          # List of all libraries used by .airo transpiler:
+          # - WebSockets (for body/comm/wifi.airo)
+          # - ArduinoJson (for body/comm/wifi.airo)
+          # - ESP32Servo (for body/actuation/servo.airo)
+          # - esp32-camera (for body/sight/eyes.airo)
+          LIBRARIES="WebSockets ArduinoJson ESP32Servo esp32-camera"
+
+          for lib in $LIBRARIES; do
+            echo "  Downloading library: $lib"
+            pio pkg install -g -l "$lib" 2>&1 || echo "  ⚠ Failed to download $lib (non-critical)"
+          done
+
+          # Copy libraries from PlatformIO's global lib dir to vendor
+          PIO_HOME="${USERPROFILE:-$HOME}/.platformio"
+          if [ -d "$PIO_HOME/lib" ]; then
+            # Copy each library directory (skip the common .pio directory if present)
+            for lib_dir in "$PIO_HOME/lib"/*/; do
+              lib_name=$(basename "$lib_dir")
+              if [ "$lib_name" != ".pio" ] && [ "$lib_name" != "__pycache__" ]; then
+                cp -r "$lib_dir" "vendor/platformio_cache/lib/"
+                echo "  ✓ Copied library: $lib_name"
+              fi
+            done
+          else
+            echo "  ⚠ PlatformIO global lib dir not found at $PIO_HOME/lib"
+          fi
+
+          echo "=== Bundled libraries ==="
+          ls vendor/platformio_cache/lib/ || echo "No libraries bundled"
+          echo "Total library size:"
+          du -sh vendor/platformio_cache/lib/ || echo "No lib dir"
+
       - name: Verify offline toolchain
         shell: bash
         run: |
@@ -170,6 +217,13 @@ jobs:
             echo "✓ PlatformIO Core Python packages present"
           else
             echo "⚠ PlatformIO Core Python packages MISSING — offline compilation may not work"
+          fi
+          echo "Verifying bundled libraries..."
+          if [ -d "vendor/platformio_cache/lib" ] && [ "$(ls vendor/platformio_cache/lib/ 2>/dev/null)" ]; then
+            echo "✓ Arduino libraries present:"
+            ls vendor/platformio_cache/lib/
+          else
+            echo "⚠ Arduino libraries MISSING — offline compilation may not work"
           fi
 
       # ── Build the IDE ──────────────────────────────────────────────────
@@ -337,7 +391,7 @@ jobs:
           path: |
             vendor/platformio_cache
             vendor/platformio_packages
-          key: pio-esp32-full-linux-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
+          key: pio-esp32-full-linux-v2-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
           restore-keys: |
             pio-esp32-full-linux-
 
@@ -393,18 +447,50 @@ jobs:
             echo "✓ Copied PlatformIO platforms"
           fi
 
-          # NOTE: We do NOT copy penv (PlatformIO's Python virtualenv).
-          # penv is tied to the CI machine's Python path and is NOT portable.
-          # Instead, PlatformIO Core Python packages are bundled via pip install --target
-          # into vendor/platformio_packages/ (see the "Bundle PlatformIO Core" step above).
-          # At runtime, PYTHONPATH points to vendor/platformio_packages/ so
-          # `python -m platformio` works without any pip install on the user's machine.
-          # PLATFORMIO_CORE_DIR points to vendor/platformio_cache/ for the toolchain.
-
           echo "=== Vendor directory contents ==="
           du -sh vendor/platformio_cache/packages/* || echo "No packages"
           echo "Total vendor size:"
           du -sh vendor/platformio_cache || echo "No vendor"
+
+      - name: Download and bundle Arduino libraries
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: |
+          # Download ALL Arduino libraries used by .airo sketches.
+          # These are placed in vendor/platformio_cache/lib/ so PlatformIO
+          # can find them via lib_extra_dirs without downloading at runtime.
+          echo "Downloading Arduino libraries for offline use..."
+          mkdir -p vendor/platformio_cache/lib
+
+          # List of all libraries used by .airo transpiler:
+          # - WebSockets (for body/comm/wifi.airo)
+          # - ArduinoJson (for body/comm/wifi.airo)
+          # - ESP32Servo (for body/actuation/servo.airo)
+          # - esp32-camera (for body/sight/eyes.airo)
+          LIBRARIES="WebSockets ArduinoJson ESP32Servo esp32-camera"
+
+          for lib in $LIBRARIES; do
+            echo "  Downloading library: $lib"
+            pio pkg install -g -l "$lib" 2>&1 || echo "  ⚠ Failed to download $lib (non-critical)"
+          done
+
+          # Copy libraries from PlatformIO's global lib dir to vendor
+          PIO_HOME="$HOME/.platformio"
+          if [ -d "$PIO_HOME/lib" ]; then
+            for lib_dir in "$PIO_HOME/lib"/*/; do
+              lib_name=$(basename "$lib_dir")
+              if [ "$lib_name" != ".pio" ] && [ "$lib_name" != "__pycache__" ]; then
+                cp -r "$lib_dir" "vendor/platformio_cache/lib/"
+                echo "  ✓ Copied library: $lib_name"
+              fi
+            done
+          else
+            echo "  ⚠ PlatformIO global lib dir not found at $PIO_HOME/lib"
+          fi
+
+          echo "=== Bundled libraries ==="
+          ls vendor/platformio_cache/lib/ || echo "No libraries bundled"
+          echo "Total library size:"
+          du -sh vendor/platformio_cache/lib/ || echo "No lib dir"
 
       - name: Verify offline toolchain
         run: |
@@ -423,6 +509,13 @@ jobs:
             echo "✓ PlatformIO Core Python packages present"
           else
             echo "⚠ PlatformIO Core Python packages MISSING — offline compilation may not work"
+          fi
+          echo "Verifying bundled libraries..."
+          if [ -d "vendor/platformio_cache/lib" ] && [ "$(ls vendor/platformio_cache/lib/ 2>/dev/null)" ]; then
+            echo "✓ Arduino libraries present:"
+            ls vendor/platformio_cache/lib/
+          else
+            echo "⚠ Arduino libraries MISSING — offline compilation may not work"
           fi
 
       # ── Build the IDE ──────────────────────────────────────────────────

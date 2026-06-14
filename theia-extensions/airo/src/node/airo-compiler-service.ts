@@ -208,6 +208,18 @@ function resolvePlatformioCoreDir(): string {
     return path.join(os.homedir(), '.platformio');
 }
 
+/** Resolve the directory containing bundled Arduino libraries */
+function resolveBundledLibsDir(): string {
+    const vendorDir = resolveVendorDir();
+    return path.join(vendorDir, 'platformio_cache', 'lib');
+}
+
+/** Check if bundled Arduino libraries are available */
+function hasBundledLibs(): boolean {
+    const libsDir = resolveBundledLibsDir();
+    return fs.existsSync(libsDir) && fs.readdirSync(libsDir).length > 0;
+}
+
 // Chip→board and board→chip mappings imported from airo-protocol.ts
 
 /**
@@ -626,9 +638,12 @@ export class AiroCompilerService {
     /**
      * Build environment variables for running PlatformIO with bundled packages.
      *
-     * Sets PYTHONPATH for bundled PlatformIO Core Python packages,
-     * PLATFORMIO_CORE_DIR for the bundled toolchain cache,
-     * and PLATFORMIO_SETTING_FORCE_OFFLINE to prevent any downloads.
+     * Sets:
+     * - PYTHONPATH for bundled PlatformIO Core Python packages
+     * - PLATFORMIO_CORE_DIR for the bundled toolchain cache
+     * - PLATFORMIO_SETTING_FORCE_OFFLINE when all components are bundled
+     *   (toolchain + libraries — only force offline when we know everything is available)
+     * - PLATFORMIO_SETTING_ENABLE_TELEMETRY = 'no' to prevent telemetry HTTP requests
      */
     private buildPlatformioEnv(): NodeJS.ProcessEnv {
         const env: NodeJS.ProcessEnv = { ...process.env };
@@ -646,9 +661,16 @@ export class AiroCompilerService {
         const coreDir = resolvePlatformioCoreDir();
         env.PLATFORMIO_CORE_DIR = coreDir;
 
-        // Force offline mode if vendor directory has toolchain
+        // Disable telemetry — prevents HTTP requests that cause HTTPClientError
+        env.PLATFORMIO_SETTING_ENABLE_TELEMETRY = 'no';
+
+        // Force offline mode ONLY when we have ALL bundled components:
+        // toolchain (packages + platforms) AND libraries.
+        // If libraries are missing, PlatformIO needs network access to download them.
         const vendorDir = resolveVendorDir();
-        if (fs.existsSync(path.join(vendorDir, 'platformio_cache'))) {
+        const hasToolchain = fs.existsSync(path.join(vendorDir, 'platformio_cache', 'packages'));
+        const hasLibs = hasBundledLibs();
+        if (hasToolchain && hasLibs) {
             env.PLATFORMIO_SETTING_FORCE_OFFLINE = 'true';
         }
 
@@ -692,7 +714,18 @@ export class AiroCompilerService {
         // Upload speed for faster flashing
         lines.push(`upload_speed = ${DEFAULT_FLASH_BAUD_RATE}`);
 
-        // Libraries
+        // If bundled libraries exist, add lib_extra_dirs so PlatformIO finds them locally
+        // and doesn't try to download them from the network.
+        // Also keep lib_deps as fallback (if a library is missing from the bundle,
+        // PlatformIO will try to download it — but only if FORCE_OFFLINE is not set).
+        if (hasBundledLibs()) {
+            const libsDir = resolveBundledLibsDir();
+            lines.push('');
+            lines.push(`lib_extra_dirs = ${libsDir}`);
+        }
+
+        // Libraries (always include — if bundled, PlatformIO finds them via lib_extra_dirs;
+        // if not bundled, PlatformIO downloads them from the registry)
         if (libraries.length > 0) {
             lines.push('');
             lines.push('lib_deps =');
@@ -780,10 +813,15 @@ export class AiroCompilerService {
                         });
                     }
                 } else {
+                    // Build failed — include full output for debugging
+                    // PlatformIO puts most useful info on stdout, errors on stderr
+                    const fullOutput = (stdout + '\n' + stderr).trim();
+                    // Extract the most relevant error line for the summary
+                    const errorSummary = stderr.trim() || `PlatformIO exited with code ${code}`;
                     resolve({
                         success: false,
-                        output: stdout,
-                        error: stderr || `PlatformIO exited with code ${code}`,
+                        output: fullOutput || errorSummary,
+                        error: errorSummary,
                     });
                 }
             });

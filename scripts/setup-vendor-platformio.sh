@@ -133,6 +133,33 @@ fi
 
 echo ""
 
+# ─── Step 5b: Download and bundle Arduino libraries ────────────────────
+echo "Step 5b: Downloading Arduino libraries..."
+mkdir -p "$VENDOR_CACHE_DIR/lib"
+
+# List of all libraries used by .airo transpiler
+LIBRARIES="WebSockets ArduinoJson ESP32Servo esp32-camera"
+
+for lib in $LIBRARIES; do
+    echo "  Downloading library: $lib"
+    $PYTHON_CMD -m platformio pkg install -g -l "$lib" 2>&1 || echo "  ⚠ Failed to download $lib (non-critical)"
+done
+
+# Copy libraries from PlatformIO's global lib dir to vendor
+if [ -d "$PIO_HOME/lib" ]; then
+    for lib_dir in "$PIO_HOME/lib"/*/; do
+        lib_name=$(basename "$lib_dir")
+        if [ "$lib_name" != ".pio" ] && [ "$lib_name" != "__pycache__" ]; then
+            cp -r "$lib_dir" "$VENDOR_CACHE_DIR/lib/"
+            echo "  ✓ Copied library: $lib_name"
+        fi
+    done
+else
+    echo "  ⚠ PlatformIO global lib dir not found at $PIO_HOME/lib"
+fi
+
+echo ""
+
 # ─── Step 6: Verify ─────────────────────────────────────────────────────
 echo "Step 6: Verifying vendor/ contents..."
 FOUND_TOOLCHAIN=0
@@ -155,14 +182,26 @@ else
     echo "  ✗ PlatformIO Core Python packages MISSING"
 fi
 
+FOUND_LIBS=0
+if [ -d "$VENDOR_CACHE_DIR/lib" ] && [ "$(ls $VENDOR_CACHE_DIR/lib/ 2>/dev/null)" ]; then
+    echo "  ✓ Arduino libraries:"
+    ls "$VENDOR_CACHE_DIR/lib/" | while read lib; do
+        echo "    - $lib"
+    done
+    FOUND_LIBS=1
+else
+    echo "  ✗ Arduino libraries MISSING"
+fi
+
 echo ""
-if [ $FOUND_TOOLCHAIN -ge 2 ] && [ $FOUND_CORE -eq 1 ]; then
+if [ $FOUND_TOOLCHAIN -ge 2 ] && [ $FOUND_CORE -eq 1 ] && [ $FOUND_LIBS -eq 1 ]; then
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║  ✓ Setup complete! Full offline compilation is ready.       ║"
     echo "║                                                             ║"
-    echo "║  Bundled:" 
+    echo "║  Bundled:"
     echo "║    - PlatformIO Core Python packages (no pip install needed)"
     echo "║    - ESP32 toolchain (compiler + framework)"
+    echo "║    - Arduino libraries (WebSockets, ArduinoJson, etc.)"
     du -sh "$VENDOR_CACHE_DIR" "$VENDOR_PACKAGES_DIR" | awk '{print "║    " $2 ": " $1}'
     echo "║                                                             ║"
     echo "║  Users only need Python 3.8+ — nothing else.               ║"

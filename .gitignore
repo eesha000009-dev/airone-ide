@@ -21,6 +21,7 @@ license-check-summary.txt*
 # The .gitkeep is allowed so the directory structure is preserved.
 vendor/platformio_cache/*
 !vendor/platformio_cache/.gitkeep
+!vendor/platformio_cache/lib/.gitkeep
 vendor/platformio_packages/*
 !vendor/platformio_packages/.gitkeep
 
