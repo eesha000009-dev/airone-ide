@@ -398,3 +398,27 @@ Stage Summary:
 - `buildPlatformioEnv()` centralizes all env var logic (PYTHONPATH, PLATFORMIO_CORE_DIR, FORCE_OFFLINE)
 - Error messages are specific: missing vendor dir → reinstall IDE, missing packages → corrupted install, missing Python → install Python
 - TypeScript compiles cleanly with 0 errors
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix "PlatformIO not found" caused by py -3 quoting bug in airo-compiler-service.ts
+
+Work Log:
+- Analyzed user's diagnostic output showing `'"py -3"' is not recognized as an internal or external command`
+- Identified root cause: `findWorkingPython()` returns `py -3` as a multi-word command string, then all `execSync` calls wrap it in double quotes producing `"py -3"` which Windows cmd treats as a single program name
+- Added `shellEscape()` helper function that quotes file paths with spaces but leaves multi-word commands like `py -3` unquoted
+- Fixed `findWorkingPython()` to resolve `py -3` to the actual python.exe path via `sys.executable` — this is the PRIMARY fix
+- Fixed `getPythonVersion()` to use `shellEscape(pythonPath)` instead of `"${pythonPath}"`
+- Fixed all `execSync` calls in `findPlatformIO()` and `findPioInPythonScripts()` to use `shellEscape(this.pythonPath)`
+- Fixed Windows path candidates — removed pre-quoting from the candidates array
+- Added `pioUsePythonModule` boolean field to the class for clean mode tracking
+- Fixed `runPlatformioBuild()` to use `this.pioUsePythonModule` flag + `this.pythonPath` with `spawn()` instead of fragile string splitting
+- Verified TypeScript compilation passes (no new errors in the modified file)
+- Verified lint passes (only pre-existing errors in unrelated files)
+
+Stage Summary:
+- Root cause: `py -3` command wrapped in quotes → `"py -3"` treated as single program name on Windows
+- Primary fix: `findWorkingPython()` now resolves `py -3` to actual python.exe path via `sys.executable`
+- Secondary fix: `shellEscape()` helper prevents the same issue for paths with spaces
+- Tertiary fix: `runPlatformioBuild()` uses `pioUsePythonModule` flag instead of string parsing
+- Files modified: `theia-extensions/airo/src/node/airo-compiler-service.ts`

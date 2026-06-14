@@ -42,6 +42,25 @@ const MIN_PYTHON_MINOR = 8;
 let pioDetectionDiagnostics: string[] = [];
 
 /**
+ * Build a shell-safe command string for execSync.
+ *
+ * - For file paths that contain spaces, wraps in double quotes
+ * - For multi-word commands (like 'py -3'), uses as-is (the shell will parse them correctly)
+ * - For simple commands, uses as-is
+ *
+ * CRITICAL: Never wrap multi-word commands like 'py -3' in quotes —
+ * that makes Windows cmd try to execute a program literally named "py -3"
+ * instead of 'py' with argument '-3'.
+ */
+function shellEscape(cmd: string): string {
+    // If it looks like a file path (contains path separators) and has spaces, quote it
+    if ((cmd.includes('\\') || cmd.includes('/')) && cmd.includes(' ')) {
+        return `"${cmd}"`;
+    }
+    return cmd;
+}
+
+/**
  * Find a working Python 3.8+ executable on the system.
  *
  * On Windows, this tries: py -3, python, python3, py, and common install paths.
@@ -89,20 +108,37 @@ function findWorkingPython(): string {
 
         for (const p of windowsPaths) {
             if (fs.existsSync(p)) {
-                candidates.push(`"${p}"`);
+                candidates.push(p); // Don't quote here — shellEscape() handles quoting at point of use
             }
         }
     }
 
     for (const cmd of candidates) {
         try {
-            const versionOutput = execSync(`${cmd} --version`, { stdio: 'pipe', timeout: 8000, encoding: 'utf8' }).trim();
+            // Use shellEscape for file paths with spaces; multi-word commands like
+            // 'py -3' must NOT be quoted or Windows treats "py -3" as a single program name
+            const shellCmd = shellEscape(cmd);
+            const versionOutput = execSync(`${shellCmd} --version`, { stdio: 'pipe', timeout: 8000, encoding: 'utf8' }).trim();
             // Verify it's Python 3.8+
             const match = versionOutput.match(/Python (\d+)\.(\d+)/);
             if (match) {
                 const major = parseInt(match[1], 10);
                 const minor = parseInt(match[2], 10);
                 if (major > MIN_PYTHON_MAJOR || (major === MIN_PYTHON_MAJOR && minor >= MIN_PYTHON_MINOR)) {
+                    // IMPORTANT: Resolve multi-word commands (like 'py -3') to the actual
+                    // python.exe path. If we return 'py -3', then any code that wraps it in
+                    // quotes like `"${pythonPath}"` produces `"py -3"` which Windows cmd
+                    // interprets as trying to run a program literally named "py -3".
+                    try {
+                        const executable = execSync(`${shellCmd} -c "import sys; print(sys.executable)"`, {
+                            stdio: 'pipe', timeout: 8000, encoding: 'utf8'
+                        }).trim();
+                        if (executable && fs.existsSync(executable)) {
+                            return executable; // e.g., C:\Users\Hp\...\python.exe
+                        }
+                    } catch {
+                        // sys.executable resolution failed — fall through to return cmd
+                    }
                     return cmd;
                 }
                 // Python found but too old — skip
@@ -121,7 +157,7 @@ function findWorkingPython(): string {
 /** Get the Python version string for the current pythonPath */
 function getPythonVersion(pythonPath: string): string {
     try {
-        return execSync(`"${pythonPath}" --version`, { stdio: 'pipe', timeout: 8000, encoding: 'utf8' }).trim();
+        return execSync(`${shellEscape(pythonPath)} --version`, { stdio: 'pipe', timeout: 8000, encoding: 'utf8' }).trim();
     } catch {
         return 'unknown';
     }
@@ -196,6 +232,9 @@ export class AiroCompilerService {
     private pythonPath: string;
     private compilerDir: string;
     private cachedPioPath: string | undefined;
+
+    /** Whether PlatformIO should be invoked as `python -m platformio` (vs direct `pio` command) */
+    private pioUsePythonModule: boolean = true;
 
     /** Directory where Airone stores tooling */
     private readonly toolsDir: string;
@@ -434,13 +473,14 @@ export class AiroCompilerService {
 
                 pioDetectionDiagnostics.push(`Test 1 (bundled): PYTHONPATH="${testEnv.PYTHONPATH}"`);
 
-                const result = execSync(`"${this.pythonPath}" -m platformio --version`, {
+                const result = execSync(`${shellEscape(this.pythonPath)} -m platformio --version`, {
                     stdio: 'pipe',
                     encoding: 'utf8',
                     timeout: 10000,
                     env: testEnv,
                 }).trim();
                 pioDetectionDiagnostics.push(`Test 1 (bundled): SUCCESS — ${result}`);
+                this.pioUsePythonModule = true;
                 this.cachedPioPath = `${this.pythonPath} -m platformio`;
                 return this.cachedPioPath;
             } catch (err: unknown) {
@@ -457,7 +497,7 @@ export class AiroCompilerService {
 
                 // Also try to import platformio directly to get a better error message
                 try {
-                    const importTest = execSync(`"${this.pythonPath}" -c "import sys; sys.path.insert(0, '${packagesDir.replace(/'/g, "\\'")}'); import platformio; print(platformio.__version__)"`, {
+                    const importTest = execSync(`${shellEscape(this.pythonPath)} -c "import sys; sys.path.insert(0, '${packagesDir.replace(/'/g, "\\'")}'); import platformio; print(platformio.__version__)"`, {
                         stdio: 'pipe',
                         encoding: 'utf8',
                         timeout: 10000,
@@ -483,12 +523,13 @@ export class AiroCompilerService {
 
         // 2. Python module — in case user has PlatformIO installed via pip
         try {
-            const result = execSync(`"${this.pythonPath}" -m platformio --version`, {
+            const result = execSync(`${shellEscape(this.pythonPath)} -m platformio --version`, {
                 stdio: 'pipe',
                 encoding: 'utf8',
                 timeout: 10000,
             }).trim();
             pioDetectionDiagnostics.push(`Test 2 (pip module): SUCCESS — ${result}`);
+            this.pioUsePythonModule = true;
             this.cachedPioPath = `${this.pythonPath} -m platformio`;
             return this.cachedPioPath;
         } catch {
@@ -501,6 +542,7 @@ export class AiroCompilerService {
             const checkCmd = isWin ? 'where' : 'which';
             execSync(`${checkCmd} pio`, { stdio: 'ignore', timeout: 5000 });
             pioDetectionDiagnostics.push('Test 3 (system PATH): SUCCESS — pio found');
+            this.pioUsePythonModule = false;
             this.cachedPioPath = 'pio';
             return this.cachedPioPath;
         } catch {
@@ -513,6 +555,7 @@ export class AiroCompilerService {
         const pythonScriptsPio = this.findPioInPythonScripts();
         if (pythonScriptsPio) {
             pioDetectionDiagnostics.push(`Test 4 (Python Scripts): SUCCESS — ${pythonScriptsPio}`);
+            this.pioUsePythonModule = false;
             this.cachedPioPath = pythonScriptsPio;
             return this.cachedPioPath;
         } else {
@@ -526,6 +569,7 @@ export class AiroCompilerService {
             : path.join(pioCoreDir, 'penv', 'bin', 'pio');
         if (fs.existsSync(penvPio)) {
             pioDetectionDiagnostics.push(`Test 5 (penv): SUCCESS — ${penvPio}`);
+            this.pioUsePythonModule = false;
             this.cachedPioPath = penvPio;
             return this.cachedPioPath;
         } else {
@@ -549,7 +593,7 @@ export class AiroCompilerService {
     private findPioInPythonScripts(): string | undefined {
         try {
             // Get the directory containing the Python executable
-            const pythonDirOutput = execSync(`"${this.pythonPath}" -c "import sys, os; print(os.path.dirname(sys.executable))"`, {
+            const pythonDirOutput = execSync(`${shellEscape(this.pythonPath)} -c "import sys, os; print(os.path.dirname(sys.executable))"`, {
                 stdio: 'pipe',
                 encoding: 'utf8',
                 timeout: 10000,
@@ -677,14 +721,21 @@ export class AiroCompilerService {
             // Build environment variables for bundled PlatformIO packages + offline mode
             const env = this.buildPlatformioEnv();
 
-            // Parse pio command (may be "python -m platformio" or just "pio")
-            const cmdParts = pioCmd.includes(' ')
-                ? pioCmd.split(' ')
-                : [pioCmd];
-            const command = cmdParts[0];
-            const baseArgs = cmdParts.slice(1);
+            // Determine how to invoke PlatformIO based on detection mode
+            // Using the pioUsePythonModule flag is safer than string parsing —
+            // it correctly handles python paths with spaces (e.g., "C:\Program Files\Python312\python.exe")
+            let command: string;
+            let args: string[];
 
-            const args = [...baseArgs, 'run', '-d', projectDir, '-e', board];
+            if (this.pioUsePythonModule) {
+                // PlatformIO is available as a Python module: python -m platformio run ...
+                command = this.pythonPath;
+                args = ['-m', 'platformio', 'run', '-d', projectDir, '-e', board];
+            } else {
+                // PlatformIO is available as a direct command: pio run ...
+                command = pioCmd;
+                args = ['run', '-d', projectDir, '-e', board];
+            }
 
             const proc = spawn(command, args, {
                 cwd: projectDir,
