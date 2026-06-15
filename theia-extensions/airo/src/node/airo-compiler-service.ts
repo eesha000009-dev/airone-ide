@@ -780,9 +780,17 @@ export class AiroCompilerService {
         lines.push(`monitor_filters = direct`);
 
         // Build flags for proper Arduino compatibility
+        // CORE_DEBUG_LEVEL=0 disables Arduino HAL logging — this is CRITICAL
+        // for esp32-camera library which uses ESP_LOGE(TAG, ...) but doesn't
+        // always define TAG when the Arduino logging path is active. With
+        // debug level 0, the log_e/log_w/log_i macros become no-ops so TAG
+        // is never evaluated, preventing "undeclared TAG" compile errors.
+        // NOTE: We do NOT define -DARDUINO — the Arduino framework sets it
+        // automatically, and redefining it causes "ARDUINO redefined" warnings.
         lines.push(`build_flags =`);
-        lines.push(`    -DARDUINO=10820`);
         lines.push(`    -DBOARD_HAS_WIFI`);
+        lines.push(`    -DCORE_DEBUG_LEVEL=0`);
+        lines.push(`    -DCONFIG_ARDUHAL_LOG_DEFAULT_LEVEL=0`);
 
         // Upload speed for faster flashing
         lines.push(`upload_speed = ${DEFAULT_FLASH_BAUD_RATE}`);
