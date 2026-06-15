@@ -83,8 +83,5 @@
     "**/cpu-features": "0.0.9",
     "**/perfect-scrollbar": "1.5.5",
     "**/node-abi": "4.14.0"
-  },
-  "dependencies": {
-    "zod": "^3.25.76"
   }
 }

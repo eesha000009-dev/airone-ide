@@ -46,3 +46,6 @@ out/
 
 # Build artifacts
 webpack.config.js
+
+# Bun lockfile (this project uses yarn, not bun)
+bun.lock
