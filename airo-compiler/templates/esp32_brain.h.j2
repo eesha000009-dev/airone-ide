@@ -1,0 +1,204 @@
+// ============================================================
+// GENERATED AIRONE FIRMWARE - BRAIN CLIENT
+// Target: {{ target | upper }}
+// DO NOT EDIT MANUALLY - Regenerate from .airo source
+// ============================================================
+#ifndef BRAIN_CLIENT_H
+#define BRAIN_CLIENT_H
+
+#include <WiFi.h>
+#include <ArduinoWebsockets.h>
+#include <ArduinoJson.h>
+
+using namespace websockets;
+
+// === BRAIN CONNECTION CONFIG ===
+const char* BRAIN_HOST = "{{ brain.host }}";
+const int BRAIN_PORT = {{ brain.port }};
+const char* BRAIN_PATH = "{{ brain.path }}";
+const bool BRAIN_SECURE = {% if brain.is_secure %}true{% else %}false{% endif %};
+
+// === WiFi CONFIG ===
+const char* WIFI_SSID = "{{ wifi_ssid }}";
+const char* WIFI_PASS = "{{ wifi_pass }}";
+
+// === BRAIN CLIENT STATE ===
+WebsocketsClient brain_client;
+volatile bool brain_connected = false;
+volatile bool new_command_ready = false;
+String pending_command = "";
+
+{% if has_ask %}
+// === ASK MECHANISM ===
+// The ask() function sends a question to the brain and waits for an answer.
+// The brain includes the answer in its next command response.
+String current_ask_question = "";
+String current_ask_context = "";
+bool ask_pending = false;
+
+void ask_brain(const char* question, const char* context) {
+    current_ask_question = String(question);
+    current_ask_context = String(context);
+    ask_pending = true;
+}
+{% endif %}
+
+// === WEBSOCKET CALLBACKS ===
+void on_brain_message(WebsocketsMessage message) {
+    pending_command = message.data();
+    new_command_ready = true;
+}
+
+void on_brain_event(WebsocketsEvent event, String data) {
+    if (event == WebsocketsEvent::ConnectionOpened) {
+        brain_connected = true;
+        Serial.println("[BRAIN] Connected!");
+    }
+    if (event == WebsocketsEvent::ConnectionClosed) {
+        brain_connected = false;
+        Serial.println("[BRAIN] Disconnected!");
+    }
+}
+
+// === WiFi CONNECTION ===
+void connect_wifi() {
+    Serial.print("[WIFI] Connecting to ");
+    Serial.print(WIFI_SSID);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 40) {
+        delay(500);
+        Serial.print(".");
+        attempts++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("\n[WIFI] Connected!");
+        Serial.print("[WIFI] IP: ");
+        Serial.println(WiFi.localIP());
+    } else {
+        Serial.println("\n[WIFI] FAILED to connect!");
+    }
+}
+
+// === BRAIN CONNECTION ===
+void connect_brain() {
+    brain_client.onMessage(on_brain_message);
+    brain_client.onEvent(on_brain_event);
+
+    Serial.print("[BRAIN] Connecting to ");
+    Serial.print(BRAIN_HOST);
+    Serial.print(":");
+    Serial.println(BRAIN_PORT);
+
+    if (brain_client.connect(BRAIN_HOST, BRAIN_PORT, BRAIN_PATH)) {
+        Serial.println("[BRAIN] Connection initiated!");
+    } else {
+        Serial.println("[BRAIN] Connection FAILED!");
+    }
+}
+
+// === RECONNECTION WITH EXPONENTIAL BACKOFF ===
+unsigned long last_reconnect_attempt = 0;
+int reconnect_delay_ms = 1000;  // Start at 1 second
+const int MAX_RECONNECT_DELAY = 30000;  // Cap at 30 seconds
+
+void attempt_reconnection() {
+    if (brain_connected) return;
+
+    unsigned long now = millis();
+    if (now - last_reconnect_attempt < (unsigned long)reconnect_delay_ms) return;
+
+    Serial.println("[BRAIN] Attempting reconnection...");
+    last_reconnect_attempt = now;
+
+    // Check WiFi first
+    if (WiFi.status() != WL_CONNECTED) {
+        connect_wifi();
+        return;
+    }
+
+    if (brain_client.connect(BRAIN_HOST, BRAIN_PORT, BRAIN_PATH)) {
+        Serial.println("[BRAIN] Reconnected!");
+        reconnect_delay_ms = 1000;  // Reset delay
+    } else {
+        Serial.println("[BRAIN] Reconnection failed, backing off...");
+        reconnect_delay_ms = min(reconnect_delay_ms * 2, MAX_RECONNECT_DELAY);
+    }
+}
+
+// ============================================================
+// SEND SENSOR DATA TO BRAIN (Natural Language Prompt Format)
+// ============================================================
+// The ESP32 sends sensor data as a natural language prompt
+// that the AI brain (LLM) can directly understand and respond to.
+//
+// Format:
+//   Currently, the input sensors read:
+//   (sensor_name: value, sensor_name: value, ...),
+//   What do you want to do to:
+//   (output_module_1, output_module_2, ...).
+//
+// The brain's AI then reads this prompt and responds with
+// a JSON object containing commands for the output modules.
+// ============================================================
+void send_sensor_data() {
+    if (!brain_connected) return;
+
+    // Build the natural language prompt
+    String prompt = "Currently, the input sensors read:\n";
+
+    // --- INPUT SENSORS ---
+{% if sensors | length > 0 %}
+    prompt += "(";
+{% for sensor in sensors %}
+    prompt += "{{ sensor }}: ";
+    prompt += String(current_data.{{ sensor }}, 2);
+{% if not loop.last %}
+    prompt += ", ";
+{% endif %}
+{% endfor %}
+    prompt += "),\n";
+{% else %}
+    prompt += "(No input sensors configured),\n";
+{% endif %}
+
+    // --- OUTPUT MODULES ---
+    prompt += "What do you want to do to:\n";
+{% if outputs | length > 0 %}
+    prompt += "(";
+{% for output in outputs %}
+    prompt += "{{ output }}";
+{% if not loop.last %}
+    prompt += ", ";
+{% endif %}
+{% endfor %}
+    prompt += ").";
+{% else %}
+    prompt += "(No output modules configured).";
+{% endif %}
+
+{% if has_ask %}
+    // Append ask() question if pending
+    if (ask_pending) {
+        prompt += "\n\nAlso, the robot asks: ";
+        prompt += current_ask_question;
+        if (current_ask_context.length() > 0) {
+            prompt += " (Context: ";
+            prompt += current_ask_context;
+            prompt += ")";
+        }
+        ask_pending = false;
+    }
+{% endif %}
+
+    // Send the natural language prompt via WebSocket
+    brain_client.send(prompt);
+
+    // Debug output
+    Serial.println("[BRAIN] Sent prompt:");
+    Serial.println(prompt);
+}
+
+#endif // BRAIN_CLIENT_H

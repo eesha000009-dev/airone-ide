@@ -220,18 +220,21 @@ function hasBundledLibs(): boolean {
     return fs.existsSync(libsDir) && fs.readdirSync(libsDir).some(f => f !== '.gitkeep');
 }
 
-/** Check if the ESP32 toolchain (compiler, framework) is bundled */
+/** Check if the ESP32 toolchain (compiler, framework, build tools) is bundled */
 function hasBundledToolchain(): boolean {
     const coreDir = path.join(resolveVendorDir(), 'platformio_cache');
     const packagesDir = path.join(coreDir, 'packages');
     const platformsDir = path.join(coreDir, 'platforms');
-    // Check for at least one toolchain package (e.g. toolchain-xtensa-esp32*)
-    // and at least the espressif32 platform
-    const hasToolchain = fs.existsSync(packagesDir) &&
-        fs.readdirSync(packagesDir).some(d => d.startsWith('toolchain-'));
+    if (!fs.existsSync(packagesDir)) return false;
+    const packages = fs.readdirSync(packagesDir);
+    // Check for at least one toolchain package (e.g. toolchain-xtensa-esp32)
+    const hasToolchain = packages.some(d => d.startsWith('toolchain-'));
+    // Check for tool-scons (the build tool — CRITICAL, PlatformIO cannot build without it)
+    const hasScons = packages.some(d => d === 'tool-scons');
+    // Check for at least the espressif32 platform
     const hasPlatform = fs.existsSync(platformsDir) &&
         fs.readdirSync(platformsDir).some(d => d.startsWith('espressif'));
-    return hasToolchain && hasPlatform;
+    return hasToolchain && hasScons && hasPlatform;
 }
 
 // Chip→board and board→chip mappings imported from airo-protocol.ts

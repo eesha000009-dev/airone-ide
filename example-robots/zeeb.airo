@@ -1,0 +1,78 @@
+# ============================================
+# ZEEB ROBOT - Humanoid Pick-and-Place
+# ============================================
+
+#library#
+# Import body modules for your robot
+call body/actuation/upper-right-hands.airo.
+call body/actuation/lower-right-hands.airo.
+call body/actuation/upper-left-hands.airo.
+call body/actuation/lower-left-hands.airo.
+call body/actuation/upper-right-legs.airo.
+call body/actuation/lower-right-legs.airo.
+call body/actuation/upper-left-legs.airo.
+call body/actuation/lower-left-legs.airo.
+call body/hearing/ears.airo.
+call body/sight/eyes.airo.
+call body/speech/mouth.airo.
+call body/other_sensors/temperature.airo.
+
+Pin defi {
+    # pin_name = pin_number; mode.
+    # mode: input (brings data in / senses) or output (makes action)
+    ledpin = 2; output.
+    temperature_sensor = 35; input.
+    ultrasonic = 34; input.
+    camera = 33; input.
+    microphone = 32; input.
+}
+
+#variables#
+# Brain URL — where your AI brain lives
+brain_url = "wss://zeeb-brain.local:8080".
+call brain_url.
+
+# Aliases (short names for body modules)
+body/other_sensors/temperature.airo = temperature.
+body/speech/mic.airo = mouth.
+body/sight/ultrasonic-sensor.airo = eyes.
+body/hearing/ears.airo = ears.
+body/actuation/lower-left-legs.airo = llleg.
+body/actuation/upper-left-legs.airo = ulleg.
+body/actuation/lower-right-legs.airo = lrlegs.
+body/actuation/upper-right-legs.airo = urlegs.
+body/actuation/lower-left-hands.airo = llhands.
+body/actuation/lower-right-hands.airo = lrhands.
+body/actuation/upper-right-hands.airo = urhands.
+body/actuation/upper-left-hands.airo = ulhands.
+
+# ============================================
+# MAIN LOOP — The robot runs this forever
+# SENSE → THINK → ACT
+# ============================================
+loop {
+    # Phase 1: SENSE — Read all input sensors
+    # Only place sensors/modules that bring in data or sense
+    read_for(1000) {
+        temperature.
+        eyes.
+        ears.
+    }
+
+    # Phase 2: THINK — Send data to brain via WebSocket
+    # The compiled C++ will send:
+    # "Currently, the input sensors read:
+    #  (temperature: 28.50, eyes: 45, ears: 0),
+    #  What do you want to do to:
+    #  (ledpin, urhands, llleg)."
+    # The AI brain reads this and responds with commands.
+    senddatato(brain_url).
+
+    # Phase 3: ACT — Execute brain commands
+    # Only place output modules here (things that make actions)
+    actfor(1000) {
+        ledpin.
+        urhands.
+        llleg.
+    }
+}

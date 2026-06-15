@@ -422,3 +422,31 @@ Stage Summary:
 - Secondary fix: `shellEscape()` helper prevents the same issue for paths with spaces
 - Tertiary fix: `runPlatformioBuild()` uses `pioUsePythonModule` flag instead of string parsing
 - Files modified: `theia-extensions/airo/src/node/airo-compiler-service.ts`
+
+---
+Task ID: 5
+Agent: Main Agent
+Task: Fix Step 1 not showing in compile output and resolve HTTPClientError root cause
+
+Work Log:
+- User reported Step 1 not showing in compile output (only Step 2 visible)
+- Found root cause: Step 1's output used `builtInResult.output` directly without a "✓ Step 1" label prefix, while Steps 2 and 3 had explicit labels
+- Added `✓ Step 1 —` prefix to Step 1 success output and `✗ Step 1 —` to failure output
+- Investigated HTTPClientError root cause: PlatformIO was making HTTP registry lookups to resolve library names from `lib_deps`, even when libraries were available locally via `lib_extra_dirs`
+- The previous approach of keeping `lib_deps` alongside `lib_extra_dirs` was wrong — PlatformIO tries registry first, fails, then throws HTTPClientError
+- Fix: When libraries are bundled, skip `lib_deps` entirely and rely on `lib_extra_dirs` + `lib_ldf_mode = deep+` for library discovery
+- Re-enabled `FORCE_OFFLINE = yes` when BOTH toolchain AND libraries are bundled (safe now because no lib_deps = no registry lookups)
+- Added `hasBundledToolchain()` function to check if compiler/framework is bundled
+- Fixed `hasBundledLibs()` to ignore `.gitkeep` files
+- Added `PLATFORMIO_SETTING_CHECK_PLATFORMIO_UPDATE = no` to prevent update checks
+- Added diagnostic output showing offline mode status and bundling status
+- Updated CI cache keys from v2 to v3 to force fresh build with new logic
+- Committed and pushed to origin/master (commit e82d144)
+
+Stage Summary:
+- Step 1 now properly labeled "✓ Step 1 —" / "✗ Step 1 —" consistent with Steps 2 & 3
+- HTTPClientError root cause identified: lib_deps forces registry lookups even with lib_extra_dirs
+- Fix: skip lib_deps when libraries are bundled, use lib_extra_dirs + lib_ldf_mode=deep+ instead
+- FORCE_OFFLINE re-enabled safely (only when both toolchain AND libraries are bundled)
+- Diagnostic output now shows offline mode and bundling status for easier debugging
+- CI cache keys updated to v3

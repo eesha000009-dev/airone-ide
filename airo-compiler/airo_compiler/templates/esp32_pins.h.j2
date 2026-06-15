@@ -1,0 +1,24 @@
+// ============================================================
+// GENERATED AIRONE FIRMWARE - PIN MAP
+// Target: {{ target | upper }}
+// DO NOT EDIT MANUALLY - Regenerate from .airo source
+// ============================================================
+#ifndef PIN_MAP_H
+#define PIN_MAP_H
+
+#include <Arduino.h>
+
+// === PIN DEFINITIONS (from pin defi block) ===
+{% for pin in pin_defs %}
+// {{ pin.name }} -> GPIO{{ pin.number }} ({{ pin.mode }}{% if pin.sensor_type %}, {{ pin.sensor_type }}{% endif %})
+const int PIN_{{ pin.name_upper }} = {{ pin.number }};
+{% endfor %}
+
+// === SERVO OBJECTS (for output pins) ===
+{% for pin in pin_defs %}
+{% if pin.mode == "output" %}
+Servo servo_{{ pin.name }};
+{% endif %}
+{% endfor %}
+
+#endif // PIN_MAP_H

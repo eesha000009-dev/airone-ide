@@ -1,0 +1,29 @@
+appId: com.airone.ai-backbone
+productName: Airone AI Backbone
+copyright: Copyright © 2024 Airone Robotics
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - src/main/**/*
+  - src/renderer/dist/**/*
+  - package.json
+
+extraResources:
+  - from: build/icon.png
+    to: icon.png
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png
+
+nsis:
+  oneClick: true
+  allowToChangeInstallationDirectory: false
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico

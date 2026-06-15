@@ -1,0 +1,77 @@
+{
+  "name": "airone-ai-backbone",
+  "version": "0.1.0",
+  "description": "Airone AI Backbone - Desktop application for robot AI control",
+  "main": "src/main/main.js",
+  "author": "Airone Robotics",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "concurrently \"webpack --config webpack.renderer.config.js --watch\" \"wait-on http://localhost:9000 && electron .\"",
+    "build:renderer": "webpack --config webpack.renderer.config.js",
+    "build": "webpack --config webpack.renderer.config.js && electron-builder",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "axios": "^1.6.7",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "sql.js": "^1.10.3",
+    "uuid": "^9.0.0",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.23.9",
+    "@babel/preset-env": "^7.23.9",
+    "@babel/preset-react": "^7.23.3",
+    "babel-loader": "^9.1.3",
+    "concurrently": "^8.2.2",
+    "css-loader": "^6.9.1",
+    "electron": "^28.1.3",
+    "electron-builder": "^24.9.1",
+    "html-webpack-plugin": "^5.6.0",
+    "mini-css-extract-plugin": "^2.7.7",
+    "style-loader": "^3.3.4",
+    "wait-on": "^7.2.0",
+    "webpack": "^5.90.0",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^5.0.0"
+  },
+  "build": {
+    "appId": "com.airone.ai-backbone",
+    "productName": "Airone AI Backbone",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/main/**/*",
+      "src/renderer/dist/**/*",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "src/renderer/dist",
+        "to": "renderer/dist"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

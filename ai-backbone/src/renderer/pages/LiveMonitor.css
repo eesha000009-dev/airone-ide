@@ -1,0 +1,174 @@
+.live-monitor .status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.status-text {
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-text.online {
+  color: var(--green);
+}
+
+.status-text.offline {
+  color: var(--red);
+}
+
+.status-detail {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+
+.connected-robots {
+  margin-top: 16px;
+}
+
+.robot-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition);
+  margin-bottom: 4px;
+}
+
+.robot-item:hover {
+  background: var(--bg-hover);
+}
+
+.robot-item.selected {
+  background: var(--cyan-glow);
+  border: 1px solid rgba(0, 188, 212, 0.3);
+}
+
+.robot-item-id {
+  font-size: 13px;
+  font-weight: 500;
+  flex: 1;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+
+/* Emergency Stop Section */
+.emergency-section {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-color);
+  text-align: center;
+}
+
+.emergency-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+/* Sensor Data Grid */
+.sensor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.sensor-item {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.sensor-key {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 4px;
+}
+
+.sensor-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--cyan);
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+
+.no-data {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-muted);
+}
+
+.no-data p {
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.no-data-hint {
+  font-size: 12px !important;
+  color: var(--text-muted) !important;
+}
+
+/* Command Log */
+.log-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.log-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  background: var(--bg-primary);
+}
+
+.log-entry.log-sent {
+  border-left: 3px solid var(--cyan);
+}
+
+.log-entry.log-received {
+  border-left: 3px solid var(--purple);
+}
+
+.log-entry.log-system {
+  border-left: 3px solid var(--green);
+}
+
+.log-time {
+  color: var(--text-muted);
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.log-direction {
+  flex-shrink: 0;
+}
+
+.log-content {
+  color: var(--text-secondary);
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.realtime-log {
+  margin-bottom: 8px;
+}

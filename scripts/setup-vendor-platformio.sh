@@ -116,14 +116,17 @@ fi
 
 mkdir -p "$VENDOR_CACHE_DIR/packages"
 
-for pkg in toolchain-xtensa-esp32 framework-arduinoespressif32 tool-esptoolpy tool-mkspiffs tool-mklittlefs; do
-    if [ -d "$PIO_HOME/packages/$pkg" ]; then
-        cp -r "$PIO_HOME/packages/$pkg" "$VENDOR_CACHE_DIR/packages/"
-        echo "  ✓ Copied $pkg"
-    else
-        echo "  ⚠ $pkg not found at $PIO_HOME/packages/$pkg"
-    fi
-done
+# Copy ALL packages — PlatformIO needs tool-scons, toolchain-*, framework-*, etc.
+# Missing even one package (e.g. tool-scons) causes HTTPClientError when FORCE_OFFLINE is set.
+if [ -d "$PIO_HOME/packages" ]; then
+    for pkg_dir in "$PIO_HOME/packages"/*/; do
+        pkg_name=$(basename "$pkg_dir")
+        cp -r "$pkg_dir" "$VENDOR_CACHE_DIR/packages/"
+        echo "  ✓ Copied package: $pkg_name"
+    done
+else
+    echo "  ⚠ No packages found at $PIO_HOME/packages"
+fi
 
 # Copy platforms directory
 if [ -d "$PIO_HOME/platforms" ]; then

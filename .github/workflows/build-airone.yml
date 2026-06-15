@@ -78,7 +78,7 @@ jobs:
           path: |
             vendor/platformio_cache
             vendor/platformio_packages
-          key: pio-esp32-full-win-v3-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
+          key: pio-esp32-full-win-v4-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
           restore-keys: |
             pio-esp32-full-win-
 
@@ -119,19 +119,22 @@ jobs:
           PIO_HOME="${USERPROFILE:-$HOME}/.platformio"
           echo "PlatformIO home: $PIO_HOME"
 
-          # Copy the downloaded packages into vendor/
-          # These are the compiler toolchain + Arduino framework — they ARE portable
-          # (unlike penv which is a Python venv tied to a specific Python installation)
+          # Copy ALL downloaded packages into vendor/
+          # We copy everything (not just a hardcoded list) because PlatformIO needs
+          # tool-scons, toolchain-*, framework-*, and any other tools it resolved.
+          # Missing even one package (e.g. tool-scons) causes HTTPClientError
+          # when FORCE_OFFLINE is set.
           mkdir -p vendor/platformio_cache/packages
 
-          for pkg in toolchain-xtensa-esp32 framework-arduinoespressif32 tool-esptoolpy tool-mkspiffs tool-mklittlefs; do
-            if [ -d "$PIO_HOME/packages/$pkg" ]; then
-              cp -r "$PIO_HOME/packages/$pkg" vendor/platformio_cache/packages/
-              echo "✓ Copied $pkg"
-            else
-              echo "⚠ $pkg not found at $PIO_HOME/packages/$pkg"
-            fi
-          done
+          if [ -d "$PIO_HOME/packages" ]; then
+            for pkg_dir in "$PIO_HOME/packages"/*/; do
+              pkg_name=$(basename "$pkg_dir")
+              cp -r "$pkg_dir" vendor/platformio_cache/packages/
+              echo "  ✓ Copied package: $pkg_name"
+            done
+          else
+            echo "⚠ No packages found at $PIO_HOME/packages"
+          fi
 
           # Copy platforms directory (contains platform metadata for espressif32)
           if [ -d "$PIO_HOME/platforms" ]; then
@@ -203,16 +206,18 @@ jobs:
         shell: bash
         run: |
           echo "Verifying bundled toolchain..."
-          if [ -d "vendor/platformio_cache/packages/toolchain-xtensa-esp32" ]; then
-            echo "✓ toolchain-xtensa-esp32 present"
-          else
-            echo "⚠ toolchain-xtensa-esp32 MISSING — offline compilation may not work"
-          fi
-          if [ -d "vendor/platformio_cache/packages/framework-arduinoespressif32" ]; then
-            echo "✓ framework-arduinoespressif32 present"
-          else
-            echo "⚠ framework-arduinoespressif32 MISSING — offline compilation may not work"
-          fi
+          echo "Bundled packages:"
+          ls vendor/platformio_cache/packages/ || echo "⚠ No packages!"
+          echo ""
+          # Check critical packages
+          CRITICAL="toolchain-xtensa-esp32 framework-arduinoespressif32 tool-scons"
+          for pkg in $CRITICAL; do
+            if [ -d "vendor/platformio_cache/packages/$pkg" ]; then
+              echo "✓ $pkg present"
+            else
+              echo "⚠ $pkg MISSING — offline compilation may not work"
+            fi
+          done
           if [ -d "vendor/platformio_packages/platformio" ]; then
             echo "✓ PlatformIO Core Python packages present"
           else
@@ -391,7 +396,7 @@ jobs:
           path: |
             vendor/platformio_cache
             vendor/platformio_packages
-          key: pio-esp32-full-linux-v3-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
+          key: pio-esp32-full-linux-v4-${{ hashFiles('theia-extensions/airo/src/node/airo-compiler-service.ts') }}
           restore-keys: |
             pio-esp32-full-linux-
 
@@ -426,20 +431,23 @@ jobs:
           echo "void setup() {} void loop() {}" > "$TMPDIR/src/main.cpp"
           pio run -d "$TMPDIR" -e esp32dev || true
 
-          # Copy the downloaded packages into vendor/
-          # These are the compiler toolchain + Arduino framework — they ARE portable
-          # (unlike penv which is a Python venv tied to a specific Python installation)
+          # Copy ALL downloaded packages into vendor/
+          # We copy everything (not just a hardcoded list) because PlatformIO needs
+          # tool-scons, toolchain-*, framework-*, and any other tools it resolved.
+          # Missing even one package (e.g. tool-scons) causes HTTPClientError
+          # when FORCE_OFFLINE is set.
           mkdir -p vendor/platformio_cache/packages
           PIO_HOME="$HOME/.platformio"
 
-          for pkg in toolchain-xtensa-esp32 framework-arduinoespressif32 tool-esptoolpy tool-mkspiffs tool-mklittlefs; do
-            if [ -d "$PIO_HOME/packages/$pkg" ]; then
-              cp -r "$PIO_HOME/packages/$pkg" vendor/platformio_cache/packages/
-              echo "✓ Copied $pkg"
-            else
-              echo "⚠ $pkg not found at $PIO_HOME/packages/$pkg"
-            fi
-          done
+          if [ -d "$PIO_HOME/packages" ]; then
+            for pkg_dir in "$PIO_HOME/packages"/*/; do
+              pkg_name=$(basename "$pkg_dir")
+              cp -r "$pkg_dir" vendor/platformio_cache/packages/
+              echo "  ✓ Copied package: $pkg_name"
+            done
+          else
+            echo "⚠ No packages found at $PIO_HOME/packages"
+          fi
 
           # Copy platforms directory (contains platform metadata for espressif32)
           if [ -d "$PIO_HOME/platforms" ]; then
@@ -495,16 +503,18 @@ jobs:
       - name: Verify offline toolchain
         run: |
           echo "Verifying bundled toolchain..."
-          if [ -d "vendor/platformio_cache/packages/toolchain-xtensa-esp32" ]; then
-            echo "✓ toolchain-xtensa-esp32 present"
-          else
-            echo "⚠ toolchain-xtensa-esp32 MISSING — offline compilation may not work"
-          fi
-          if [ -d "vendor/platformio_cache/packages/framework-arduinoespressif32" ]; then
-            echo "✓ framework-arduinoespressif32 present"
-          else
-            echo "⚠ framework-arduinoespressif32 MISSING — offline compilation may not work"
-          fi
+          echo "Bundled packages:"
+          ls vendor/platformio_cache/packages/ || echo "⚠ No packages!"
+          echo ""
+          # Check critical packages
+          CRITICAL="toolchain-xtensa-esp32 framework-arduinoespressif32 tool-scons"
+          for pkg in $CRITICAL; do
+            if [ -d "vendor/platformio_cache/packages/$pkg" ]; then
+              echo "✓ $pkg present"
+            else
+              echo "⚠ $pkg MISSING — offline compilation may not work"
+            fi
+          done
           if [ -d "vendor/platformio_packages/platformio" ]; then
             echo "✓ PlatformIO Core Python packages present"
           else

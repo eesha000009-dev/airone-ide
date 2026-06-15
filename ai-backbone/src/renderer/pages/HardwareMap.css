@@ -1,0 +1,56 @@
+.hw-stats {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.hw-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 20px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  min-width: 100px;
+}
+
+.hw-stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--cyan);
+}
+
+.hw-stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+.hw-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.pin-name {
+  color: var(--cyan-light);
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+
+.pin-gpio {
+  background: var(--bg-tertiary);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+
+.pin-desc-input {
+  font-size: 13px;
+  padding: 6px 8px;
+}
