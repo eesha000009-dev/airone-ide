@@ -9,7 +9,7 @@
 
 import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
-import { SERIAL_MONITOR_BAUD } from '../common/airo-protocol';
+import { DEFAULT_MONITOR_BAUD_RATE } from '../common/airo-protocol';
 import { Message } from '@theia/core/lib/browser/widgets/widget';
 import * as React from 'react';
 import { EditorManager } from '@theia/editor/lib/browser';
@@ -266,7 +266,7 @@ export class AiroSidebarWidget extends ReactWidget {
             channel.append('Flashing to board...\n');
             channel.append(`Connecting to ${this._selectedPort.path}...\n`);
 
-            const connected = await this.serialService.connect(this._selectedPort.path, SERIAL_MONITOR_BAUD);
+            const connected = await this.serialService.connect(this._selectedPort.path, DEFAULT_MONITOR_BAUD_RATE);
             if (connected) {
                 this._serialConnected = true;
                 channel.append('✓ Connected to board.\n');
