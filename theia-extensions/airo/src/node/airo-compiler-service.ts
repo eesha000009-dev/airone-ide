@@ -680,6 +680,11 @@ export class AiroCompilerService {
      *   we allow HTTP requests. lib_deps is included in platformio.ini.
      *
      * - When nothing is bundled → same as toolchain-only (allow HTTP).
+     *
+     * CRITICAL: The toolchain's bin/ directory MUST be added to PATH so that
+     * Windows can find the DLLs (libwinpthread-1.dll, libgcc_s_seh-1.dll, etc.)
+     * that xtensa-esp32-elf-g++.exe depends on. Without these DLLs in PATH,
+     * CreateProcess fails with "No such file or directory".
      */
     private buildPlatformioEnv(): NodeJS.ProcessEnv {
         const env: NodeJS.ProcessEnv = { ...process.env };
@@ -696,6 +701,32 @@ export class AiroCompilerService {
         // Set PLATFORMIO_CORE_DIR to the bundled toolchain cache
         const coreDir = resolvePlatformioCoreDir();
         env.PLATFORMIO_CORE_DIR = coreDir;
+
+        // CRITICAL: Add package bin/ directories to PATH.
+        // On Windows, xtensa-esp32-elf-g++.exe depends on DLLs in the same
+        // bin/ directory (libwinpthread-1.dll, libgcc_s_seh-1.dll, etc.).
+        // Without these DLLs in PATH, CreateProcess fails with:
+        //   xtensa-esp32-elf-g++: error: CreateProcess: No such file or directory
+        //
+        // We add bin/ dirs for ALL packages that have them (not just toolchain-*)
+        // because tools like tool-esptoolpy also have executables that need PATH access.
+        const pkgDir = path.join(coreDir, 'packages');
+        if (fs.existsSync(pkgDir)) {
+            try {
+                const pathAdditions: string[] = [];
+                for (const pkgName of fs.readdirSync(pkgDir)) {
+                    const binDir = path.join(pkgDir, pkgName, 'bin');
+                    if (fs.existsSync(binDir)) {
+                        pathAdditions.push(binDir);
+                    }
+                }
+                if (pathAdditions.length > 0) {
+                    const existingPath = env.PATH || '';
+                    env.PATH = pathAdditions.join(path.delimiter) +
+                        (existingPath ? `${path.delimiter}${existingPath}` : '');
+                }
+            } catch { /* ignore — PATH injection is best-effort */ }
+        }
 
         // Disable ALL update checks — prevents unnecessary HTTP requests
         env.PLATFORMIO_SETTING_CHECK_PLATFORMIO_INTERVAL = '0';
@@ -768,6 +799,11 @@ export class AiroCompilerService {
             // Use deep LDF mode so PlatformIO scans #include directives
             // and finds all transitive dependencies from lib_extra_dirs
             lines.push('lib_ldf_mode = deep+');
+            // Disable library compatibility mode — some bundled libraries
+            // (e.g. esp32-camera) report themselves as framework-incompatible
+            // even though they work fine on ESP32 Arduino. Setting this to
+            // "off" skips the compatibility check and includes all libraries.
+            lines.push('lib_compat_mode = off');
             // Do NOT include lib_deps — libraries are already available locally
             // via lib_extra_dirs. Including lib_deps would trigger registry
             // lookups, causing HTTPClientError when offline.
