@@ -39,3 +39,10 @@ applications/browser/android/app/src/main/assets/nodejs/lib/
 # Uncomment the line below for production:
 # applications/browser/android-signing/upload/
 tool-results/
+
+# Next.js build output
+.next/
+out/
+
+# Build artifacts
+webpack.config.js
