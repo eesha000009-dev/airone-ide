@@ -22,18 +22,22 @@ cmake_minimum_required(VERSION 3.16)
 project(AironeFirmware C CXX ASM)
 
 # ─── Cross-Compiler Configuration ────────────────────────────────────────────
-# Force CMake to use our bundled cross-compiler
+# Force CMake to use our bundled cross-compiler BEFORE any project() language
+# detection. These must be set as CACHE variables so CMake doesn't override them.
 
-set(CMAKE_C_COMPILER   "${AIRONE_COMPILER_DIR}/bin/xtensa-esp32-elf-gcc")
-set(CMAKE_CXX_COMPILER "${AIRONE_COMPILER_DIR}/bin/xtensa-esp32-elf-g++")
-set(CMAKE_ASM_COMPILER "${AIRONE_COMPILER_DIR}/bin/xtensa-esp32-elf-gcc")
+set(CMAKE_C_COMPILER   "${AIRONE_COMPILER_DIR}/bin/xtensa-esp32-elf-gcc"     CACHE FILEPATH "C compiler")
+set(CMAKE_CXX_COMPILER "${AIRONE_COMPILER_DIR}/bin/xtensa-esp32-elf-g++"     CACHE FILEPATH "C++ compiler")
+set(CMAKE_ASM_COMPILER "${AIRONE_COMPILER_DIR}/bin/xtensa-esp32-elf-gcc"     CACHE FILEPATH "ASM compiler")
+set(CMAKE_AR           "${AIRONE_COMPILER_DIR}/bin/xtensa-esp32-elf-ar"      CACHE FILEPATH "Archiver")
+set(CMAKE_RANLIB       "${AIRONE_COMPILER_DIR}/bin/xtensa-esp32-elf-ranlib"  CACHE FILEPATH "Ranlib")
 
-# ─── ESP32 Build Flags ───────────────────────────────────────────────────────
+# ─── ESP32 SDK Paths ─────────────────────────────────────────────────────────
 
-# Board-specific SDK path
 set(AIRONE_SDK_DIR "${AIRONE_FRAMEWORK_DIR}/tools/sdk/${AIRONE_BOARD}")
 
-# Compilation flags for ESP32 Arduino
+# ─── Compilation Flags ───────────────────────────────────────────────────────
+# These flags match what the Arduino-ESP32 core and PlatformIO use.
+
 set(COMMON_FLAGS
     -mlongcalls
     -mtext-section-literals
@@ -45,58 +49,111 @@ set(COMMON_FLAGS
     -DCORE_DEBUG_LEVEL=0
     -DCONFIG_ARDUHAL_LOG_DEFAULT_LEVEL=0
     -DARDUINO_ARCH_ESP32
-    -DARDUINO=10820
-    -DBOARD_HAS_WIFI
-    -DESP_PLATFORM
     -DARDUINO_USB_MODE=1
     -DARDUINO_USB_CDC_ON_BOOT=0
+    -DESP_PLATFORM
+    -DBOARD_HAS_WIFI
 )
 
-# Include paths
+# Note: Do NOT define -DARDUINO=10820 here — the Arduino core headers define
+# ARDUINO themselves, and redefining it causes warnings on every compile unit.
+
+# ─── Include Paths ───────────────────────────────────────────────────────────
+
 set(INCLUDE_DIRS
     "${AIRONE_FRAMEWORK_DIR}/cores/esp32"
     "${AIRONE_FRAMEWORK_DIR}/variants/${AIRONE_BOARD}"
     "${AIRONE_SDK_DIR}/include"
     "${AIRONE_SDK_DIR}/qio_qspi/include"
     "${AIRONE_SDK_DIR}/include/config"
+    "${AIRONE_FRAMEWORK_DIR}/libraries"
 )
 
-# Convert include dirs to -I flags
+# Convert include dirs to -I flags (only if they exist)
 foreach(INC_DIR ${INCLUDE_DIRS})
     if(EXISTS "${INC_DIR}")
         list(APPEND INCLUDE_FLAGS "-I${INC_DIR}")
     endif()
 endforeach()
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${COMMON_FLAGS} ${INCLUDE_FLAGS}")
+set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} ${COMMON_FLAGS} ${INCLUDE_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COMMON_FLAGS} ${INCLUDE_FLAGS}")
 set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} ${COMMON_FLAGS} ${INCLUDE_FLAGS}")
 
-# Linker flags
-set(LINKER_FLAGS
-    -T"${AIRONE_FRAMEWORK_DIR}/tools/partitions/default.csv"
-    -L"${AIRONE_SDK_DIR}/lib"
-    -L"${AIRONE_SDK_DIR}/ld"
-    -T"${AIRONE_SDK_DIR}/ld/esp32.project.ld"
-    -T"${AIRONE_SDK_DIR}/ld/esp32.rom.ld"
-    -T"${AIRONE_SDK_DIR}/ld/esp32.peripherals.ld"
-    -Wl,--gc-sections
-    -Wl,-Map,"${CMAKE_BINARY_DIR}/firmware.map"
-    --specs=nano.specs
+# ─── Arduino Core Static Library ─────────────────────────────────────────────
+# Compile all .cpp files from cores/esp32/ into a static library.
+# This provides setup(), loop(), pinMode(), digitalWrite(), Serial, WiFi, etc.
+
+file(GLOB ARDUINO_CORE_SOURCES
+    "${AIRONE_FRAMEWORK_DIR}/cores/esp32/*.cpp"
+    "${AIRONE_FRAMEWORK_DIR}/cores/esp32/*.c"
 )
 
-# ─── Arduino Core Library ────────────────────────────────────────────────────
-# Link against the pre-compiled Arduino core library
+# The main.cpp in cores/esp32/ contains the real main() that calls
+# app_main() → setup()/loop(). We need it in the core library.
+add_library(arduino_core STATIC ${ARDUINO_CORE_SOURCES})
 
-set(ARDUINO_CORE_LIB "${AIRONE_SDK_DIR}/lib/libesp32.a")
+target_include_directories(arduino_core PRIVATE
+    "${AIRONE_FRAMEWORK_DIR}/cores/esp32"
+    "${AIRONE_FRAMEWORK_DIR}/variants/${AIRONE_BOARD}"
+    "${AIRONE_SDK_DIR}/include"
+    "${AIRONE_SDK_DIR}/include/config"
+    "${AIRONE_SDK_DIR}/qio_qspi/include"
+)
 
-# ─── User Sketch ─────────────────────────────────────────────────────────────
+# ─── User Sketch Executable ──────────────────────────────────────────────────
 
 add_executable(firmware.elf ${AIRONE_SKETCH})
 
-# Link against Arduino core and ESP32 SDK libraries
+target_include_directories(firmware.elf PRIVATE
+    "${AIRONE_FRAMEWORK_DIR}/cores/esp32"
+    "${AIRONE_FRAMEWORK_DIR}/variants/${AIRONE_BOARD}"
+    "${AIRONE_SDK_DIR}/include"
+    "${AIRONE_SDK_DIR}/include/config"
+)
+
+# ─── Linker Configuration ────────────────────────────────────────────────────
+# Link against the compiled Arduino core + pre-compiled ESP32 SDK libraries.
+
+set(SDK_LIB_DIR "${AIRONE_SDK_DIR}/lib")
+set(SDK_LD_DIR  "${AIRONE_SDK_DIR}/ld")
+
+# Collect all .a libraries from the SDK lib directory
+file(GLOB SDK_LIBS "${SDK_LIB_DIR}/*.a")
+
+# Primary linker script + SDK linker scripts
+set(LINKER_SCRIPTS
+    "-T${AIRONE_FRAMEWORK_DIR}/tools/partitions/default.csv"
+)
+
+# Add SDK linker scripts if they exist
+foreach(LD_SCRIPT
+    "${SDK_LD_DIR}/esp32.project.ld"
+    "${SDK_LD_DIR}/esp32.rom.ld"
+    "${SDK_LD_DIR}/esp32.peripherals.ld"
+    "${SDK_LD_DIR}/memory.ld"
+    "${SDK_LD_DIR}/sections.ld"
+)
+    if(EXISTS "${LD_SCRIPT}")
+        list(APPEND LINKER_SCRIPTS "-T${LD_SCRIPT}")
+    endif()
+endif()
+
+set(LINKER_FLAGS
+    ${LINKER_SCRIPTS}
+    -L"${SDK_LIB_DIR}"
+    -L"${SDK_LD_DIR}"
+    -Wl,--gc-sections
+    -Wl,-Map,"${CMAKE_BINARY_DIR}/firmware.map"
+    --specs=nano.specs
+    -u ld_include_hope_points
+    -u __cxa_guard_acquire
+    -u uxTaskGetStackHighWaterMark
+)
+
 target_link_libraries(firmware.elf
-    ${ARDUINO_CORE_LIB}
+    arduino_core
+    ${SDK_LIBS}
     -lm
     -lgcc
     -lc
@@ -108,7 +165,7 @@ set_target_properties(firmware.elf PROPERTIES
 )
 
 # ─── Generate firmware.bin from firmware.elf ─────────────────────────────────
-# Use esptool to convert the ELF to a flashable .bin
+# Use esptool to convert the ELF to a flashable .bin image.
 
 add_custom_command(
     TARGET firmware.elf
@@ -125,16 +182,20 @@ add_custom_command(
     COMMENT "Generating firmware.bin from firmware.elf"
 )
 
-# Also generate bootloader.bin and partitions.bin if they don't exist
-# (These are normally pre-built in the framework)
+# ─── Copy bootloader.bin and partitions.bin ──────────────────────────────────
+# These are pre-built in the framework — just copy them to the build directory.
+
+set(BOOTLOADER_SRC "${AIRONE_SDK_DIR}/bin/bootloader_qio_80m.bin")
+set(PARTITIONS_SRC "${AIRONE_FRAMEWORK_DIR}/tools/partitions/default.bin")
+
 add_custom_command(
     TARGET firmware.elf
     POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${AIRONE_SDK_DIR}/bin/bootloader_qio_80m.bin"
+            "${BOOTLOADER_SRC}"
             "${CMAKE_BINARY_DIR}/bootloader.bin"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${AIRONE_FRAMEWORK_DIR}/tools/partitions/default.bin"
+            "${PARTITIONS_SRC}"
             "${CMAKE_BINARY_DIR}/partitions.bin"
     COMMENT "Copying bootloader.bin and partitions.bin"
 )

@@ -131,8 +131,11 @@ jobs:
           pio pkg install -g -p "espressif32@^6.7.0" || true
           PIO_HOME="${USERPROFILE:-$HOME}/.platformio"
           if [ -d "$PIO_HOME/packages/framework-arduinoespressif32" ]; then
-            cp -r "$PIO_HOME/packages/framework-arduinoespressif32" resources/framework/
+            # Copy CONTENTS directly into resources/framework/ (not as a subdirectory)
+            # so Esp32BuildService finds cores/esp32 at resources/framework/cores/esp32
+            cp -r "$PIO_HOME/packages/framework-arduinoespressif32/." resources/framework/
             echo "✓ Arduino-ESP32 framework copied"
+            echo "  cores/esp32 exists: $([ -d resources/framework/cores/esp32 ] && echo YES || echo NO)"
           fi
 
           echo "=== Native toolchain download complete ==="
@@ -519,8 +522,11 @@ jobs:
           pio pkg install -g -p "espressif32@^6.7.0" || true
           PIO_HOME="$HOME/.platformio"
           if [ -d "$PIO_HOME/packages/framework-arduinoespressif32" ]; then
-            cp -r "$PIO_HOME/packages/framework-arduinoespressif32" resources/framework/
+            # Copy CONTENTS directly into resources/framework/ (not as a subdirectory)
+            # so Esp32BuildService finds cores/esp32 at resources/framework/cores/esp32
+            cp -r "$PIO_HOME/packages/framework-arduinoespressif32/." resources/framework/
             echo "✓ Arduino-ESP32 framework copied"
+            echo "  cores/esp32 exists: $([ -d resources/framework/cores/esp32 ] && echo YES || echo NO)"
           fi
 
           echo "=== Native toolchain download complete ==="

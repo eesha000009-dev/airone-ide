@@ -137,13 +137,17 @@ export class Esp32BuildService {
         // Packaged app — resources/framework/
         if (typeof __dirname !== 'undefined' && __dirname.includes('.asar')) {
             candidates.push(path.join(process.resourcesPath!, 'framework'));
+            // Handle case where framework was copied as a subdirectory
+            candidates.push(path.join(process.resourcesPath!, 'framework', 'framework-arduinoespressif32'));
             // Also check vendor/platformio_cache for backward compatibility
             candidates.push(path.join(process.resourcesPath!, 'vendor', 'platformio_cache', 'packages', 'framework-arduinoespressif32'));
         }
 
         // Dev mode
         candidates.push(path.resolve(__dirname, '../../../../../../resources/framework'));
+        candidates.push(path.resolve(__dirname, '../../../../../../resources/framework', 'framework-arduinoespressif32'));
         candidates.push(path.resolve(process.cwd(), 'resources/framework'));
+        candidates.push(path.resolve(process.cwd(), 'resources/framework', 'framework-arduinoespressif32'));
         candidates.push(path.resolve(process.cwd(), 'vendor/platformio_cache/packages/framework-arduinoespressif32'));
 
         for (const c of candidates) {
@@ -459,10 +463,26 @@ export class Esp32BuildService {
         log: (msg: string) => void
     ): Promise<{ success: boolean; code: number | null; error?: string }> {
         return new Promise(resolve => {
+            // Build environment with toolchain bin/ on PATH.
+            // On Windows, xtensa-esp32-elf-g++.exe depends on DLLs (libwinpthread-1.dll,
+            // libgcc_s_seh-1.dll) that live in the toolchain's bin/ directory.
+            // Without bin/ on PATH, the compiler fails with "CreateProcess: No such file".
+            const tools = this.getBinaryPaths();
+            const pathSep = process.platform === 'win32' ? ';' : ':';
+            const extraPaths: string[] = [
+                path.join(tools.compiler, 'bin'),
+            ];
+            // Also add cmake/bin so cmake can find its internal modules
+            const cmakeBin = path.dirname(tools.cmake);
+            if (fs.existsSync(cmakeBin)) extraPaths.push(cmakeBin);
+
+            const env = { ...process.env };
+            env.PATH = [...extraPaths, process.env.PATH || ''].join(pathSep);
+
             const proc = spawn(command, args, {
                 cwd,
                 stdio: 'pipe',
-                env: { ...process.env },
+                env,
             });
 
             let stderr = '';
