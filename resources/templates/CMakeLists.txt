@@ -17,19 +17,25 @@
 
 cmake_minimum_required(VERSION 3.16)
 
-# ─── Project Setup ────────────────────────────────────────────────────────────
-
-project(AironeFirmware C CXX ASM)
-
 # ─── Cross-Compiler Configuration ────────────────────────────────────────────
-# Force CMake to use our bundled cross-compiler BEFORE any project() language
-# detection. These must be set as CACHE variables so CMake doesn't override them.
+# Force CMake to use our bundled cross-compiler. These MUST be set BEFORE
+# project() so CMake uses them for language detection (not the host compiler).
 
 set(CMAKE_C_COMPILER   "${AIRONE_COMPILER_DIR}/bin/xtensa-esp32-elf-gcc"     CACHE FILEPATH "C compiler")
 set(CMAKE_CXX_COMPILER "${AIRONE_COMPILER_DIR}/bin/xtensa-esp32-elf-g++"     CACHE FILEPATH "C++ compiler")
 set(CMAKE_ASM_COMPILER "${AIRONE_COMPILER_DIR}/bin/xtensa-esp32-elf-gcc"     CACHE FILEPATH "ASM compiler")
 set(CMAKE_AR           "${AIRONE_COMPILER_DIR}/bin/xtensa-esp32-elf-ar"      CACHE FILEPATH "Archiver")
 set(CMAKE_RANLIB       "${AIRONE_COMPILER_DIR}/bin/xtensa-esp32-elf-ranlib"  CACHE FILEPATH "Ranlib")
+
+# Critical for cross-compilation: during compiler detection, CMake normally
+# tries to LINK a test program. With a cross-compiler targeting ESP32, linking
+# would fail (no standard libc). STATIC_LIBRARY tells CMake to only compile
+# to object files during detection — never link.
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+# ─── Project Setup ────────────────────────────────────────────────────────────
+
+project(AironeFirmware C CXX ASM)
 
 # ─── ESP32 SDK Paths ─────────────────────────────────────────────────────────
 
@@ -137,7 +143,7 @@ foreach(LD_SCRIPT
     if(EXISTS "${LD_SCRIPT}")
         list(APPEND LINKER_SCRIPTS "-T${LD_SCRIPT}")
     endif()
-endif()
+endforeach()
 
 set(LINKER_FLAGS
     ${LINKER_SCRIPTS}
@@ -184,18 +190,30 @@ add_custom_command(
 
 # ─── Copy bootloader.bin and partitions.bin ──────────────────────────────────
 # These are pre-built in the framework — just copy them to the build directory.
+# Wrapped in if(EXISTS) so the build doesn't fail if they're missing (the
+# flash service handles missing bootloader/partitions gracefully).
 
 set(BOOTLOADER_SRC "${AIRONE_SDK_DIR}/bin/bootloader_qio_80m.bin")
 set(PARTITIONS_SRC "${AIRONE_FRAMEWORK_DIR}/tools/partitions/default.bin")
 
-add_custom_command(
-    TARGET firmware.elf
-    POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${BOOTLOADER_SRC}"
-            "${CMAKE_BINARY_DIR}/bootloader.bin"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${PARTITIONS_SRC}"
-            "${CMAKE_BINARY_DIR}/partitions.bin"
-    COMMENT "Copying bootloader.bin and partitions.bin"
-)
+if(EXISTS "${BOOTLOADER_SRC}")
+    add_custom_command(
+        TARGET firmware.elf
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${BOOTLOADER_SRC}"
+                "${CMAKE_BINARY_DIR}/bootloader.bin"
+        COMMENT "Copying bootloader.bin"
+    )
+endif()
+
+if(EXISTS "${PARTITIONS_SRC}")
+    add_custom_command(
+        TARGET firmware.elf
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PARTITIONS_SRC}"
+                "${CMAKE_BINARY_DIR}/partitions.bin"
+        COMMENT "Copying partitions.bin"
+    )
+endif()
