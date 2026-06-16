@@ -12,6 +12,7 @@ import { ConnectionHandler, JsonRpcConnectionHandler } from '@theia/core/lib/com
 import { AiroCompilerService } from './airo-compiler-service';
 import { AiroBuiltInCompiler } from './airo-built-in-compiler';
 import { AiroTranspiler } from './airo-transpiler';
+import { Esp32BuildService } from './esp32-build-service';
 import { AiroSerialService } from './airo-serial-service';
 import { AiroSketchService } from './airo-sketch-service';
 import { AiroUploadService } from './airo-upload-service';
@@ -33,7 +34,10 @@ export default new ContainerModule(bind => {
     // .airo → C++ transpiler (always available, no external dependencies)
     bind(AiroTranspiler).toSelf().inSingletonScope();
 
-    // Main compiler service (3-step pipeline: syntax check → transpile → PlatformIO build)
+    // Native ESP32 build service (CMake + Ninja + xtensa-gcc, no Python/PlatformIO)
+    bind(Esp32BuildService).toSelf().inSingletonScope();
+
+    // Main compiler service (3-step pipeline: syntax check → transpile → native build)
     bind(AiroCompilerService).toSelf().inSingletonScope();
 
     bind(AiroSerialService).toSelf().inSingletonScope();

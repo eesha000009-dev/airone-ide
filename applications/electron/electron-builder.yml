@@ -28,8 +28,23 @@ extraResources:
     to: app/plugins
   - from: ../../airo-compiler
     to: airo-compiler
-  # PlatformIO Core + ESP32 toolchain for offline compilation
-  # Download/extract to vendor/ before packaging
+  # Native ESP32 toolchain (CMake, Ninja, xtensa-gcc, esptool) — NO Python needed
+  - from: ../../resources/tools
+    to: tools
+    filter:
+      - "**/*"
+      - "!**/.git/**"
+  - from: ../../resources/templates
+    to: templates
+    filter:
+      - "**/*"
+  # Arduino-ESP32 framework (pre-compiled, for native CMake build)
+  - from: ../../resources/framework
+    to: framework
+    filter:
+      - "**/*"
+      - "!**/.git/**"
+  # PlatformIO Core + ESP32 toolchain (legacy fallback for offline compilation)
   - from: ../../vendor
     to: vendor
     filter:

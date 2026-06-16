@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { SerialPortInfo, FlashRequest, FlashResult, CompileResultBinary, ESP_VENDOR_IDS, CHIP_FLASH_OFFSETS, TARGET_TO_PIO_BOARD, DEFAULT_FLASH_BAUD_RATE, SUPPORTED_CHIP_TYPES } from '../common/airo-protocol';
 import { AiroCompilerService } from './airo-compiler-service';
+import { Esp32BuildService } from './esp32-build-service';
 
 // Re-export for convenience so consumers can import from either location
 export { FlashRequest, FlashResult } from '../common/airo-protocol';
@@ -67,6 +68,9 @@ export class AiroUploadService {
 
     @inject(AiroCompilerService)
     protected readonly compilerService!: AiroCompilerService;
+
+    @inject(Esp32BuildService)
+    protected readonly esp32BuildService!: Esp32BuildService;
 
     private serialportAvailable = false;
     private cachedEsptoolPath: string | undefined;
@@ -539,19 +543,51 @@ export class AiroUploadService {
      *  2. esptool.py (fallback)
      */
     async flash(request: FlashRequest, onProgress?: ProgressCallback): Promise<FlashResult> {
-        // Try esptool-js first (if serialport is available)
+        // ── Priority 1: Native bundled esptool (NO Python required) ──
+        // The Esp32BuildService has a flashDevice() method that uses the
+        // bundled standalone esptool executable. This is the preferred path
+        // because it requires zero external dependencies.
+        if (request.binaryPath && request.portPath) {
+            try {
+                // Find companion binaries (bootloader, partitions) if they exist
+                const bootloaderPath = this.findCompanionBinary(request.binaryPath, 'bootloader.bin');
+                const partitionsPath = this.findCompanionBinary(request.binaryPath, 'partitions.bin');
+
+                const outputLines: string[] = [];
+                const result = await this.esp32BuildService.flashDevice(
+                    request.portPath,
+                    request.binaryPath,
+                    (line) => {
+                        outputLines.push(line);
+                        // Parse progress from esptool output
+                        if (onProgress) {
+                            const writeMatch = line.match(/\((\d+)%\)/);
+                            if (writeMatch) {
+                                onProgress(parseInt(writeMatch[1], 10), line);
+                            }
+                        }
+                    },
+                    bootloaderPath,
+                    partitionsPath
+                );
+                return result;
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.warn('[AiroUploadService] Native esptool failed, trying fallbacks:', msg);
+            }
+        }
+
+        // ── Priority 2: esptool-js (if serialport is available) ──
         if (this.serialportAvailable) {
             try {
-                // Check if esptool-js is importable
                 await import('esptool-js');
                 return this.flashWithEsptoolJs(request, onProgress);
             } catch {
-                // esptool-js not available, fall through to Python
                 console.warn('[AiroUploadService] esptool-js not available, falling back to esptool.py');
             }
         }
 
-        // Fallback to Python esptool
+        // ── Priority 3: Python esptool (last resort) ──
         return this.flashWithEsptoolPy(request, onProgress);
     }
 

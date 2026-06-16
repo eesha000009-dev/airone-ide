@@ -71,6 +71,73 @@ jobs:
           python -m pip install --upgrade pip
           pip install -U platformio
 
+      # ── Native Toolchain Download (CMake + Ninja + xtensa-gcc + esptool) ──
+      # These are the NATIVE binaries used by Esp32BuildService.
+      # They eliminate the need for Python at runtime.
+      - name: Cache native toolchain
+        id: cache-native
+        uses: actions/cache@v4
+        with:
+          path: |
+            resources/tools
+            resources/framework
+          key: native-esp32-win-v1-${{ hashFiles('resources/templates/CMakeLists.txt') }}
+
+      - name: Download native ESP32 toolchain (Windows)
+        if: steps.cache-native.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          echo "=== Downloading native ESP32 toolchain for Windows ==="
+          mkdir -p resources/tools/win32
+          mkdir -p resources/framework
+
+          # 1. Download xtensa-esp32-elf toolchain
+          echo "Downloading xtensa-esp32-elf toolchain..."
+          TOOLCHAIN_URL="https://github.com/espressif/crosstool-NG/releases/download/esp-12.2.0_20230208/xtensa-esp32-elf-12.2.0_20230208-x86_64-w64-mingw32.zip"
+          curl -L -o /tmp/toolchain.zip "$TOOLCHAIN_URL"
+          mkdir -p resources/tools/win32/xtensa-esp32-elf
+          unzip -q /tmp/toolchain.zip -d /tmp/toolchain-extract
+          cp -r /tmp/toolchain-extract/xtensa-esp32-elf/* resources/tools/win32/xtensa-esp32-elf/
+          echo "✓ xtensa-esp32-elf toolchain downloaded"
+
+          # 2. Download CMake
+          echo "Downloading CMake..."
+          CMAKE_URL="https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-windows-x86_64.zip"
+          curl -L -o /tmp/cmake.zip "$CMAKE_URL"
+          mkdir -p /tmp/cmake-extract
+          unzip -q /tmp/cmake.zip -d /tmp/cmake-extract
+          mkdir -p resources/tools/win32/cmake
+          cp -r /tmp/cmake-extract/cmake-3.28.3-windows-x86_64/* resources/tools/win32/cmake/
+          echo "✓ CMake downloaded"
+
+          # 3. Download Ninja
+          echo "Downloading Ninja..."
+          NINJA_URL="https://github.com/ninja-build/ninja/releases/download/v1.11.1/ninja-win.zip"
+          curl -L -o /tmp/ninja.zip "$NINJA_URL"
+          unzip -q /tmp/ninja.zip -d resources/tools/win32/
+          echo "✓ Ninja downloaded"
+
+          # 4. Download esptool (standalone Windows executable)
+          echo "Downloading esptool..."
+          ESPTOOL_URL="https://github.com/espressif/esptool/releases/download/v4.8.1/esptool-v4.8.1-win64.zip"
+          curl -L -o /tmp/esptool.zip "$ESPTOOL_URL"
+          mkdir -p /tmp/esptool-extract
+          unzip -q /tmp/esptool.zip -d /tmp/esptool-extract
+          find /tmp/esptool-extract -name "esptool.exe" -exec cp {} resources/tools/win32/esptool.exe \;
+          echo "✓ esptool downloaded"
+
+          # 5. Download Arduino-ESP32 framework
+          echo "Downloading Arduino-ESP32 framework..."
+          pio pkg install -g -p "espressif32@^6.7.0" || true
+          PIO_HOME="${USERPROFILE:-$HOME}/.platformio"
+          if [ -d "$PIO_HOME/packages/framework-arduinoespressif32" ]; then
+            cp -r "$PIO_HOME/packages/framework-arduinoespressif32" resources/framework/
+            echo "✓ Arduino-ESP32 framework copied"
+          fi
+
+          echo "=== Native toolchain download complete ==="
+          ls -la resources/tools/win32/
+
       - name: Cache ESP32 toolchain
         id: cache-toolchain
         uses: actions/cache@v4
@@ -388,6 +455,76 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -U platformio
+
+      # ── Native Toolchain Download (CMake + Ninja + xtensa-gcc + esptool) ──
+      - name: Cache native toolchain
+        id: cache-native
+        uses: actions/cache@v4
+        with:
+          path: |
+            resources/tools
+            resources/framework
+          key: native-esp32-linux-v1-${{ hashFiles('resources/templates/CMakeLists.txt') }}
+
+      - name: Download native ESP32 toolchain (Linux)
+        if: steps.cache-native.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          echo "=== Downloading native ESP32 toolchain for Linux ==="
+          mkdir -p resources/tools/linux
+          mkdir -p resources/framework
+
+          # 1. Download xtensa-esp32-elf toolchain
+          echo "Downloading xtensa-esp32-elf toolchain..."
+          TOOLCHAIN_URL="https://github.com/espressif/crosstool-NG/releases/download/esp-12.2.0_20230208/xtensa-esp32-elf-12.2.0_20230208-x86_64-linux-gnu.tar.xz"
+          curl -L -o /tmp/toolchain.tar.xz "$TOOLCHAIN_URL"
+          mkdir -p /tmp/toolchain-extract
+          tar -xf /tmp/toolchain.tar.xz -C /tmp/toolchain-extract
+          mkdir -p resources/tools/linux/xtensa-esp32-elf
+          cp -r /tmp/toolchain-extract/xtensa-esp32-elf/* resources/tools/linux/xtensa-esp32-elf/
+          chmod +x resources/tools/linux/xtensa-esp32-elf/bin/*
+          echo "✓ xtensa-esp32-elf toolchain downloaded"
+
+          # 2. Download CMake
+          echo "Downloading CMake..."
+          CMAKE_URL="https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz"
+          curl -L -o /tmp/cmake.tar.gz "$CMAKE_URL"
+          mkdir -p /tmp/cmake-extract
+          tar -xzf /tmp/cmake.tar.gz -C /tmp/cmake-extract
+          mkdir -p resources/tools/linux/cmake
+          cp -r /tmp/cmake-extract/cmake-3.28.3-linux-x86_64/* resources/tools/linux/cmake/
+          chmod +x resources/tools/linux/cmake/bin/*
+          echo "✓ CMake downloaded"
+
+          # 3. Download Ninja
+          echo "Downloading Ninja..."
+          NINJA_URL="https://github.com/ninja-build/ninja/releases/download/v1.11.1/ninja-linux.zip"
+          curl -L -o /tmp/ninja.zip "$NINJA_URL"
+          unzip -q /tmp/ninja.zip -d resources/tools/linux/
+          chmod +x resources/tools/linux/ninja
+          echo "✓ Ninja downloaded"
+
+          # 4. Download esptool (standalone Linux executable)
+          echo "Downloading esptool..."
+          ESPTOOL_URL="https://github.com/espressif/esptool/releases/download/v4.8.1/esptool-v4.8.1-linux-amd64.tar.gz"
+          curl -L -o /tmp/esptool.tar.gz "$ESPTOOL_URL"
+          mkdir -p /tmp/esptool-extract
+          tar -xzf /tmp/esptool.tar.gz -C /tmp/esptool-extract
+          find /tmp/esptool-extract -name "esptool" -type f -exec cp {} resources/tools/linux/esptool \;
+          chmod +x resources/tools/linux/esptool
+          echo "✓ esptool downloaded"
+
+          # 5. Download Arduino-ESP32 framework
+          echo "Downloading Arduino-ESP32 framework..."
+          pio pkg install -g -p "espressif32@^6.7.0" || true
+          PIO_HOME="$HOME/.platformio"
+          if [ -d "$PIO_HOME/packages/framework-arduinoespressif32" ]; then
+            cp -r "$PIO_HOME/packages/framework-arduinoespressif32" resources/framework/
+            echo "✓ Arduino-ESP32 framework copied"
+          fi
+
+          echo "=== Native toolchain download complete ==="
+          ls -la resources/tools/linux/
 
       - name: Cache ESP32 toolchain
         id: cache-toolchain

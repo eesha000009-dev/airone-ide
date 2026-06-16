@@ -25,6 +25,15 @@ vendor/platformio_cache/*
 vendor/platformio_packages/*
 !vendor/platformio_packages/.gitkeep
 
+# Native ESP32 toolchain — downloaded by CI during build, not committed.
+# These are large binary files (xtensa-gcc, cmake, ninja, esptool).
+# CI downloads them from Espressif/CMake/Ninja releases and bundles into installer.
+resources/tools/*
+!resources/tools/.gitkeep
+!resources/tools/README.md
+resources/framework/*
+!resources/framework/.gitkeep
+
 # Android build outputs
 applications/browser/android/app/build/
 applications/browser/android/.gradle/

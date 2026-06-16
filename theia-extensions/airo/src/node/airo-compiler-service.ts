@@ -15,6 +15,7 @@ import * as os from 'os';
 import { CompileRequest, CompileResult, TARGET_TO_PIO_BOARD, PIO_BOARD_TO_CHIP, CHIP_TO_PIO_PLATFORM, DEFAULT_FLASH_BAUD_RATE, DEFAULT_MONITOR_BAUD_RATE } from '../common/airo-protocol';
 import { AiroBuiltInCompiler } from './airo-built-in-compiler';
 import { AiroTranspiler } from './airo-transpiler';
+import { Esp32BuildService } from './esp32-build-service';
 
 // ─── Configurable Constants ──────────────────────────────────────────────────
 
@@ -258,6 +259,9 @@ export class AiroCompilerService {
     @inject(AiroTranspiler)
     protected readonly transpiler!: AiroTranspiler;
 
+    @inject(Esp32BuildService)
+    protected readonly esp32BuildService!: Esp32BuildService;
+
     private pythonPath: string;
     private compilerDir: string;
     private cachedPioPath: string | undefined;
@@ -371,98 +375,47 @@ export class AiroCompilerService {
             const generatedFiles = [cppPath, pioIniPath];
             let combinedOutput = `✓ Step 1 — ${builtInResult.output}\n` +
                 `✓ Step 2 — Transpiled to C++: ${cppPath}\n` +
-                `  PlatformIO board: ${pioBoard}\n` +
+                `  Board: ${pioBoard}\n` +
                 `  Required libraries: ${transpileResult.requiredLibraries.join(', ') || 'none'}\n` +
                 (transpileResult.errors.length > 0 ? `  Warnings: ${transpileResult.errors.join('; ')}\n` : '');
 
-            // ─── Step 3: PlatformIO build ─────────────────────────────
-            // Find PlatformIO (bundled first, then system — no auto-install)
-            let pioCmd = this.findPlatformIO();
+            // ─── Step 3: Native ESP32 Build (CMake + Ninja + xtensa-gcc) ──
+            // Uses bundled native toolchain — NO Python, NO PlatformIO needed.
+            combinedOutput += '  Build mode: Native (CMake + Ninja + xtensa-gcc)\n';
 
-            if (!pioCmd) {
-                combinedOutput += '\n✗ Step 3 — PlatformIO not found.\n';
-                combinedOutput += `  Python: ${this.pythonPath} (${getPythonVersion(this.pythonPath)})\n`;
+            const buildResult = await this.esp32BuildService.compileProject(
+                cppPath,
+                outputDir,
+                request.target || 'esp32',
+                (line) => { /* output listener — captured in buildResult.output */ }
+            );
 
-                // Show detailed detection diagnostics
-                const diagnostics = this.getDetectionDiagnostics();
-                combinedOutput += '\n  Detection diagnostics:\n';
-                for (const line of diagnostics) {
-                    combinedOutput += `    ${line}\n`;
-                }
-
-                // Provide actionable advice based on what failed
-                const vendorDir = resolveVendorDir();
-                const packagesDir = resolvePlatformioPackagesDir();
-
-                if (!fs.existsSync(vendorDir)) {
-                    combinedOutput += '\n  The PlatformIO toolchain is not bundled with this installation.\n';
-                    combinedOutput += '  Please reinstall Airone IDE to get the bundled toolchain.\n';
-                } else if (!isPlatformioBundled()) {
-                    combinedOutput += '\n  PlatformIO Core packages are missing from the vendor directory.\n';
-                    combinedOutput += '  This may indicate a corrupted installation.\n';
-                    combinedOutput += '  Please reinstall Airone IDE.\n';
-                    // Show what IS in the packages dir
-                    if (fs.existsSync(packagesDir)) {
-                        try {
-                            const contents = fs.readdirSync(packagesDir);
-                            combinedOutput += `  Packages dir contents: [${contents.slice(0, 10).join(', ')}]\n`;
-                        } catch { /* ignore */ }
-                    }
-                } else {
-                    // Bundled packages exist but Python can't use them
-                    combinedOutput += '\n  PlatformIO packages are bundled but Python cannot import them.\n';
-                    combinedOutput += '  This is likely caused by a Python version mismatch.\n';
-                    combinedOutput += '  PlatformIO requires Python 3.8 or later.\n';
-                    combinedOutput += `  Your Python: ${getPythonVersion(this.pythonPath)}\n`;
-                    combinedOutput += '  Please install Python 3.8+ from python.org and restart Airone IDE.\n';
-                }
-
-                combinedOutput += '\n  Firmware binary (.bin) not produced.\n';
-
+            if (buildResult.success) {
+                combinedOutput += '\n✓ Step 3 — Native build succeeded.\n' + buildResult.output;
+                if (buildResult.binaryPath) generatedFiles.push(buildResult.binaryPath);
+                if (buildResult.bootloaderPath) generatedFiles.push(buildResult.bootloaderPath);
+                if (buildResult.partitionsPath) generatedFiles.push(buildResult.partitionsPath);
                 return {
                     success: true,
                     output: combinedOutput,
                     generatedFiles,
+                    binaryPath: buildResult.binaryPath,
                 };
             }
 
-            // Show offline mode status for diagnostics
-            const toolchainReady = hasBundledToolchain();
-            const libsReady = hasBundledLibs();
-            combinedOutput += `  Offline mode: ${toolchainReady && libsReady ? 'ENABLED (FORCE_OFFLINE)' : 'disabled (internet required for libraries)'}\n`;
-            combinedOutput += `  Toolchain bundled: ${toolchainReady} | Libraries bundled: ${libsReady}\n`;
-
-            // Run PlatformIO build
-            const pioResult = await this.runPlatformioBuild(pioCmd, outputDir, pioBoard);
-
-            if (pioResult.success) {
-                combinedOutput += '\n✓ Step 3 — PlatformIO build succeeded.\n' + pioResult.output;
-                if (pioResult.generatedFiles) {
-                    generatedFiles.push(...pioResult.generatedFiles);
-                }
-                return {
-                    success: true,
-                    output: combinedOutput,
-                    generatedFiles,
-                    binaryPath: pioResult.binaryPath,
-                };
-            }
-
-            // PlatformIO build failed — show full output for diagnostics
+            // Native build failed — show full output for diagnostics
             combinedOutput +=
-                '\n✗ Step 3 — PlatformIO build failed:\n' +
-                `  ${pioResult.error}\n`;
-            // Also show full PlatformIO output if available (contains verbose details)
-            if (pioResult.output && pioResult.output !== pioResult.error) {
-                combinedOutput += '\n  PlatformIO output:\n';
-                // Indent each line for readability
-                for (const line of pioResult.output.split('\n')) {
+                '\n✗ Step 3 — Native build failed:\n' +
+                `  ${buildResult.error}\n`;
+            if (buildResult.output && buildResult.output !== buildResult.error) {
+                combinedOutput += '\n  Build output:\n';
+                for (const line of buildResult.output.split('\n')) {
                     combinedOutput += `    ${line}\n`;
                 }
             }
 
             return {
-                success: true, // C++ was generated even if PlatformIO build failed
+                success: true, // C++ was generated even if build failed
                 output: combinedOutput,
                 generatedFiles,
             };
